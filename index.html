@@ -1,0 +1,1561 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ateliê Passarinho — Gestão de Faltas</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    .fade-in { animation: fadeIn 0.15s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+    pre { white-space: pre-wrap; word-break: break-word; }
+    input[type="date"]::-webkit-calendar-picker-indicator { cursor: pointer; }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useMemo, useCallback, useReducer, useRef } = React;
+
+// ==================== CONSTANTS ====================
+const DIAS_ORDER = ['segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+const ABREV = { segunda:'Seg', terça:'Ter', quarta:'Qua', quinta:'Qui', sexta:'Sex', sábado:'Sáb' };
+const EXTENSO = { segunda:'Segunda-feira', terça:'Terça-feira', quarta:'Quarta-feira', quinta:'Quinta-feira', sexta:'Sexta-feira', sábado:'Sábado' };
+const DIA_JS = { segunda:1, terça:2, quarta:3, quinta:4, sexta:5, sábado:6 };
+const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+const STORAGE_KEY = 'atelie_passarinho_v2';
+const MAX_SNAPSHOTS = 60;
+
+// ==================== SEED DATA ====================
+const SEED = {
+  _seedWarning: true,
+  turmas: [
+    {id:"seg-09h",diaSemana:"segunda",horario:"09h",capacidade:8,observacao:"",alunos:["Laila","Isadora","Julia"]},
+    {id:"seg-11h",diaSemana:"segunda",horario:"11h",capacidade:8,observacao:"",alunos:[]},
+    {id:"seg-17h",diaSemana:"segunda",horario:"17h",capacidade:8,observacao:"",alunos:[]},
+    {id:"seg-19h",diaSemana:"segunda",horario:"19h",capacidade:8,observacao:"",alunos:["Pedro","Gabi","Joana","Wallace"]},
+    {id:"ter-09h",diaSemana:"terça",horario:"09h",capacidade:8,observacao:"com Bia",alunos:[]},
+    {id:"ter-11h",diaSemana:"terça",horario:"11h",capacidade:8,observacao:"",alunos:[]},
+    {id:"ter-17h",diaSemana:"terça",horario:"17h",capacidade:8,observacao:"",alunos:["Bea","Marcos"]},
+    {id:"ter-19h",diaSemana:"terça",horario:"19h",capacidade:8,observacao:"com Bia - oficina",alunos:["Katia","Teca","Ana Carolina","Mirza"]},
+    {id:"qua-08h",diaSemana:"quarta",horario:"08h",capacidade:8,observacao:"",alunos:["Julia","Bia"]},
+    {id:"qua-10h",diaSemana:"quarta",horario:"10h",capacidade:8,observacao:"",alunos:["Vívian","Mariza","Aida"]},
+    {id:"qua-17h",diaSemana:"quarta",horario:"17h",capacidade:8,observacao:"",alunos:["Charlotte","Sônia","Ana Clara"]},
+    {id:"qua-19h",diaSemana:"quarta",horario:"19h",capacidade:8,observacao:"",alunos:["Bia F","Teresa"]},
+    {id:"qui-09h",diaSemana:"quinta",horario:"09h",capacidade:8,observacao:"",alunos:["Carla","Bia"]},
+    {id:"qui-11h",diaSemana:"quinta",horario:"11h",capacidade:8,observacao:"",alunos:[]},
+    {id:"qui-17h",diaSemana:"quinta",horario:"17h",capacidade:8,observacao:"",alunos:["Adriana","Niara","Aline"]},
+    {id:"qui-19h",diaSemana:"quinta",horario:"19h",capacidade:8,observacao:"",alunos:["Anna Clara"]},
+    {id:"sab-09h",diaSemana:"sábado",horario:"09h",capacidade:8,observacao:"",alunos:["João","Livia","Claudia","Cris"]},
+    {id:"sab-11h",diaSemana:"sábado",horario:"11h",capacidade:8,observacao:"",alunos:["Juliana","Marcella"]}
+  ],
+  faltas: [
+    {id:"f001",alunoNome:"Laila",turmaId:"seg-09h",datas:["2026-03-30","2026-04-27"],status:"pendente"},
+    {id:"f002",alunoNome:"Teca",turmaId:"ter-19h",datas:["2026-03-31"],status:"pendente"},
+    {id:"f003",alunoNome:"Julia",turmaId:"qua-08h",datas:["2026-04-01"],status:"pendente"},
+    {id:"f004",alunoNome:"Carla",turmaId:"qui-09h",datas:["2026-04-02"],status:"pendente"},
+    {id:"f005",alunoNome:"Bia",turmaId:"qui-09h",datas:["2026-04-02","2026-04-09"],status:"pendente"},
+    {id:"f006",alunoNome:"Adriana",turmaId:"qui-17h",datas:["2026-04-02"],status:"pendente"},
+    {id:"f007",alunoNome:"Niara",turmaId:"qui-17h",datas:["2026-04-02"],status:"pendente"},
+    {id:"f008",alunoNome:"Pedro",turmaId:"seg-19h",datas:["2026-04-06","2026-04-13"],status:"pendente"},
+    {id:"f009",alunoNome:"Bea",turmaId:"ter-17h",datas:["2026-04-07"],status:"pendente"},
+    {id:"f010",alunoNome:"Bia",turmaId:"qua-08h",datas:["2026-04-08"],status:"pendente"},
+    {id:"f011",alunoNome:"João",turmaId:"sab-09h",datas:["2026-04-11"],status:"pendente"},
+    {id:"f012",alunoNome:"Katia",turmaId:"ter-19h",datas:["2026-04-14"],status:"pendente"},
+    {id:"f013",alunoNome:"Vívian",turmaId:"qua-10h",datas:["2026-04-15","2026-04-22"],status:"pendente"},
+    {id:"f014",alunoNome:"Bia F",turmaId:"qua-19h",datas:["2026-04-15"],status:"pendente"},
+    {id:"f015",alunoNome:"Livia",turmaId:"sab-09h",datas:["2026-04-18","2026-04-25"],status:"pendente"},
+    {id:"f016",alunoNome:"Wallace",turmaId:"seg-19h",datas:["2026-04-20"],status:"pendente"},
+    {id:"f017",alunoNome:"Sônia",turmaId:"qua-17h",datas:["2026-04-22","2026-04-29","2026-05-06"],status:"pendente"},
+    {id:"f018",alunoNome:"Ana Clara",turmaId:"qua-17h",datas:["2026-04-22"],status:"pendente"},
+    {id:"f019",alunoNome:"Isadora",turmaId:"seg-09h",datas:["2026-04-27"],status:"pendente"},
+    {id:"f020",alunoNome:"Aida",turmaId:"qua-10h",datas:["2026-04-29"],status:"pendente"},
+    {id:"f021",alunoNome:"Anna Clara",turmaId:"qui-19h",datas:["2026-04-09"],status:"marcada",reposicaoId:"r001"},
+    {id:"f022",alunoNome:"Anna Clara",turmaId:"qui-19h",datas:["2026-04-30"],status:"pendente"},
+    {id:"f023",alunoNome:"Joana",turmaId:"seg-19h",datas:["2026-04-06","2026-04-13"],status:"marcada",reposicaoId:"r002"},
+    {id:"f024",alunoNome:"Gabi",turmaId:"seg-19h",datas:["2026-04-13","2026-04-20"],status:"marcada",reposicaoId:"r003"},
+    {id:"f025",alunoNome:"Charlotte",turmaId:"qua-17h",datas:["2026-04-29"],status:"marcada",reposicaoId:"r004"},
+    {id:"f026",alunoNome:"Claudia",turmaId:"sab-09h",datas:["2026-05-02"],status:"pendente"},
+    {id:"f027",alunoNome:"Cris",turmaId:"sab-09h",datas:["2026-05-02"],status:"pendente"}
+  ],
+  ausencias: [
+    {id:"aus001",alunoNome:"Juliana",turmaId:"sab-11h",tipo:"ferias",mesAno:"2026-04",creditoReposicao:1,creditoUsado:false}
+  ],
+  reposicoes: [
+    {id:"r001",alunoNome:"Anna Clara",turmaOrigemId:"qui-19h",faltaId:"f021",dataReposicao:"2026-04-28",turmaReposicaoId:"ter-17h",tipo:"reposicao",realizada:false},
+    {id:"r002",alunoNome:"Joana",turmaOrigemId:"seg-19h",faltaId:"f023",dataReposicao:"2026-04-29",turmaReposicaoId:"qua-19h",tipo:"reposicao",realizada:false},
+    {id:"r003",alunoNome:"Gabi",turmaOrigemId:"seg-19h",faltaId:"f024",dataReposicao:"2026-04-29",turmaReposicaoId:"qua-19h",tipo:"reposicao",realizada:false},
+    {id:"r004",alunoNome:"Charlotte",turmaOrigemId:"qua-17h",faltaId:"f025",dataReposicao:"2026-04-30",turmaReposicaoId:"qui-17h",tipo:"reposicao",realizada:false},
+    {id:"r005",alunoNome:"Marcella",turmaOrigemId:"sab-11h",faltaId:null,dataReposicao:"2026-04-29",turmaReposicaoId:"qua-08h",tipo:"aula_extra",realizada:false,observacao:"Aula extra sem falta registrada — verificar"}
+  ],
+  vagas: [
+    {id:"v001",turmaId:"qua-10h",data:"2026-04-29",faltaId:"f020"},
+    {id:"v002",turmaId:"qua-17h",data:"2026-04-29",faltaId:"f017"},
+    {id:"v003",turmaId:"qua-17h",data:"2026-04-29",faltaId:"f025"},
+    {id:"v004",turmaId:"qui-19h",data:"2026-04-30",faltaId:"f022"},
+    {id:"v005",turmaId:"sab-09h",data:"2026-05-02",faltaId:"f026"},
+    {id:"v006",turmaId:"sab-09h",data:"2026-05-02",faltaId:"f027"},
+    {id:"v007",turmaId:"qua-17h",data:"2026-05-06",faltaId:"f017"}
+  ],
+  snapshots: []
+};
+
+// ==================== HELPERS ====================
+function parseDate(str) {
+  if (!str) return null;
+  const [y, m, d] = str.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function dateToStr(date) {
+  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+}
+
+function fmtBR(dateStr) {
+  if (!dateStr) return '';
+  const [,m,d] = dateStr.split('-');
+  return `${d}/${m}`;
+}
+
+function fmtBRFull(dateStr) {
+  if (!dateStr) return '';
+  const [y,m,d] = dateStr.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+function fmtDatesText(datas) {
+  const sorted = [...datas].sort();
+  const br = sorted.map(fmtBR);
+  if (br.length === 1) return br[0];
+  if (br.length === 2) return `${br[0]} e ${br[1]}`;
+  return br.slice(0,-1).join(', ') + ' e ' + br[br.length-1];
+}
+
+function getNextOccurrences(diaSemana, n = 8) {
+  const target = DIA_JS[diaSemana];
+  const dates = [];
+  const d = new Date();
+  d.setHours(0,0,0,0);
+  while (dates.length < n) {
+    if (d.getDay() === target) dates.push(dateToStr(d));
+    d.setDate(d.getDate() + 1);
+  }
+  return dates;
+}
+
+function getDiaSemanaFromDateStr(dateStr) {
+  const d = parseDate(dateStr);
+  const names = ['domingo','segunda','terça','quarta','quinta','sexta','sábado'];
+  return names[d.getDay()];
+}
+
+function getFaltaEarliest(falta) {
+  return [...falta.datas].sort()[0];
+}
+
+function getFaltaExpiry(falta) {
+  const d = parseDate(getFaltaEarliest(falta));
+  d.setDate(d.getDate() + 30);
+  return dateToStr(d);
+}
+
+function getAusenciaExpiry(aus) {
+  const [y,m] = aus.mesAno.split('-').map(Number);
+  const last = new Date(y, m, 0);
+  last.setDate(last.getDate() + 30);
+  return dateToStr(last);
+}
+
+function getLastDayOfMonth(mesAno) {
+  const [y,m] = mesAno.split('-').map(Number);
+  return dateToStr(new Date(y, m, 0));
+}
+
+function getMesNome(mesAno) {
+  const [,m] = mesAno.split('-').map(Number);
+  return MESES_PT[m-1];
+}
+
+function genId(prefix='id') {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).substr(2,6)}`;
+}
+
+function getTurmaLabel(turmas, id) {
+  const t = turmas.find(x => x.id === id);
+  if (!t) return '?';
+  return `${ABREV[t.diaSemana]} ${t.horario}`;
+}
+
+function sortTurmas(turmas) {
+  return [...turmas].sort((a,b) => {
+    const da = DIAS_ORDER.indexOf(a.diaSemana), db = DIAS_ORDER.indexOf(b.diaSemana);
+    if (da !== db) return da - db;
+    return a.horario.localeCompare(b.horario);
+  });
+}
+
+function calcOccupancy(turmaId, date, state) {
+  const turma = state.turmas.find(t => t.id === turmaId);
+  if (!turma) return 0;
+  const faltasOnDate = state.faltas.filter(f =>
+    f.turmaId === turmaId && f.datas.includes(date) &&
+    (f.status === 'pendente' || f.status === 'marcada')
+  ).length;
+  const repos = state.reposicoes.filter(r =>
+    r.turmaReposicaoId === turmaId && r.dataReposicao === date && !r.realizada
+  ).length;
+  return turma.alunos.length - faltasOnDate + repos;
+}
+
+// ==================== REDUCER ====================
+function reducer(state, action) {
+  let next;
+  switch (action.type) {
+
+    case 'DISMISS_SEED_WARNING':
+      next = {...state, _seedWarning: false};
+      break;
+
+    case 'ADD_TURMA': {
+      const { diaSemana, horario, observacao } = action;
+      const id = `${diaSemana.slice(0,3).replace('ç','c').replace('á','a')}-${horario}`;
+      if (state.turmas.find(t => t.id === id)) return state;
+      next = { ...state, turmas: [...state.turmas, { id, diaSemana, horario, capacidade: 8, observacao: observacao||'', alunos: [] }] };
+      break;
+    }
+
+    case 'DELETE_TURMA': {
+      next = {
+        ...state,
+        turmas: state.turmas.filter(t => t.id !== action.id),
+        faltas: state.faltas.filter(f => f.turmaId !== action.id),
+        vagas: state.vagas.filter(v => v.turmaId !== action.id),
+        ausencias: state.ausencias.filter(a => a.turmaId !== action.id)
+      };
+      break;
+    }
+
+    case 'UPDATE_TURMA_OBS': {
+      next = { ...state, turmas: state.turmas.map(t => t.id === action.id ? {...t, observacao: action.observacao} : t) };
+      break;
+    }
+
+    case 'ADD_ALUNO': {
+      next = { ...state, turmas: state.turmas.map(t => {
+        if (t.id !== action.turmaId) return t;
+        if (t.alunos.includes(action.nome)) return t;
+        return {...t, alunos: [...t.alunos, action.nome]};
+      })};
+      break;
+    }
+
+    case 'REMOVE_ALUNO': {
+      next = { ...state, turmas: state.turmas.map(t => {
+        if (t.id !== action.turmaId) return t;
+        return {...t, alunos: t.alunos.filter(a => a !== action.nome)};
+      })};
+      break;
+    }
+
+    case 'ADD_FALTA': {
+      const { alunoNome, turmaId, datas } = action;
+      const faltaId = genId('f');
+      const newFalta = { id: faltaId, alunoNome, turmaId, datas, status: 'pendente' };
+      // auto-create vagas, ignore duplicates
+      const existingVagaKeys = new Set(state.vagas.map(v => `${v.turmaId}|${v.data}|${v.faltaId}`));
+      const newVagas = datas
+        .filter(d => !state.vagas.some(v => v.turmaId === turmaId && v.data === d && v.faltaId === faltaId))
+        .map(d => ({ id: genId('v'), turmaId, data: d, faltaId }));
+      next = { ...state, faltas: [...state.faltas, newFalta], vagas: [...state.vagas, ...newVagas] };
+      break;
+    }
+
+    case 'ADD_REPOSICAO': {
+      const { alunoNome, dataReposicao, turmaReposicaoId, tipo } = action;
+      const repoId = genId('r');
+
+      if (tipo === 'reposicao') {
+        // Find oldest pending falta for this aluno
+        const pending = state.faltas
+          .filter(f => f.alunoNome === alunoNome && f.status === 'pendente')
+          .sort((a,b) => getFaltaEarliest(a).localeCompare(getFaltaEarliest(b)));
+        if (!pending.length) return state;
+        const oldest = pending[0];
+        const newRepo = {
+          id: repoId, alunoNome,
+          turmaOrigemId: oldest.turmaId, faltaId: oldest.id,
+          dataReposicao, turmaReposicaoId, tipo: 'reposicao', realizada: false
+        };
+        next = {
+          ...state,
+          faltas: state.faltas.map(f => f.id === oldest.id ? {...f, status:'marcada', reposicaoId: repoId} : f),
+          reposicoes: [...state.reposicoes, newRepo],
+          vagas: state.vagas.filter(v => v.faltaId !== oldest.id)
+        };
+      } else {
+        // aula extra
+        const turmaOrigem = state.turmas.find(t => t.alunos.includes(alunoNome));
+        const newRepo = {
+          id: repoId, alunoNome,
+          turmaOrigemId: turmaOrigem ? turmaOrigem.id : null,
+          faltaId: null, dataReposicao, turmaReposicaoId,
+          tipo: 'aula_extra', realizada: false,
+          observacao: 'Aula extra sem falta registrada — verificar'
+        };
+        next = { ...state, reposicoes: [...state.reposicoes, newRepo] };
+      }
+      break;
+    }
+
+    case 'CANCEL_REPOSICAO': {
+      const repo = state.reposicoes.find(r => r.id === action.id);
+      if (!repo) return state;
+      let newFaltas = state.faltas;
+      let newVagas = state.vagas;
+      if (repo.faltaId) {
+        // revert falta to pendente
+        newFaltas = state.faltas.map(f => f.id === repo.faltaId ? {...f, status:'pendente', reposicaoId: undefined} : f);
+        // reopen vagas for the original falta dates
+        const falta = newFaltas.find(f => f.id === repo.faltaId);
+        if (falta) {
+          const extra = falta.datas
+            .filter(d => !newVagas.some(v => v.turmaId === falta.turmaId && v.data === d && v.faltaId === falta.id))
+            .map(d => ({ id: genId('v'), turmaId: falta.turmaId, data: d, faltaId: falta.id }));
+          newVagas = [...newVagas, ...extra];
+        }
+      }
+      next = {
+        ...state,
+        faltas: newFaltas,
+        vagas: newVagas,
+        reposicoes: state.reposicoes.filter(r => r.id !== action.id)
+      };
+      break;
+    }
+
+    case 'ADD_AUSENCIA': {
+      const { alunoNome, turmaId, tipo, mesAno } = action;
+      const ausId = genId('aus');
+      next = {
+        ...state,
+        ausencias: [...state.ausencias, { id: ausId, alunoNome, turmaId, tipo, mesAno, creditoReposicao:1, creditoUsado:false }]
+      };
+      break;
+    }
+
+    case 'USE_AUSENCIA_CREDITO': {
+      next = { ...state, ausencias: state.ausencias.map(a => a.id === action.id ? {...a, creditoUsado:true} : a) };
+      break;
+    }
+
+    case 'DELETE_AUSENCIA': {
+      next = { ...state, ausencias: state.ausencias.filter(a => a.id !== action.id) };
+      break;
+    }
+
+    case 'SAVE_SNAPSHOT': {
+      const snap = {
+        id: genId('snap'),
+        timestamp: new Date().toISOString(),
+        label: action.label || fmtBRFull(todayStr()),
+        conteudo: action.conteudo
+      };
+      const snaps = [snap, ...state.snapshots].slice(0, MAX_SNAPSHOTS);
+      next = { ...state, snapshots: snaps };
+      break;
+    }
+
+    case 'DELETE_SNAPSHOT': {
+      next = { ...state, snapshots: state.snapshots.filter(s => s.id !== action.id) };
+      break;
+    }
+
+    case 'IMPORT_MERGE': {
+      const { faltas: newF = [], vagas: newV = [] } = action.data;
+      const mergedFaltas = [...state.faltas];
+      const mergedVagas = [...state.vagas];
+      newF.forEach(f => {
+        if (!mergedFaltas.find(x => x.alunoNome === f.alunoNome && x.turmaId === f.turmaId && JSON.stringify([...f.datas].sort()) === JSON.stringify([...x.datas].sort()))) {
+          mergedFaltas.push(f);
+        }
+      });
+      newV.forEach(v => {
+        if (!mergedVagas.find(x => x.turmaId === v.turmaId && x.data === v.data)) {
+          mergedVagas.push(v);
+        }
+      });
+      next = { ...state, faltas: mergedFaltas, vagas: mergedVagas };
+      break;
+    }
+
+    case 'CLEANUP': {
+      const td = todayStr();
+      // Remove past vagas
+      const vagas = state.vagas.filter(v => v.data >= td);
+      // Mark past reposicoes as realized
+      const reposicoes = state.reposicoes.map(r => r.dataReposicao < td ? {...r, realizada: true} : r);
+      next = { ...state, vagas, reposicoes };
+      break;
+    }
+
+    default:
+      return state;
+  }
+
+  // Persist
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch(e) {}
+  return next;
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch(e) {}
+  return SEED;
+}
+
+// ==================== MODAL ====================
+function Modal({ title, children, onClose, danger }) {
+  useEffect(() => {
+    const h = e => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 p-4" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full fade-in">
+        <div className={`p-4 border-b flex justify-between items-center ${danger ? 'bg-red-50' : 'bg-gray-50'} rounded-t-xl`}>
+          <h3 className={`font-semibold text-lg ${danger ? 'text-red-700' : 'text-gray-800'}`}>{title}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+        </div>
+        <div className="p-4">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmModal({ title, message, onConfirm, onCancel, danger, confirmLabel='Confirmar', children }) {
+  return (
+    <Modal title={title} onClose={onCancel} danger={danger}>
+      {message && <p className="text-gray-700 mb-4">{message}</p>}
+      {children}
+      <div className="flex gap-2 justify-end mt-4">
+        <button onClick={onCancel} className="px-4 py-2 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50">Cancelar</button>
+        <button onClick={onConfirm} className={`px-4 py-2 rounded-lg text-white font-medium ${danger ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}>{confirmLabel}</button>
+      </div>
+    </Modal>
+  );
+}
+
+// ==================== SECTION 1: TURMAS ====================
+function SectionTurmas({ state, dispatch }) {
+  const [expandedId, setExpandedId] = useState(null);
+  const [newNome, setNewNome] = useState({});
+  const [addingAluno, setAddingAluno] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+  const [newTurma, setNewTurma] = useState({ diaSemana:'segunda', horario:'09h', observacao:'' });
+  const [showNewTurma, setShowNewTurma] = useState(false);
+  const [editObs, setEditObs] = useState({});
+
+  const sorted = useMemo(() => sortTurmas(state.turmas), [state.turmas]);
+
+  const hasPendencies = (turmaId, alunoNome) => {
+    return state.faltas.some(f => f.turmaId === turmaId && f.alunoNome === alunoNome && f.status === 'pendente') ||
+           state.reposicoes.some(r => r.turmaOrigemId === turmaId && r.alunoNome === alunoNome && !r.realizada);
+  };
+
+  const horarios = ['07h','08h','09h','10h','11h','12h','13h','14h','15h','16h','17h','18h','19h','20h','21h'];
+
+  return (
+    <div className="max-w-4xl mx-auto p-4 space-y-3">
+      <div className="flex justify-between items-center mb-2">
+        <h2 className="text-xl font-bold text-gray-800">Turmas</h2>
+        <button onClick={() => setShowNewTurma(true)} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm">+ Nova Turma</button>
+      </div>
+
+      {sorted.map(turma => {
+        const exp = expandedId === turma.id;
+        const pct = turma.alunos.length / turma.capacidade;
+        const over = turma.alunos.length > turma.capacidade;
+        return (
+          <div key={turma.id} className="bg-white rounded-xl shadow-sm border border-gray-200">
+            <div className="flex items-center justify-between p-4 cursor-pointer" onClick={() => setExpandedId(exp ? null : turma.id)}>
+              <div className="flex items-center gap-3">
+                <div>
+                  <div className="font-semibold text-gray-800 flex items-center gap-2">
+                    {ABREV[turma.diaSemana]} {turma.horario}
+                    {turma.observacao && <span className="text-gray-400 font-normal text-sm">({turma.observacao})</span>}
+                  </div>
+                  <div className="text-sm text-gray-500 mt-0.5">
+                    <span className={`font-medium ${over ? 'text-red-600' : pct >= 0.875 ? 'text-amber-600' : 'text-green-600'}`}>
+                      {turma.alunos.length}/{turma.capacidade}
+                    </span>
+                    <span className="ml-1">alunos</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={e => { e.stopPropagation(); setConfirm({type:'deleteTurma', turma}); }} className="text-red-400 hover:text-red-600 text-sm px-2">Excluir</button>
+                <span className="text-gray-400 text-lg">{exp ? '▲' : '▼'}</span>
+              </div>
+            </div>
+
+            {exp && (
+              <div className="border-t border-gray-100 p-4 fade-in">
+                <div className="mb-3 flex gap-2">
+                  <input
+                    className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+                    placeholder="Observação (ex: com Bia)"
+                    value={editObs[turma.id] !== undefined ? editObs[turma.id] : turma.observacao}
+                    onChange={e => setEditObs(prev => ({...prev, [turma.id]: e.target.value}))}
+                  />
+                  <button
+                    onClick={() => { dispatch({type:'UPDATE_TURMA_OBS', id: turma.id, observacao: editObs[turma.id] ?? turma.observacao}); setEditObs(prev => ({...prev, [turma.id]: undefined})); }}
+                    className="px-3 py-1.5 bg-gray-200 rounded-lg text-sm hover:bg-gray-300"
+                  >Salvar</button>
+                </div>
+
+                <div className="space-y-1 mb-3">
+                  {turma.alunos.length === 0 && <p className="text-gray-400 text-sm italic">Nenhum aluno cadastrado</p>}
+                  {turma.alunos.map(nome => (
+                    <div key={nome} className="flex justify-between items-center py-1.5 px-2 rounded-lg hover:bg-gray-50">
+                      <span className="text-sm text-gray-700">{nome}</span>
+                      <button onClick={() => {
+                        if (hasPendencies(turma.id, nome)) {
+                          setConfirm({type:'removeAlunoPendencias', turma, nome});
+                        } else {
+                          setConfirm({type:'removeAluno', turma, nome});
+                        }
+                      }} className="text-red-400 hover:text-red-600 text-xs px-2">Remover</button>
+                    </div>
+                  ))}
+                </div>
+
+                {addingAluno === turma.id ? (
+                  <div className="flex gap-2">
+                    <input
+                      className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+                      placeholder="Nome do aluno"
+                      value={newNome[turma.id] || ''}
+                      onChange={e => setNewNome(prev => ({...prev, [turma.id]: e.target.value}))}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          const n = (newNome[turma.id]||'').trim();
+                          if (n) { dispatch({type:'ADD_ALUNO', turmaId: turma.id, nome: n}); setNewNome(prev => ({...prev, [turma.id]: ''})); setAddingAluno(null); }
+                        }
+                        if (e.key === 'Escape') setAddingAluno(null);
+                      }}
+                      autoFocus
+                    />
+                    <button onClick={() => {
+                      const n = (newNome[turma.id]||'').trim();
+                      if (n) { dispatch({type:'ADD_ALUNO', turmaId: turma.id, nome: n}); setNewNome(prev => ({...prev, [turma.id]: ''})); }
+                      setAddingAluno(null);
+                    }} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">OK</button>
+                    <button onClick={() => setAddingAluno(null)} className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm">✕</button>
+                  </div>
+                ) : (
+                  <button onClick={() => setAddingAluno(turma.id)} className="text-sm text-blue-600 hover:text-blue-800 font-medium">+ Adicionar aluno</button>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {showNewTurma && (
+        <Modal title="Nova Turma" onClose={() => setShowNewTurma(false)}>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Dia da semana</label>
+              <select value={newTurma.diaSemana} onChange={e => setNewTurma(p => ({...p, diaSemana: e.target.value}))} className="w-full border border-gray-300 rounded-lg px-3 py-2">
+                {DIAS_ORDER.map(d => <option key={d} value={d}>{EXTENSO[d]}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Horário</label>
+              <select value={newTurma.horario} onChange={e => setNewTurma(p => ({...p, horario: e.target.value}))} className="w-full border border-gray-300 rounded-lg px-3 py-2">
+                {horarios.map(h => <option key={h} value={h}>{h}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Observação (opcional)</label>
+              <input value={newTurma.observacao} onChange={e => setNewTurma(p => ({...p, observacao: e.target.value}))} className="w-full border border-gray-300 rounded-lg px-3 py-2" placeholder="ex: com Bia" />
+            </div>
+            {state.turmas.some(t => t.diaSemana === newTurma.diaSemana && t.horario === newTurma.horario) && (
+              <p className="text-red-600 text-sm">Esta turma já existe.</p>
+            )}
+            <div className="flex gap-2 justify-end pt-2">
+              <button onClick={() => setShowNewTurma(false)} className="px-4 py-2 border border-gray-300 rounded-lg text-gray-600">Cancelar</button>
+              <button onClick={() => {
+                if (!state.turmas.some(t => t.diaSemana === newTurma.diaSemana && t.horario === newTurma.horario)) {
+                  dispatch({type:'ADD_TURMA', ...newTurma});
+                  setShowNewTurma(false);
+                }
+              }} className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700">Criar Turma</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {confirm?.type === 'deleteTurma' && (
+        <ConfirmModal
+          title="Excluir turma?" danger
+          message={`Remover ${ABREV[confirm.turma.diaSemana]} ${confirm.turma.horario}? Todas as faltas e vagas desta turma também serão removidas.`}
+          onConfirm={() => { dispatch({type:'DELETE_TURMA', id: confirm.turma.id}); setConfirm(null); }}
+          onCancel={() => setConfirm(null)}
+          confirmLabel="Excluir"
+        />
+      )}
+      {confirm?.type === 'removeAluno' && (
+        <ConfirmModal
+          title="Remover aluno?" danger
+          message={`Remover ${confirm.nome} da turma ${ABREV[confirm.turma.diaSemana]} ${confirm.turma.horario}?`}
+          onConfirm={() => { dispatch({type:'REMOVE_ALUNO', turmaId: confirm.turma.id, nome: confirm.nome}); setConfirm(null); }}
+          onCancel={() => setConfirm(null)}
+          confirmLabel="Remover"
+        />
+      )}
+      {confirm?.type === 'removeAlunoPendencias' && (
+        <ConfirmModal
+          title="Aluno com pendências" danger
+          message={`${confirm.nome} possui faltas ou reposições pendentes. Remover mesmo assim?`}
+          onConfirm={() => { dispatch({type:'REMOVE_ALUNO', turmaId: confirm.turma.id, nome: confirm.nome}); setConfirm(null); }}
+          onCancel={() => setConfirm(null)}
+          confirmLabel="Remover mesmo assim"
+        />
+      )}
+    </div>
+  );
+}
+
+// ==================== TAB: REGISTRAR FALTA ====================
+function TabRegistrarFalta({ state, dispatch }) {
+  const [turmaId, setTurmaId] = useState('');
+  const [alunoNome, setAlunoNome] = useState('');
+  const [selectedDates, setSelectedDates] = useState([]);
+  const [success, setSuccess] = useState('');
+
+  const sorted = useMemo(() => sortTurmas(state.turmas), [state.turmas]);
+  const turma = state.turmas.find(t => t.id === turmaId);
+  const occurrences = useMemo(() => turma ? getNextOccurrences(turma.diaSemana, 8) : [], [turma]);
+
+  const toggleDate = d => setSelectedDates(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]);
+
+  const handleSubmit = () => {
+    if (!turmaId || !alunoNome || !selectedDates.length) return;
+    // Check for duplicate
+    const exists = state.faltas.find(f => f.alunoNome === alunoNome && f.turmaId === turmaId && f.status === 'pendente');
+    // Allow: duplicates are ignored (they'll just add new falta entry)
+    dispatch({ type: 'ADD_FALTA', alunoNome, turmaId, datas: selectedDates });
+    setSuccess(`Falta de ${alunoNome} registrada para ${selectedDates.length} data(s).`);
+    setAlunoNome('');
+    setSelectedDates([]);
+    setTimeout(() => setSuccess(''), 4000);
+  };
+
+  return (
+    <div className="space-y-4">
+      <h3 className="font-semibold text-gray-700">Registrar Falta</h3>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Turma</label>
+        <select value={turmaId} onChange={e => { setTurmaId(e.target.value); setAlunoNome(''); setSelectedDates([]); }} className="w-full border border-gray-300 rounded-lg px-3 py-2">
+          <option value="">— Selecione a turma —</option>
+          {sorted.map(t => <option key={t.id} value={t.id}>{EXTENSO[t.diaSemana]} {t.horario}{t.observacao ? ` (${t.observacao})` : ''}</option>)}
+        </select>
+      </div>
+
+      {turma && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Aluno</label>
+          <select value={alunoNome} onChange={e => setAlunoNome(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2">
+            <option value="">— Selecione o aluno —</option>
+            {turma.alunos.map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+          {turma.alunos.length === 0 && <p className="text-amber-600 text-sm mt-1">Esta turma não tem alunos cadastrados.</p>}
+        </div>
+      )}
+
+      {turma && alunoNome && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Datas da falta (próximas ocorrências)</label>
+          <div className="grid grid-cols-2 gap-2">
+            {occurrences.map(d => (
+              <label key={d} className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors ${selectedDates.includes(d) ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                <input type="checkbox" checked={selectedDates.includes(d)} onChange={() => toggleDate(d)} className="rounded" />
+                <span className="text-sm">{fmtBRFull(d)} <span className="text-gray-400">({ABREV[getDiaSemanaFromDateStr(d)]})</span></span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {success && <div className="bg-green-50 text-green-700 rounded-lg px-4 py-3 text-sm font-medium">{success}</div>}
+
+      <button
+        onClick={handleSubmit}
+        disabled={!turmaId || !alunoNome || !selectedDates.length}
+        className="w-full py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        Registrar Falta
+      </button>
+    </div>
+  );
+}
+
+// ==================== TAB: REGISTRAR REPOSIÇÃO ====================
+function TabRegistrarReposicao({ state, dispatch }) {
+  const [alunoNome, setAlunoNome] = useState('');
+  const [data, setData] = useState('');
+  const [turmaRepoId, setTurmaRepoId] = useState('');
+  const [tipo, setTipo] = useState('reposicao');
+  const [success, setSuccess] = useState('');
+
+  const sorted = useMemo(() => sortTurmas(state.turmas), [state.turmas]);
+
+  // Alunos with pending falta
+  const alunosComFalta = useMemo(() => {
+    const map = {};
+    state.faltas.filter(f => f.status === 'pendente').forEach(f => {
+      if (!map[f.alunoNome]) {
+        map[f.alunoNome] = { alunoNome: f.alunoNome, turmaId: f.turmaId, earliestDate: getFaltaEarliest(f) };
+      } else if (getFaltaEarliest(f) < map[f.alunoNome].earliestDate) {
+        map[f.alunoNome] = { alunoNome: f.alunoNome, turmaId: f.turmaId, earliestDate: getFaltaEarliest(f) };
+      }
+    });
+    return Object.values(map).sort((a,b) => a.alunoNome.localeCompare(b.alunoNome));
+  }, [state.faltas]);
+
+  // All alunos (for aula extra)
+  const todosAlunos = useMemo(() => {
+    const names = new Set();
+    state.turmas.forEach(t => t.alunos.forEach(n => names.add(n)));
+    return [...names].sort();
+  }, [state.turmas]);
+
+  const occupancy = useMemo(() => {
+    if (!turmaRepoId || !data) return null;
+    return calcOccupancy(turmaRepoId, data, state);
+  }, [turmaRepoId, data, state]);
+
+  const turmaRepo = state.turmas.find(t => t.id === turmaRepoId);
+
+  const alunoOptions = tipo === 'reposicao' ? alunosComFalta : todosAlunos.map(n => ({ alunoNome: n, turmaId: null }));
+
+  const handleSubmit = () => {
+    if (!alunoNome || !data || !turmaRepoId) return;
+    if (tipo === 'reposicao') {
+      const pending = state.faltas.filter(f => f.alunoNome === alunoNome && f.status === 'pendente');
+      if (!pending.length) return;
+    }
+    dispatch({ type: 'ADD_REPOSICAO', alunoNome, dataReposicao: data, turmaReposicaoId: turmaRepoId, tipo });
+    setSuccess(`Reposição de ${alunoNome} agendada para ${fmtBRFull(data)}.`);
+    setAlunoNome(''); setData(''); setTurmaRepoId('');
+    setTimeout(() => setSuccess(''), 4000);
+  };
+
+  const faltaInfo = alunoNome && tipo === 'reposicao' ? (() => {
+    const pending = state.faltas.filter(f => f.alunoNome === alunoNome && f.status === 'pendente').sort((a,b) => getFaltaEarliest(a).localeCompare(getFaltaEarliest(b)));
+    if (!pending.length) return null;
+    const oldest = pending[0];
+    return { turma: state.turmas.find(t => t.id === oldest.turmaId), datas: oldest.datas, expiry: getFaltaExpiry(oldest) };
+  })() : null;
+
+  return (
+    <div className="space-y-4">
+      <h3 className="font-semibold text-gray-700">Registrar Reposição</h3>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
+        <div className="flex gap-3">
+          {[['reposicao','Reposição de falta'],['aula_extra','Aula extra']].map(([v,l]) => (
+            <label key={v} className={`flex-1 flex items-center justify-center gap-2 p-2.5 rounded-lg border cursor-pointer ${tipo===v ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'}`}>
+              <input type="radio" name="tipo" value={v} checked={tipo===v} onChange={() => { setTipo(v); setAlunoNome(''); }} className="sr-only" />
+              <span className="text-sm font-medium">{l}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Aluno</label>
+        <select value={alunoNome} onChange={e => setAlunoNome(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2">
+          <option value="">— Selecione o aluno —</option>
+          {alunoOptions.map(a => (
+            <option key={a.alunoNome} value={a.alunoNome}>
+              {a.alunoNome}{a.turmaId ? ` (${getTurmaLabel(state.turmas, a.turmaId)})` : ''}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {faltaInfo && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
+          <div className="font-medium text-blue-800">Falta mais antiga a consumir:</div>
+          <div className="text-blue-700 mt-0.5">
+            {getTurmaLabel(state.turmas, faltaInfo.turma?.id)} — {fmtDatesText(faltaInfo.datas)}
+          </div>
+          <div className="text-blue-600 mt-0.5">Expira em: {fmtBRFull(faltaInfo.expiry)}</div>
+        </div>
+      )}
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Data de reposição</label>
+        <input type="date" value={data} min={todayStr()} onChange={e => setData(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2" />
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Turma de reposição</label>
+        <select value={turmaRepoId} onChange={e => setTurmaRepoId(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2">
+          <option value="">— Selecione a turma —</option>
+          {sorted.map(t => <option key={t.id} value={t.id}>{EXTENSO[t.diaSemana]} {t.horario}{t.observacao ? ` (${t.observacao})` : ''}</option>)}
+        </select>
+      </div>
+
+      {occupancy !== null && turmaRepo && (
+        <div className={`rounded-lg px-3 py-2 text-sm font-medium ${occupancy > turmaRepo.capacidade ? 'bg-red-50 text-red-700 border border-red-200' : occupancy === turmaRepo.capacidade ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-green-50 text-green-700 border border-green-200'}`}>
+          {data ? `${getTurmaLabel(state.turmas, turmaRepoId)} em ${fmtBRFull(data)}: ` : `${getTurmaLabel(state.turmas, turmaRepoId)}: `}
+          <span>{occupancy + (tipo==='reposicao'?1:1)}/{turmaRepo.capacidade} alunos esperados após reposição</span>
+          {occupancy + 1 > turmaRepo.capacidade && ' ⚠️ Acima da capacidade!'}
+        </div>
+      )}
+
+      {success && <div className="bg-green-50 text-green-700 rounded-lg px-4 py-3 text-sm font-medium">{success}</div>}
+
+      <button
+        onClick={handleSubmit}
+        disabled={!alunoNome || !data || !turmaRepoId}
+        className="w-full py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        Confirmar Reposição
+      </button>
+    </div>
+  );
+}
+
+// ==================== TAB: CANCELAR REPOSIÇÃO ====================
+function TabCancelarReposicao({ state, dispatch }) {
+  const [selectedId, setSelectedId] = useState('');
+  const [confirm, setConfirm] = useState(false);
+  const [success, setSuccess] = useState('');
+  const td = todayStr();
+
+  const futuras = useMemo(() => state.reposicoes.filter(r => !r.realizada && r.dataReposicao >= td).sort((a,b) => a.dataReposicao.localeCompare(b.dataReposicao)), [state.reposicoes, td]);
+  const repo = futuras.find(r => r.id === selectedId);
+
+  const handleCancel = () => {
+    dispatch({ type: 'CANCEL_REPOSICAO', id: selectedId });
+    setSuccess(`Reposição de ${repo.alunoNome} em ${fmtBRFull(repo.dataReposicao)} cancelada.`);
+    setSelectedId(''); setConfirm(false);
+    setTimeout(() => setSuccess(''), 4000);
+  };
+
+  return (
+    <div className="space-y-4">
+      <h3 className="font-semibold text-gray-700">Cancelar Reposição</h3>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Reposição agendada</label>
+        <select value={selectedId} onChange={e => setSelectedId(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2">
+          <option value="">— Selecione —</option>
+          {futuras.map(r => (
+            <option key={r.id} value={r.id}>
+              {r.alunoNome} — {fmtBRFull(r.dataReposicao)} ({getTurmaLabel(state.turmas, r.turmaReposicaoId)}) {r.tipo==='aula_extra' ? '· Aula extra' : ''}
+            </option>
+          ))}
+        </select>
+        {futuras.length === 0 && <p className="text-gray-400 text-sm mt-1">Nenhuma reposição futura agendada.</p>}
+      </div>
+
+      {repo && (
+        <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1">
+          <div><span className="font-medium">Aluno:</span> {repo.alunoNome}</div>
+          <div><span className="font-medium">Data:</span> {fmtBRFull(repo.dataReposicao)}</div>
+          <div><span className="font-medium">Turma:</span> {getTurmaLabel(state.turmas, repo.turmaReposicaoId)}</div>
+          <div><span className="font-medium">Tipo:</span> {repo.tipo === 'reposicao' ? 'Reposição de falta' : 'Aula extra'}</div>
+          {repo.tipo === 'reposicao' && <div className="text-blue-600">A falta vinculada voltará para pendente e a vaga será reaberta.</div>}
+        </div>
+      )}
+
+      {success && <div className="bg-green-50 text-green-700 rounded-lg px-4 py-3 text-sm font-medium">{success}</div>}
+
+      <button
+        onClick={() => setConfirm(true)}
+        disabled={!selectedId}
+        className="w-full py-2.5 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        Cancelar Reposição
+      </button>
+
+      {confirm && repo && (
+        <ConfirmModal
+          title="Cancelar reposição?" danger
+          message={`Cancelar a reposição de ${repo.alunoNome} em ${fmtBRFull(repo.dataReposicao)}?`}
+          onConfirm={handleCancel}
+          onCancel={() => setConfirm(false)}
+          confirmLabel="Cancelar reposição"
+        />
+      )}
+    </div>
+  );
+}
+
+// ==================== TAB: AUSÊNCIA PROGRAMADA ====================
+function TabAusenciaProgramada({ state, dispatch }) {
+  const [turmaId, setTurmaId] = useState('');
+  const [alunoNome, setAlunoNome] = useState('');
+  const [tipo, setTipo] = useState('ferias');
+  const [mesAno, setMesAno] = useState('');
+  const [success, setSuccess] = useState('');
+
+  const sorted = useMemo(() => sortTurmas(state.turmas), [state.turmas]);
+  const turma = state.turmas.find(t => t.id === turmaId);
+
+  // Current month as default
+  useEffect(() => {
+    const d = new Date();
+    setMesAno(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
+  }, []);
+
+  const handleSubmit = () => {
+    if (!turmaId || !alunoNome || !mesAno) return;
+    dispatch({ type: 'ADD_AUSENCIA', alunoNome, turmaId, tipo, mesAno });
+    setSuccess(`Ausência de ${alunoNome} em ${getMesNome(mesAno)} registrada.`);
+    setAlunoNome('');
+    setTimeout(() => setSuccess(''), 4000);
+  };
+
+  return (
+    <div className="space-y-4">
+      <h3 className="font-semibold text-gray-700">Ausência Programada (Férias)</h3>
+
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
+        Aluno em férias recebe <strong>1 crédito de reposição</strong>, independente de quantas aulas perdeu. O prazo começa no último dia do mês de ausência.
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Turma</label>
+        <select value={turmaId} onChange={e => { setTurmaId(e.target.value); setAlunoNome(''); }} className="w-full border border-gray-300 rounded-lg px-3 py-2">
+          <option value="">— Selecione a turma —</option>
+          {sorted.map(t => <option key={t.id} value={t.id}>{EXTENSO[t.diaSemana]} {t.horario}</option>)}
+        </select>
+      </div>
+
+      {turma && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Aluno</label>
+          <select value={alunoNome} onChange={e => setAlunoNome(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2">
+            <option value="">— Selecione o aluno —</option>
+            {turma.alunos.map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+      )}
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de ausência</label>
+        <select value={tipo} onChange={e => setTipo(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2">
+          <option value="ferias">Férias</option>
+        </select>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Mês de ausência</label>
+        <input type="month" value={mesAno} onChange={e => setMesAno(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2" />
+      </div>
+
+      {mesAno && (
+        <div className="text-sm text-gray-500">
+          Prazo para reposição: até {fmtBRFull((() => { const d = parseDate(getLastDayOfMonth(mesAno)); d.setDate(d.getDate()+30); return dateToStr(d); })())}
+        </div>
+      )}
+
+      {success && <div className="bg-green-50 text-green-700 rounded-lg px-4 py-3 text-sm font-medium">{success}</div>}
+
+      <button
+        onClick={handleSubmit}
+        disabled={!turmaId || !alunoNome || !mesAno}
+        className="w-full py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        Registrar Ausência
+      </button>
+
+      {/* List current ausencias */}
+      {state.ausencias.length > 0 && (
+        <div className="mt-4 border-t border-gray-200 pt-4">
+          <h4 className="text-sm font-semibold text-gray-600 mb-2">Ausências registradas</h4>
+          <div className="space-y-2">
+            {state.ausencias.map(a => (
+              <div key={a.id} className="flex justify-between items-center bg-gray-50 rounded-lg p-3 text-sm">
+                <div>
+                  <span className="font-medium">{a.alunoNome}</span>
+                  <span className="text-gray-400 ml-2">({getTurmaLabel(state.turmas, a.turmaId)})</span>
+                  <div className="text-gray-500">Férias: {getMesNome(a.mesAno)} — Crédito: {a.creditoUsado ? <span className="text-green-600">usado</span> : <span className="text-amber-600">disponível</span>}</div>
+                </div>
+                <button onClick={() => dispatch({type:'DELETE_AUSENCIA', id: a.id})} className="text-red-400 hover:text-red-600 text-xs">Remover</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ==================== SECTION 2: FALTAS & REPOSIÇÕES ====================
+function SectionFaltasReposicoes({ state, dispatch }) {
+  const [tab, setTab] = useState(0);
+  const tabs = ['Registrar Falta', 'Registrar Reposição', 'Cancelar Reposição', 'Ausência Programada'];
+
+  return (
+    <div className="max-w-2xl mx-auto p-4">
+      <h2 className="text-xl font-bold text-gray-800 mb-4">Faltas & Reposições</h2>
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="flex border-b border-gray-200 overflow-x-auto">
+          {tabs.map((t,i) => (
+            <button key={i} onClick={() => setTab(i)} className={`flex-shrink-0 px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors ${tab===i ? 'border-b-2 border-blue-600 text-blue-600 bg-blue-50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}>{t}</button>
+          ))}
+        </div>
+        <div className="p-4">
+          {tab === 0 && <TabRegistrarFalta state={state} dispatch={dispatch} />}
+          {tab === 1 && <TabRegistrarReposicao state={state} dispatch={dispatch} />}
+          {tab === 2 && <TabCancelarReposicao state={state} dispatch={dispatch} />}
+          {tab === 3 && <TabAusenciaProgramada state={state} dispatch={dispatch} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==================== PAINEL: GENERATE TEXT ====================
+function generatePainelText(state) {
+  const td = todayStr();
+  const sorted = sortTurmas(state.turmas);
+
+  // ---- FALTAS ----
+  const pendentes = state.faltas
+    .filter(f => f.status === 'pendente')
+    .sort((a,b) => {
+      const ea = getFaltaEarliest(a), eb = getFaltaEarliest(b);
+      if (ea !== eb) return ea.localeCompare(eb);
+      const ta = state.turmas.find(t => t.id === a.turmaId);
+      const tb = state.turmas.find(t => t.id === b.turmaId);
+      return (ta?.horario||'').localeCompare(tb?.horario||'');
+    });
+
+  const ausencias = state.ausencias
+    .filter(a => !a.creditoUsado)
+    .sort((a,b) => getLastDayOfMonth(a.mesAno).localeCompare(getLastDayOfMonth(b.mesAno)));
+
+  const marcadas = state.faltas
+    .filter(f => f.status === 'marcada')
+    .sort((a,b) => {
+      const ea = getFaltaEarliest(a), eb = getFaltaEarliest(b);
+      if (ea !== eb) return ea.localeCompare(eb);
+      const ta = state.turmas.find(t => t.id === a.turmaId);
+      const tb = state.turmas.find(t => t.id === b.turmaId);
+      return (ta?.horario||'').localeCompare(tb?.horario||'');
+    });
+
+  let faltasText = '*FALTAS*\n';
+
+  // Merge pendentes + ausencias sorted
+  const combined = [
+    ...pendentes.map(f => ({ tipo:'falta', obj:f, sortKey: getFaltaEarliest(f) + (state.turmas.find(t=>t.id===f.turmaId)?.horario||'') })),
+    ...ausencias.map(a => ({ tipo:'ausencia', obj:a, sortKey: getLastDayOfMonth(a.mesAno) }))
+  ].sort((a,b) => a.sortKey.localeCompare(b.sortKey));
+
+  if (combined.length) faltasText += '\n';
+  combined.forEach(({ tipo, obj }) => {
+    if (tipo === 'falta') {
+      const t = state.turmas.find(x => x.id === obj.turmaId);
+      const tLabel = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
+      faltasText += `${obj.alunoNome} (${tLabel})\nFalta: *${fmtDatesText(obj.datas)}*\n\n`;
+    } else {
+      const t = state.turmas.find(x => x.id === obj.turmaId);
+      const tLabel = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
+      faltasText += `${obj.alunoNome} (${tLabel})\nFérias: ${getMesNome(obj.mesAno).toLowerCase()}\n\n`;
+    }
+  });
+
+  if (marcadas.length) {
+    faltasText += '*JÁ MARCADAS*\n\n';
+    marcadas.forEach(f => {
+      const t = state.turmas.find(x => x.id === f.turmaId);
+      const tLabel = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
+      faltasText += `${f.alunoNome} (${tLabel})\nFalta: ${fmtDatesText(f.datas)}\n\n`;
+    });
+  }
+
+  // ---- REPOSIÇÕES ----
+  const reposAtivas = state.reposicoes
+    .filter(r => !r.realizada)
+    .sort((a,b) => a.dataReposicao.localeCompare(b.dataReposicao));
+
+  let reposText = '*REPOSIÇÕES*\n';
+  if (reposAtivas.length) {
+    reposText += '\n';
+    reposAtivas.forEach(r => {
+      const tOrigem = state.turmas.find(t => t.id === r.turmaOrigemId);
+      const tRepo = state.turmas.find(t => t.id === r.turmaReposicaoId);
+      const origemLabel = tOrigem ? `${ABREV[tOrigem.diaSemana]} ${tOrigem.horario}` : '?';
+      const dia = getDiaSemanaFromDateStr(r.dataReposicao);
+      const prefix = r.tipo === 'reposicao' ? 'Repõe' : 'Aula extra';
+      reposText += `${r.alunoNome} (${origemLabel})\n${prefix}: ${EXTENSO[dia]}, ${fmtBR(r.dataReposicao)}, ${tRepo?.horario||'?'}\n\n`;
+    });
+  } else {
+    reposText += '\n_Nenhuma reposição agendada_\n\n';
+  }
+
+  // ---- VAGAS ----
+  const vagasFuturas = state.vagas.filter(v => v.data >= td).sort((a,b) => {
+    if (a.data !== b.data) return a.data.localeCompare(b.data);
+    const ta = state.turmas.find(t => t.id === a.turmaId);
+    const tb = state.turmas.find(t => t.id === b.turmaId);
+    return (ta?.horario||'').localeCompare(tb?.horario||'');
+  });
+
+  // Group by turmaId + data
+  const vagasGrouped = {};
+  vagasFuturas.forEach(v => {
+    const key = `${v.data}|${v.turmaId}`;
+    if (!vagasGrouped[key]) vagasGrouped[key] = { data: v.data, turmaId: v.turmaId, count: 0 };
+    vagasGrouped[key].count++;
+  });
+  const vagasList = Object.values(vagasGrouped).sort((a,b) => {
+    if (a.data !== b.data) return a.data.localeCompare(b.data);
+    const ta = state.turmas.find(t => t.id === a.turmaId);
+    const tb = state.turmas.find(t => t.id === b.turmaId);
+    return (ta?.horario||'').localeCompare(tb?.horario||'');
+  });
+
+  let vagasText = '*VAGAS*\n';
+  if (vagasList.length) {
+    vagasText += '\n';
+    vagasList.forEach(v => {
+      const t = state.turmas.find(x => x.id === v.turmaId);
+      const dia = getDiaSemanaFromDateStr(v.data);
+      vagasText += `${EXTENSO[dia]}, ${fmtBR(v.data)}, ${t?.horario||'?'}${v.count > 1 ? ` (${v.count})` : ''}\n`;
+    });
+    vagasText += '\n';
+  } else {
+    vagasText += '\n_Nenhuma vaga aberta_\n\n';
+  }
+
+  // ---- TURMAS ----
+  let turmasText = '*TURMAS*\n\n';
+  sorted.forEach(t => {
+    const obs = t.observacao ? ` (${t.observacao})` : '';
+    turmasText += `${ABREV[t.diaSemana]} ${t.horario} - ${t.alunos.length} aluno${t.alunos.length !== 1 ? 's' : ''}${obs}\n`;
+  });
+
+  // ---- OBSERVAÇÕES ----
+  const obs = [];
+  const today = td;
+  const in7Days = (() => { const d = new Date(); d.setDate(d.getDate()+7); return dateToStr(d); })();
+
+  // Expiring soon
+  const expirando = state.faltas.filter(f => {
+    if (f.status !== 'pendente') return false;
+    const exp = getFaltaExpiry(f);
+    return exp >= today && exp <= in7Days;
+  });
+  expirando.forEach(f => {
+    const t = state.turmas.find(x => x.id === f.turmaId);
+    obs.push(`⚠️ Falta expirando em ${fmtBRFull(getFaltaExpiry(f))}: ${f.alunoNome} (${t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?'})`);
+  });
+
+  // Expired faltas
+  const expiradas = state.faltas.filter(f => f.status === 'pendente' && getFaltaExpiry(f) < today);
+  expiradas.forEach(f => {
+    const t = state.turmas.find(x => x.id === f.turmaId);
+    obs.push(`🔴 Falta expirada: ${f.alunoNome} (${t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?'}) — ${fmtDatesText(f.datas)}`);
+  });
+
+  // Aulas extra sem falta
+  const extrasOrfas = state.reposicoes.filter(r => r.tipo === 'aula_extra' && !r.realizada);
+  extrasOrfas.forEach(r => {
+    obs.push(`ℹ️ Aula extra sem falta vinculada: ${r.alunoNome} — ${fmtBRFull(r.dataReposicao)}`);
+  });
+
+  // Ausencias expirando
+  state.ausencias.filter(a => !a.creditoUsado).forEach(a => {
+    const exp = getAusenciaExpiry(a);
+    if (exp >= today && exp <= in7Days) {
+      obs.push(`⚠️ Férias de ${a.alunoNome} expirando em ${fmtBRFull(exp)}`);
+    }
+    if (exp < today) {
+      obs.push(`🔴 Crédito de férias expirado: ${a.alunoNome} (${getMesNome(a.mesAno)})`);
+    }
+  });
+
+  // Turmas acima da capacidade
+  sorted.forEach(t => {
+    if (t.alunos.length > t.capacidade) obs.push(`⚠️ Turma acima da capacidade: ${ABREV[t.diaSemana]} ${t.horario} (${t.alunos.length}/${t.capacidade})`);
+  });
+
+  let obsText = '*OBSERVAÇÕES*\n\n';
+  obsText += obs.length ? obs.join('\n') + '\n' : '_Nenhuma observação_\n';
+
+  return [faltasText.trim(), reposText.trim(), vagasText.trim(), turmasText.trim(), obsText.trim()].join('\n\n---\n\n');
+}
+
+// ==================== SECTION 3: PAINEL ====================
+function SectionPainel({ state, dispatch }) {
+  const [tab, setTab] = useState(0);
+  const tabs = ['Lista atual', 'Histórico', 'Importação'];
+  const td = todayStr();
+
+  // Alertas
+  const in7 = (() => { const d = new Date(); d.setDate(d.getDate()+7); return dateToStr(d); })();
+  const alertas = useMemo(() => {
+    const list = [];
+    state.faltas.filter(f => f.status === 'pendente').forEach(f => {
+      const exp = getFaltaExpiry(f);
+      if (exp >= td && exp <= in7) {
+        const t = state.turmas.find(x => x.id === f.turmaId);
+        list.push({ type:'expirando', label: `${f.alunoNome} (${t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?'}) — expira ${fmtBRFull(exp)}` });
+      }
+    });
+    state.ausencias.filter(a => !a.creditoUsado).forEach(a => {
+      const exp = getAusenciaExpiry(a);
+      if (exp >= td && exp <= in7) {
+        list.push({ type:'expirando', label: `Férias de ${a.alunoNome} — expira ${fmtBRFull(exp)}` });
+      }
+    });
+    // Capacidade
+    sortTurmas(state.turmas).forEach(t => {
+      if (t.alunos.length > t.capacidade) list.push({ type:'capacidade', label: `Turma ${ABREV[t.diaSemana]} ${t.horario}: ${t.alunos.length}/${t.capacidade} alunos` });
+    });
+    return list;
+  }, [state, td, in7]);
+
+  return (
+    <div className="max-w-4xl mx-auto p-4">
+      <h2 className="text-xl font-bold text-gray-800 mb-4">Painel</h2>
+
+      {alertas.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4 fade-in">
+          <div className="flex items-center gap-2 font-semibold text-amber-800 mb-2">⚠️ Alertas</div>
+          <ul className="space-y-1">
+            {alertas.map((a,i) => (
+              <li key={i} className={`text-sm ${a.type==='capacidade' ? 'text-red-700' : 'text-amber-700'}`}>{a.label}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="flex border-b border-gray-200">
+          {tabs.map((t,i) => (
+            <button key={i} onClick={() => setTab(i)} className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${tab===i ? 'border-b-2 border-blue-600 text-blue-600 bg-blue-50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}>{t}</button>
+          ))}
+        </div>
+        <div className="p-4">
+          {tab === 0 && <PainelLista state={state} dispatch={dispatch} />}
+          {tab === 1 && <PainelHistorico state={state} dispatch={dispatch} />}
+          {tab === 2 && <PainelImportacao state={state} dispatch={dispatch} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PainelLista({ state, dispatch }) {
+  const [copied, setCopied] = useState(false);
+  const [snapLabel, setSnapLabel] = useState('');
+  const [snapSaved, setSnapSaved] = useState(false);
+
+  const text = useMemo(() => generatePainelText(state), [state]);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    });
+  };
+
+  const handleSnap = () => {
+    dispatch({ type: 'SAVE_SNAPSHOT', label: snapLabel || fmtBRFull(todayStr()), conteudo: text });
+    setSnapSaved(true);
+    setSnapLabel('');
+    setTimeout(() => setSnapSaved(false), 3000);
+  };
+
+  return (
+    <div className="space-y-4">
+      <pre className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-800 font-mono leading-relaxed overflow-x-auto">{text}</pre>
+
+      <div className="flex flex-wrap gap-2 items-center">
+        <button onClick={handleCopy} className={`px-4 py-2 rounded-lg font-medium text-sm ${copied ? 'bg-green-600 text-white' : 'bg-gray-800 text-white hover:bg-gray-900'}`}>
+          {copied ? '✓ Copiado!' : '📋 Copiar lista'}
+        </button>
+        <div className="flex gap-2 flex-1 min-w-0">
+          <input value={snapLabel} onChange={e => setSnapLabel(e.target.value)} placeholder="Rótulo do snapshot (opcional)" className="flex-1 min-w-0 border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+          <button onClick={handleSnap} className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium text-sm hover:bg-blue-700 whitespace-nowrap">💾 Salvar snapshot</button>
+        </div>
+      </div>
+      {snapSaved && <div className="bg-green-50 text-green-700 rounded-lg px-4 py-2 text-sm">Snapshot salvo!</div>}
+    </div>
+  );
+}
+
+function PainelHistorico({ state, dispatch }) {
+  const [viewSnap, setViewSnap] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+
+  if (state.snapshots.length === 0) {
+    return <p className="text-gray-400 text-sm text-center py-8">Nenhum snapshot salvo ainda.</p>;
+  }
+
+  return (
+    <div className="space-y-2">
+      {viewSnap && (
+        <Modal title={`Snapshot: ${viewSnap.label}`} onClose={() => setViewSnap(null)}>
+          <pre className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-700 font-mono leading-relaxed overflow-auto max-h-96">{viewSnap.conteudo}</pre>
+          <div className="mt-3 flex justify-end gap-2">
+            <button onClick={() => navigator.clipboard.writeText(viewSnap.conteudo)} className="px-3 py-1.5 bg-gray-200 rounded-lg text-sm hover:bg-gray-300">Copiar</button>
+            <button onClick={() => setViewSnap(null)} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm">Fechar</button>
+          </div>
+        </Modal>
+      )}
+      {confirm && (
+        <ConfirmModal title="Excluir snapshot?" danger message={`Excluir snapshot "${confirm.label}"?`}
+          onConfirm={() => { dispatch({type:'DELETE_SNAPSHOT', id: confirm.id}); setConfirm(null); }}
+          onCancel={() => setConfirm(null)} confirmLabel="Excluir" />
+      )}
+      {state.snapshots.map(s => (
+        <div key={s.id} className="flex justify-between items-center bg-gray-50 rounded-lg p-3 hover:bg-gray-100 transition-colors">
+          <div>
+            <div className="font-medium text-sm text-gray-800">{s.label}</div>
+            <div className="text-xs text-gray-400">{new Date(s.timestamp).toLocaleString('pt-BR')}</div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => setViewSnap(s)} className="text-blue-600 hover:text-blue-800 text-sm px-2">Ver</button>
+            <button onClick={() => setConfirm(s)} className="text-red-400 hover:text-red-600 text-sm px-2">Excluir</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ==================== PAINEL: IMPORTAÇÃO ====================
+function PainelImportacao({ state, dispatch }) {
+  const [text, setText] = useState('');
+  const [preview, setPreview] = useState(null);
+  const [imported, setImported] = useState(false);
+
+  function parseImport(txt) {
+    // Build turma lookup: "Seg 09h" -> turmaId
+    const turmaByLabel = {};
+    state.turmas.forEach(t => {
+      turmaByLabel[`${ABREV[t.diaSemana]} ${t.horario}`] = t.id;
+    });
+
+    // Parse date like "30/03" or "30/03/26" -> "2026-03-30"
+    const parseImportDate = (s, year = new Date().getFullYear()) => {
+      const m = s.trim().match(/^(\d{1,2})\/(\d{2})(?:\/(\d{2,4}))?$/);
+      if (!m) return null;
+      const d = m[1].padStart(2,'0'), mo = m[2].padStart(2,'0');
+      const y = m[3] ? (m[3].length === 2 ? '20'+m[3] : m[3]) : String(year);
+      return `${y}-${mo}-${d}`;
+    };
+
+    const newFaltas = [];
+    const newVagas = [];
+    const lines = txt.split('\n');
+    let section = null;
+    let i = 0;
+
+    while (i < lines.length) {
+      const line = lines[i].trim().replace(/\*/g, '');
+      if (line === 'FALTAS' || line === 'JÁ MARCADAS') { section = 'faltas'; i++; continue; }
+      if (line === 'REPOSIÇÕES') { section = 'repos'; i++; continue; }
+      if (line === 'VAGAS') { section = 'vagas'; i++; continue; }
+      if (line === 'TURMAS' || line === 'OBSERVAÇÕES') { section = null; i++; continue; }
+
+      if (section === 'faltas' && line && !line.startsWith('Falta:') && !line.startsWith('Férias:')) {
+        // Name line: "Nome (Seg 09h)"
+        const nameMatch = line.match(/^(.+?)\s+\((.+?)\)$/);
+        if (nameMatch && i+1 < lines.length) {
+          const nome = nameMatch[1].trim();
+          const turmaLabel = nameMatch[2].trim();
+          const turmaId = turmaByLabel[turmaLabel];
+          const nextLine = lines[i+1].trim().replace(/\*/g,'');
+          if (nextLine.startsWith('Falta:') && turmaId) {
+            const datesPart = nextLine.replace('Falta:','').trim();
+            const dateStrs = datesPart.split(/\s+e\s+|\s*,\s*/).map(s => parseImportDate(s)).filter(Boolean);
+            if (dateStrs.length) {
+              // Check if already exists
+              const exists = state.faltas.some(f => f.alunoNome === nome && f.turmaId === turmaId && JSON.stringify([...f.datas].sort()) === JSON.stringify([...dateStrs].sort()));
+              if (!exists) {
+                const fId = genId('f');
+                newFaltas.push({ id: fId, alunoNome: nome, turmaId, datas: dateStrs, status: 'pendente' });
+                dateStrs.forEach(d => newVagas.push({ id: genId('v'), turmaId, data: d, faltaId: fId }));
+              }
+            }
+          }
+        }
+      }
+
+      if (section === 'vagas' && line && !line.startsWith('*')) {
+        // "Quarta-feira, 29/04, 10h"
+        const m = line.match(/^(.+?),\s*(\d+\/\d+(?:\/\d+)?),\s*(\d+h)(?:\s+\((\d+)\))?$/);
+        if (m) {
+          const dateStr = parseImportDate(m[2]);
+          // find turma by horario and day
+          const diaNome = Object.keys(EXTENSO).find(k => EXTENSO[k] === m[1].trim());
+          if (dateStr && diaNome) {
+            const turma = state.turmas.find(t => t.diaSemana === diaNome && t.horario === m[3]);
+            if (turma && !state.vagas.some(v => v.turmaId === turma.id && v.data === dateStr)) {
+              newVagas.push({ id: genId('v'), turmaId: turma.id, data: dateStr, faltaId: null });
+            }
+          }
+        }
+      }
+      i++;
+    }
+
+    return { faltas: newFaltas, vagas: newVagas };
+  }
+
+  const handleParse = () => {
+    const result = parseImport(text);
+    setPreview(result);
+  };
+
+  const handleConfirm = () => {
+    dispatch({ type: 'IMPORT_MERGE', data: preview });
+    setImported(true);
+    setPreview(null);
+    setText('');
+    setTimeout(() => setImported(false), 4000);
+  };
+
+  return (
+    <div className="space-y-4">
+      <h3 className="font-semibold text-gray-700">Importar lista do WhatsApp</h3>
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
+        Cole a lista no formato WhatsApp abaixo. O sistema vai identificar faltas e vagas novas e fazer merge com o estado atual (sem sobrescrever o que já existe).
+      </div>
+
+      <textarea
+        value={text}
+        onChange={e => { setText(e.target.value); setPreview(null); }}
+        className="w-full h-64 border border-gray-300 rounded-lg p-3 text-sm font-mono"
+        placeholder="Cole a lista aqui..."
+      />
+
+      <button onClick={handleParse} disabled={!text.trim()} className="w-full py-2 bg-gray-700 text-white rounded-lg font-medium hover:bg-gray-800 disabled:opacity-40">
+        Analisar texto
+      </button>
+
+      {preview && (
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-3">
+          <div className="font-semibold text-gray-700">Resumo da importação:</div>
+          <div className="text-sm space-y-1">
+            <div><span className="font-medium">Novas faltas:</span> {preview.faltas.length}</div>
+            {preview.faltas.map((f,i) => (
+              <div key={i} className="ml-4 text-gray-600">• {f.alunoNome} ({getTurmaLabel(state.turmas, f.turmaId)}) — {fmtDatesText(f.datas)}</div>
+            ))}
+            <div className="mt-2"><span className="font-medium">Novas vagas:</span> {preview.vagas.filter(v => !v.faltaId).length} (independentes)</div>
+          </div>
+          {preview.faltas.length === 0 && preview.vagas.length === 0 && (
+            <div className="text-gray-400 text-sm">Nenhum dado novo encontrado.</div>
+          )}
+          {(preview.faltas.length > 0 || preview.vagas.length > 0) && (
+            <div className="flex gap-2">
+              <button onClick={() => setPreview(null)} className="flex-1 py-2 border border-gray-300 rounded-lg text-sm">Cancelar</button>
+              <button onClick={handleConfirm} className="flex-1 py-2 bg-blue-600 text-white rounded-lg font-medium text-sm hover:bg-blue-700">Confirmar importação</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {imported && <div className="bg-green-50 text-green-700 rounded-lg px-4 py-3 text-sm font-medium">Dados importados com sucesso!</div>}
+    </div>
+  );
+}
+
+// ==================== APP ====================
+function App() {
+  const [state, dispatch] = useReducer(reducer, null, loadState);
+  const [section, setSection] = useState(2); // Start on Painel
+  const [seedDismissed, setSeedDismissed] = useState(false);
+
+  // Run cleanup on mount
+  useEffect(() => {
+    dispatch({ type: 'CLEANUP' });
+  }, []);
+
+  const nav = [
+    { label: 'Turmas', icon: '👥' },
+    { label: 'Faltas & Reposições', icon: '📋' },
+    { label: 'Painel', icon: '📊' }
+  ];
+
+  const showSeedWarning = state._seedWarning && !seedDismissed;
+
+  return (
+    <div className="min-h-screen bg-gray-100">
+      {/* Header */}
+      <div className="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-sm">
+        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
+          <div>
+            <h1 className="text-lg font-bold text-gray-900">🎨 Ateliê Passarinho</h1>
+            <p className="text-xs text-gray-400">Gestão de Faltas e Reposições</p>
+          </div>
+          <div className="text-xs text-gray-400">{new Date().toLocaleDateString('pt-BR', {weekday:'short', day:'2-digit', month:'2-digit', year:'numeric'})}</div>
+        </div>
+        <div className="border-t border-gray-100">
+          <div className="max-w-4xl mx-auto flex">
+            {nav.map((n,i) => (
+              <button key={i} onClick={() => setSection(i)}
+                className={`flex-1 px-2 py-2.5 text-sm font-medium flex flex-col items-center gap-0.5 transition-colors ${section===i ? 'border-b-2 border-blue-600 text-blue-600 bg-blue-50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}>
+                <span>{n.icon}</span>
+                <span className="text-xs">{n.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Seed warning */}
+      {showSeedWarning && (
+        <div className="max-w-4xl mx-auto px-4 pt-4">
+          <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 flex justify-between items-start gap-3 fade-in">
+            <div>
+              <div className="font-semibold text-amber-800">⚠️ Cadastro de alunos incompleto</div>
+              <div className="text-sm text-amber-700 mt-0.5">Complete as turmas na seção <strong>Turmas</strong>. Os alunos identificados pelo histórico foram carregados; os demais precisam ser adicionados manualmente.</div>
+            </div>
+            <button onClick={() => { setSeedDismissed(true); dispatch({type:'DISMISS_SEED_WARNING'}); }} className="text-amber-500 hover:text-amber-700 text-xl leading-none flex-shrink-0">×</button>
+          </div>
+        </div>
+      )}
+
+      {/* Content */}
+      <div className="pb-8">
+        {section === 0 && <SectionTurmas state={state} dispatch={dispatch} />}
+        {section === 1 && <SectionFaltasReposicoes state={state} dispatch={dispatch} />}
+        {section === 2 && <SectionPainel state={state} dispatch={dispatch} />}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
