@@ -423,11 +423,16 @@ function reducer(state, action) {
 
     case 'SYNC_FROM_FIREBASE': {
       const td = todayStr();
-      const incoming = action.data;
+      const inc = action.data || {};
+      // Firebase não armazena arrays vazios — garantir defaults
       next = {
-        ...incoming,
-        vagas: (incoming.vagas || []).filter(v => v.data >= td),
-        reposicoes: (incoming.reposicoes || []).map(r => r.dataReposicao < td ? {...r, realizada: true} : r),
+        ...inc,
+        turmas:     Array.isArray(inc.turmas)     ? inc.turmas     : [],
+        faltas:     Array.isArray(inc.faltas)     ? inc.faltas     : [],
+        ausencias:  Array.isArray(inc.ausencias)  ? inc.ausencias  : [],
+        snapshots:  Array.isArray(inc.snapshots)  ? inc.snapshots  : [],
+        vagas:      (Array.isArray(inc.vagas)     ? inc.vagas      : []).filter(v => v.data >= td),
+        reposicoes: (Array.isArray(inc.reposicoes)? inc.reposicoes : []).map(r => r.dataReposicao < td ? {...r, realizada: true} : r),
       };
       break;
     }
@@ -441,10 +446,23 @@ function reducer(state, action) {
   return next;
 }
 
+function normalizeState(s) {
+  if (!s) return SEED;
+  return {
+    ...s,
+    turmas:     Array.isArray(s.turmas)     ? s.turmas.map(t => ({...t, alunos: Array.isArray(t.alunos) ? t.alunos : []})) : [],
+    faltas:     Array.isArray(s.faltas)     ? s.faltas     : [],
+    ausencias:  Array.isArray(s.ausencias)  ? s.ausencias  : [],
+    snapshots:  Array.isArray(s.snapshots)  ? s.snapshots  : [],
+    vagas:      Array.isArray(s.vagas)      ? s.vagas      : [],
+    reposicoes: Array.isArray(s.reposicoes) ? s.reposicoes : [],
+  };
+}
+
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) return normalizeState(JSON.parse(raw));
   } catch(e) {}
   return SEED;
 }
@@ -1858,7 +1876,7 @@ function App() {
     fetchFromFirebase()
       .then(function(data) {
         if (data && typeof data === 'object' && Object.keys(data).length > 0) {
-          dispatch({ type: 'SYNC_FROM_FIREBASE', data: data });
+          dispatch({ type: 'SYNC_FROM_FIREBASE', data: normalizeState(data) });
         } else {
           saveToFirebase(Object.assign({}, SEED, { _updatedAt: Date.now() })).catch(function(){});
         }
