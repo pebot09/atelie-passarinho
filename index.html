@@ -43,24 +43,24 @@ const DB_URL = 'https://atelie-passarinho-default-rtdb.firebaseio.com';
 const SEED = {
   _seedWarning: true,
   turmas: [
-    {id:"seg-09h",diaSemana:"segunda",horario:"09h",capacidade:8,observacao:"",alunos:["Laila","Isadora","Julia"]},
-    {id:"seg-11h",diaSemana:"segunda",horario:"11h",capacidade:8,observacao:"",alunos:[]},
-    {id:"seg-17h",diaSemana:"segunda",horario:"17h",capacidade:8,observacao:"",alunos:[]},
-    {id:"seg-19h",diaSemana:"segunda",horario:"19h",capacidade:8,observacao:"",alunos:["Pedro","Gabi","Joana","Wallace"]},
-    {id:"ter-09h",diaSemana:"terça",horario:"09h",capacidade:8,observacao:"com Bia",alunos:[]},
-    {id:"ter-11h",diaSemana:"terça",horario:"11h",capacidade:8,observacao:"",alunos:[]},
-    {id:"ter-17h",diaSemana:"terça",horario:"17h",capacidade:8,observacao:"",alunos:["Bea","Marcos"]},
-    {id:"ter-19h",diaSemana:"terça",horario:"19h",capacidade:8,observacao:"com Bia - oficina",alunos:["Katia","Teca","Ana Carolina","Mirza"]},
-    {id:"qua-08h",diaSemana:"quarta",horario:"08h",capacidade:8,observacao:"",alunos:["Julia","Bia"]},
-    {id:"qua-10h",diaSemana:"quarta",horario:"10h",capacidade:8,observacao:"",alunos:["Vívian","Mariza","Aida"]},
-    {id:"qua-17h",diaSemana:"quarta",horario:"17h",capacidade:8,observacao:"",alunos:["Charlotte","Sônia","Ana Clara"]},
-    {id:"qua-19h",diaSemana:"quarta",horario:"19h",capacidade:8,observacao:"",alunos:["Bia F","Teresa"]},
-    {id:"qui-09h",diaSemana:"quinta",horario:"09h",capacidade:8,observacao:"",alunos:["Carla","Bia"]},
-    {id:"qui-11h",diaSemana:"quinta",horario:"11h",capacidade:8,observacao:"",alunos:[]},
-    {id:"qui-17h",diaSemana:"quinta",horario:"17h",capacidade:8,observacao:"",alunos:["Adriana","Niara","Aline"]},
-    {id:"qui-19h",diaSemana:"quinta",horario:"19h",capacidade:8,observacao:"",alunos:["Anna Clara"]},
-    {id:"sab-09h",diaSemana:"sábado",horario:"09h",capacidade:8,observacao:"",alunos:["João","Livia","Claudia","Cris"]},
-    {id:"sab-11h",diaSemana:"sábado",horario:"11h",capacidade:8,observacao:"",alunos:["Juliana","Marcella"]}
+    {id:"seg-09h",diaSemana:"segunda",horario:"09h",capacidade:7,observacao:"",alunos:["Laila","Isadora","Julia"]},
+    {id:"seg-11h",diaSemana:"segunda",horario:"11h",capacidade:7,observacao:"",alunos:[]},
+    {id:"seg-17h",diaSemana:"segunda",horario:"17h",capacidade:7,observacao:"",alunos:[]},
+    {id:"seg-19h",diaSemana:"segunda",horario:"19h",capacidade:7,observacao:"",alunos:["Pedro","Gabi","Joana","Wallace"]},
+    {id:"ter-09h",diaSemana:"terça",horario:"09h",capacidade:7,observacao:"com Bia",alunos:[]},
+    {id:"ter-11h",diaSemana:"terça",horario:"11h",capacidade:7,observacao:"",alunos:[]},
+    {id:"ter-17h",diaSemana:"terça",horario:"17h",capacidade:7,observacao:"",alunos:["Bea","Marcos"]},
+    {id:"ter-19h",diaSemana:"terça",horario:"19h",capacidade:7,observacao:"com Bia - oficina",alunos:["Katia","Teca","Ana Carolina","Mirza"]},
+    {id:"qua-08h",diaSemana:"quarta",horario:"08h",capacidade:7,observacao:"",alunos:["Julia","Bia"]},
+    {id:"qua-10h",diaSemana:"quarta",horario:"10h",capacidade:7,observacao:"",alunos:["Vívian","Mariza","Aida"]},
+    {id:"qua-17h",diaSemana:"quarta",horario:"17h",capacidade:7,observacao:"",alunos:["Charlotte","Sônia","Ana Clara"]},
+    {id:"qua-19h",diaSemana:"quarta",horario:"19h",capacidade:7,observacao:"",alunos:["Bia F","Teresa"]},
+    {id:"qui-09h",diaSemana:"quinta",horario:"09h",capacidade:7,observacao:"",alunos:["Carla","Bia"]},
+    {id:"qui-11h",diaSemana:"quinta",horario:"11h",capacidade:7,observacao:"",alunos:[]},
+    {id:"qui-17h",diaSemana:"quinta",horario:"17h",capacidade:7,observacao:"",alunos:["Adriana","Niara","Aline"]},
+    {id:"qui-19h",diaSemana:"quinta",horario:"19h",capacidade:7,observacao:"",alunos:["Anna Clara"]},
+    {id:"sab-09h",diaSemana:"sábado",horario:"09h",capacidade:7,observacao:"",alunos:["João","Livia","Claudia","Cris"]},
+    {id:"sab-11h",diaSemana:"sábado",horario:"11h",capacidade:7,observacao:"",alunos:["Juliana","Marcella"]}
   ],
   faltas: [
     {id:"f001",alunoNome:"Laila",turmaId:"seg-09h",datas:["2026-03-30","2026-04-27"],status:"pendente"},
@@ -110,7 +110,8 @@ const SEED = {
     {id:"v006",turmaId:"sab-09h",data:"2026-05-02",faltaId:"f027"},
     {id:"v007",turmaId:"qua-17h",data:"2026-05-06",faltaId:"f017"}
   ],
-  snapshots: []
+  snapshots: [],
+  estatisticas: { faltasExpiradas: [] }
 };
 
 // ==================== HELPERS ====================
@@ -238,7 +239,7 @@ function reducer(state, action) {
       const { diaSemana, horario, observacao } = action;
       const id = `${diaSemana.slice(0,3).replace('ç','c').replace('á','a')}-${horario}`;
       if (state.turmas.find(t => t.id === id)) return state;
-      next = { ...state, turmas: [...state.turmas, { id, diaSemana, horario, capacidade: 8, observacao: observacao||'', alunos: [] }] };
+      next = { ...state, turmas: [...state.turmas, { id, diaSemana, horario, capacidade: 7, observacao: observacao||'', alunos: [] }] };
       break;
     }
 
@@ -277,14 +278,20 @@ function reducer(state, action) {
 
     case 'ADD_FALTA': {
       const { alunoNome, turmaId, datas } = action;
-      const faltaId = genId('f');
-      const newFalta = { id: faltaId, alunoNome, turmaId, datas, status: 'pendente' };
-      // auto-create vagas, ignore duplicates
-      const existingVagaKeys = new Set(state.vagas.map(v => `${v.turmaId}|${v.data}|${v.faltaId}`));
-      const newVagas = datas
-        .filter(d => !state.vagas.some(v => v.turmaId === turmaId && v.data === d && v.faltaId === faltaId))
-        .map(d => ({ id: genId('v'), turmaId, data: d, faltaId }));
-      next = { ...state, faltas: [...state.faltas, newFalta], vagas: [...state.vagas, ...newVagas] };
+      const newFaltas = [];
+      const newVagas = [];
+      datas.forEach(data => {
+        // Prevent duplicate: skip if this student already has a falta for this date in this turma
+        const exists = state.faltas.some(f =>
+          f.alunoNome === alunoNome && f.turmaId === turmaId &&
+          f.datas.includes(data) && (f.status === 'pendente' || f.status === 'marcada')
+        );
+        if (exists) return;
+        const faltaId = genId('f');
+        newFaltas.push({ id: faltaId, alunoNome, turmaId, datas: [data], status: 'pendente' });
+        newVagas.push({ id: genId('v'), turmaId, data, faltaId });
+      });
+      next = { ...state, faltas: [...state.faltas, ...newFaltas], vagas: [...state.vagas, ...newVagas] };
       break;
     }
 
@@ -417,17 +424,40 @@ function reducer(state, action) {
       const td = todayStr();
       const vagas = state.vagas.filter(v => v.data >= td);
       const reposicoes = state.reposicoes.map(r => r.dataReposicao < td ? {...r, realizada: true} : r);
-      next = { ...state, vagas, reposicoes };
+      // Move expired pendente faltas to statistics
+      const expiredFaltas = state.faltas.filter(f => f.status === 'pendente' && getFaltaExpiry(f) < td);
+      const activeFaltas  = state.faltas.filter(f => !(f.status === 'pendente' && getFaltaExpiry(f) < td));
+      const newExpStats = expiredFaltas.map(f => ({
+        alunoNome: f.alunoNome, turmaId: f.turmaId,
+        data: f.datas[0], expiradaEm: getFaltaExpiry(f)
+      }));
+      const estatisticas = {
+        ...(state.estatisticas || {}),
+        faltasExpiradas: [...arr((state.estatisticas || {}).faltasExpiradas), ...newExpStats]
+      };
+      next = { ...state, vagas, reposicoes, faltas: activeFaltas, estatisticas };
       break;
     }
 
     case 'SYNC_FROM_FIREBASE': {
       const td = todayStr();
       const inc = normalizeState(action.data);
+      const expiredFaltas = inc.faltas.filter(f => f.status === 'pendente' && getFaltaExpiry(f) < td);
+      const activeFaltas  = inc.faltas.filter(f => !(f.status === 'pendente' && getFaltaExpiry(f) < td));
+      const newExpStats = expiredFaltas.map(f => ({
+        alunoNome: f.alunoNome, turmaId: f.turmaId,
+        data: f.datas[0], expiradaEm: getFaltaExpiry(f)
+      }));
+      const estatisticas = {
+        ...(inc.estatisticas || {}),
+        faltasExpiradas: [...arr((inc.estatisticas || {}).faltasExpiradas), ...newExpStats]
+      };
       next = {
         ...inc,
+        faltas:     activeFaltas,
         vagas:      inc.vagas.filter(v => v.data >= td),
         reposicoes: inc.reposicoes.map(r => r.dataReposicao < td ? {...r, realizada: true} : r),
+        estatisticas,
       };
       break;
     }
@@ -443,19 +473,49 @@ function reducer(state, action) {
 
 function arr(v) { return Array.isArray(v) ? v : []; }
 
+// Split any multi-date falta records into individual single-date records
+function migrateFaltas(state) {
+  var needsMig = state.faltas.some(function(f) { return f.datas && f.datas.length > 1; });
+  if (!needsMig) return state;
+  var newFaltas = [];
+  var idMap = {}; // oldId -> [newId per date]
+  state.faltas.forEach(function(f) {
+    if (!f.datas || f.datas.length <= 1) { idMap[f.id] = [f.id]; newFaltas.push(f); return; }
+    var sorted = [...f.datas].sort();
+    var newIds = sorted.map(function(_, i) { return i === 0 ? f.id : genId('f'); });
+    idMap[f.id] = newIds;
+    sorted.forEach(function(data, i) {
+      newFaltas.push({
+        ...f, id: newIds[i], datas: [data],
+        status: i === 0 ? f.status : 'pendente',
+        reposicaoId: i === 0 ? f.reposicaoId : undefined,
+      });
+    });
+  });
+  // Fix vaga links: find the new faltaId that matches each vaga's date
+  var newVagas = state.vagas.map(function(v) {
+    if (!v.faltaId || !idMap[v.faltaId] || idMap[v.faltaId].length <= 1) return v;
+    var match = newFaltas.find(function(f) { return idMap[v.faltaId].includes(f.id) && f.datas[0] === v.data; });
+    return match ? {...v, faltaId: match.id} : v;
+  });
+  return {...state, faltas: newFaltas, vagas: newVagas};
+}
+
 function normalizeState(s) {
   if (!s || typeof s !== 'object') return {...SEED};
-  return {
+  var base = {
     ...s,
     turmas:     arr(s.turmas).map(function(t) {
-                  return {...t, alunos: arr(t.alunos)};
+                  return {...t, alunos: arr(t.alunos), capacidade: t.capacidade === 8 ? 7 : (t.capacidade || 7)};
                 }),
     faltas:     arr(s.faltas),
     ausencias:  arr(s.ausencias),
     snapshots:  arr(s.snapshots),
     vagas:      arr(s.vagas),
     reposicoes: arr(s.reposicoes),
+    estatisticas: { faltasExpiradas: arr((s.estatisticas || {}).faltasExpiradas) },
   };
+  return migrateFaltas(base);
 }
 
 function loadState() {
@@ -540,8 +600,8 @@ function SectionTurmas({ state, dispatch }) {
 
       {sorted.map(turma => {
         const exp = expandedId === turma.id;
-        const pct = turma.alunos.length / turma.capacidade;
         const over = turma.alunos.length > turma.capacidade;
+        const almostFull = !over && turma.alunos.length >= turma.capacidade - 1;
         return (
           <div key={turma.id} className="bg-white rounded-xl shadow-sm border border-gray-200">
             <div className="flex items-center justify-between p-4 cursor-pointer" onClick={() => setExpandedId(exp ? null : turma.id)}>
@@ -552,7 +612,7 @@ function SectionTurmas({ state, dispatch }) {
                     {turma.observacao && <span className="text-gray-400 font-normal text-sm">({turma.observacao})</span>}
                   </div>
                   <div className="text-sm text-gray-500 mt-0.5">
-                    <span className={`font-medium ${over ? 'text-red-600' : pct >= 0.875 ? 'text-amber-600' : 'text-green-600'}`}>
+                    <span className={`font-medium ${over ? 'text-red-600' : almostFull ? 'text-amber-600' : 'text-green-600'}`}>
                       {turma.alunos.length}/{turma.capacidade}
                     </span>
                     <span className="ml-1">alunos</span>
@@ -582,7 +642,7 @@ function SectionTurmas({ state, dispatch }) {
 
                 <div className="space-y-1 mb-3">
                   {turma.alunos.length === 0 && <p className="text-gray-400 text-sm italic">Nenhum aluno cadastrado</p>}
-                  {turma.alunos.map(nome => (
+                  {[...turma.alunos].sort((a,b) => a.localeCompare(b,'pt')).map(nome => (
                     <div key={nome} className="flex justify-between items-center py-1.5 px-2 rounded-lg hover:bg-gray-50">
                       <span className="text-sm text-gray-700">{nome}</span>
                       <button onClick={() => {
@@ -746,12 +806,29 @@ function TabRegistrarFalta({ state, dispatch }) {
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">Datas da falta (próximas ocorrências)</label>
           <div className="grid grid-cols-2 gap-2">
-            {occurrences.map(d => (
-              <label key={d} className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors ${selectedDates.includes(d) ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'}`}>
-                <input type="checkbox" checked={selectedDates.includes(d)} onChange={() => toggleDate(d)} className="rounded" />
-                <span className="text-sm">{fmtBRFull(d)} <span className="text-gray-400">({ABREV[getDiaSemanaFromDateStr(d)]})</span></span>
-              </label>
-            ))}
+            {occurrences.map(d => {
+              const jaRegistrado = state.faltas.some(f =>
+                f.alunoNome === alunoNome && f.turmaId === turmaId &&
+                f.datas.includes(d) && (f.status === 'pendente' || f.status === 'marcada')
+              );
+              return (
+                <label key={d} className={`flex items-center gap-2 p-2.5 rounded-lg border transition-colors ${
+                  jaRegistrado ? 'border-gray-100 bg-gray-50 cursor-not-allowed opacity-60' :
+                  selectedDates.includes(d) ? 'border-blue-500 bg-blue-50 cursor-pointer' :
+                  'border-gray-200 hover:bg-gray-50 cursor-pointer'
+                }`}>
+                  <input type="checkbox"
+                    checked={jaRegistrado || selectedDates.includes(d)}
+                    disabled={jaRegistrado}
+                    onChange={() => { if (!jaRegistrado) toggleDate(d); }}
+                    className="rounded" />
+                  <span className="text-sm">
+                    {fmtBRFull(d)} <span className="text-gray-400">({ABREV[getDiaSemanaFromDateStr(d)]})</span>
+                    {jaRegistrado && <span className="ml-1 text-xs text-orange-500 font-medium">já registrado</span>}
+                  </span>
+                </label>
+              );
+            })}
           </div>
         </div>
       )}
@@ -782,17 +859,24 @@ function TabRegistrarReposicao({ state, dispatch }) {
   const sorted = useMemo(() => sortTurmas(state.turmas), [state.turmas]);
   const turmaOrigem = state.turmas.find(t => t.id === turmaOrigemId);
 
-  // Vagas futuras ordenadas
-  const vagasFuturas = useMemo(() =>
-    [...state.vagas]
+  // Vagas futuras ordenadas e sem duplicatas (mesma turma + data = uma só opção)
+  const vagasFuturas = useMemo(() => {
+    const seen = new Set();
+    return [...state.vagas]
       .filter(v => v.data >= td)
       .sort((a, b) => {
         if (a.data !== b.data) return a.data.localeCompare(b.data);
         const ha = state.turmas.find(t => t.id === a.turmaId)?.horario || '';
         const hb = state.turmas.find(t => t.id === b.turmaId)?.horario || '';
         return ha.localeCompare(hb);
-      }),
-  [state.vagas, state.turmas, td]);
+      })
+      .filter(v => {
+        const key = `${v.data}|${v.turmaId}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }, [state.vagas, state.turmas, td]);
 
   const isExtra     = vagaSel === 'extra';
   const vagaObj     = !isExtra && vagaSel ? state.vagas.find(v => v.id === vagaSel) : null;
@@ -1255,9 +1339,8 @@ function generatePainelText(state) {
     vagasList.forEach(v => {
       const t = state.turmas.find(x => x.id === v.turmaId);
       const dia = getDiaSemanaFromDateStr(v.data);
-      vagasText += `${EXTENSO[dia]}, ${fmtBR(v.data)}, ${t?.horario||'?'}${v.count > 1 ? ` (${v.count})` : ''}\n`;
+      vagasText += `${EXTENSO[dia]}, ${fmtBR(v.data)}, ${t?.horario||'?'}${v.count > 1 ? ` (${v.count})` : ''}\n\n`;
     });
-    vagasText += '\n';
   } else {
     vagasText += '\n_Nenhuma vaga aberta_\n\n';
   }
@@ -1273,24 +1356,25 @@ function generatePainelText(state) {
   const obs = [];
   const today = td;
   const in7Days = (() => { const d = new Date(); d.setDate(d.getDate()+7); return dateToStr(d); })();
+  const twoDaysAgo = (() => { const d = new Date(); d.setDate(d.getDate()-2); return dateToStr(d); })();
 
-  // Expiring soon
-  const expirando = state.faltas.filter(f => {
+  // Expiring soon (active faltas within 7 days)
+  state.faltas.filter(f => {
     if (f.status !== 'pendente') return false;
     const exp = getFaltaExpiry(f);
     return exp >= today && exp <= in7Days;
-  });
-  expirando.forEach(f => {
+  }).forEach(f => {
     const t = state.turmas.find(x => x.id === f.turmaId);
     obs.push(`⚠️ Falta expirando em ${fmtBRFull(getFaltaExpiry(f))}: ${f.alunoNome} (${t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?'})`);
   });
 
-  // Expired faltas
-  const expiradas = state.faltas.filter(f => f.status === 'pendente' && getFaltaExpiry(f) < today);
-  expiradas.forEach(f => {
-    const t = state.turmas.find(x => x.id === f.turmaId);
-    obs.push(`🔴 Falta expirada: ${f.alunoNome} (${t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?'}) — ${fmtDatesText(f.datas)}`);
-  });
+  // Recently expired faltas (last 2 days) from statistics
+  arr((state.estatisticas || {}).faltasExpiradas)
+    .filter(e => e.expiradaEm >= twoDaysAgo && e.expiradaEm < today)
+    .forEach(e => {
+      const t = state.turmas.find(x => x.id === e.turmaId);
+      obs.push(`🔴 Falta expirada: ${e.alunoNome} (${t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?'}) — ${fmtBR(e.data)}`);
+    });
 
   // Aulas extra sem falta
   const extrasOrfas = state.reposicoes.filter(r => r.tipo === 'aula_extra' && !r.realizada);
@@ -1433,14 +1517,23 @@ function PainelVisual({ state }) {
 
   // --- OBSERVAÇÕES ---
   const in7 = (() => { const d = new Date(); d.setDate(d.getDate()+7); return dateToStr(d); })();
+  const twoDaysAgo = (() => { const d = new Date(); d.setDate(d.getDate()-2); return dateToStr(d); })();
   const obs = [];
+  // Active faltas expiring within 7 days
   state.faltas.filter(f => f.status==='pendente').forEach(f => {
     const exp = getFaltaExpiry(f);
     const t = state.turmas.find(x => x.id===f.turmaId);
     const lbl = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
-    if (exp < td) obs.push({ level:'red', text:`Falta expirada: ${f.alunoNome} (${lbl}) — ${fmtDatesText(f.datas)}` });
-    else if (exp <= in7) obs.push({ level:'amber', text:`Falta expirando em ${fmtBRFull(exp)}: ${f.alunoNome} (${lbl})` });
+    if (exp >= td && exp <= in7) obs.push({ level:'amber', text:`Falta expirando em ${fmtBRFull(exp)}: ${f.alunoNome} (${lbl})` });
   });
+  // Recently expired faltas (last 2 days) from statistics
+  arr((state.estatisticas || {}).faltasExpiradas)
+    .filter(e => e.expiradaEm >= twoDaysAgo && e.expiradaEm < td)
+    .forEach(e => {
+      const t = state.turmas.find(x => x.id===e.turmaId);
+      const lbl = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
+      obs.push({ level:'red', text:`Falta expirada: ${e.alunoNome} (${lbl}) — ${fmtBR(e.data)}` });
+    });
   state.ausencias.filter(a => !a.creditoUsado).forEach(a => {
     const exp = getAusenciaExpiry(a);
     if (exp < td) obs.push({ level:'red', text:`Crédito de férias expirado: ${a.alunoNome} (${getMesNome(a.mesAno)})` });
@@ -1477,13 +1570,12 @@ function PainelVisual({ state }) {
         )}
         <div className="divide-y divide-gray-100">
           {combined.map(({ tipo, obj }, i) => {
-            const t = state.turmas.find(x => x.id === (tipo==='falta' ? obj.turmaId : obj.turmaId));
+            const t = state.turmas.find(x => x.id === obj.turmaId);
             const lbl = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
             const exp = tipo==='falta' ? getFaltaExpiry(obj) : getAusenciaExpiry(obj);
-            const expiring = tipo==='falta' && exp <= in7 && exp >= td;
-            const expired  = tipo==='falta' && exp < td;
+            const expiring = tipo==='falta' && exp >= td && exp <= in7;
             return (
-              <div key={i} className={`px-4 py-3 ${expired ? 'bg-red-50' : expiring ? 'bg-amber-50' : 'bg-white'}`}>
+              <div key={i} className={`px-4 py-3 ${expiring ? 'bg-amber-50' : 'bg-white'}`}>
                 <div className="flex justify-between items-start">
                   <span className="font-semibold text-gray-800">{obj.alunoNome}</span>
                   <span className="text-xs text-gray-400 ml-2">{lbl}</span>
@@ -1492,7 +1584,6 @@ function PainelVisual({ state }) {
                   <div className="text-sm text-gray-600 mt-0.5">
                     Falta: <span className="font-bold text-gray-900">{fmtDatesText(obj.datas)}</span>
                     {expiring && <span className="ml-2 text-xs text-amber-600 font-medium">· expira {fmtBRFull(exp)}</span>}
-                    {expired  && <span className="ml-2 text-xs text-red-600 font-medium">· expirada em {fmtBRFull(exp)}</span>}
                   </div>
                 ) : (
                   <div className="text-sm text-gray-600 mt-0.5">Férias: <span className="font-medium">{getMesNome(obj.mesAno).toLowerCase()}</span></div>
