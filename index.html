@@ -1393,10 +1393,6 @@ function generatePainelText(state) {
     }
   });
 
-  // Turmas acima da capacidade
-  sorted.forEach(t => {
-    if (t.alunos.length > t.capacidade) obs.push(`⚠️ Turma acima da capacidade: ${ABREV[t.diaSemana]} ${t.horario} (${t.alunos.length}/${t.capacidade})`);
-  });
 
   let obsText = '*OBSERVAÇÕES*\n\n';
   obsText += obs.length ? obs.join('\n') + '\n' : '_Nenhuma observação_\n';
@@ -1544,10 +1540,6 @@ function PainelVisual({ state }) {
   });
   state.reposicoes.filter(r => !r.realizada && r.semFaltaVinculada).forEach(r => {
     obs.push({ level:'blue', text:`Reposição sem falta vinculada: ${r.alunoNome} — ${fmtBRFull(r.dataReposicao)}` });
-  });
-  sorted.forEach(t => {
-    if (t.alunos.length > t.capacidade)
-      obs.push({ level:'red', text:`Turma acima da capacidade: ${ABREV[t.diaSemana]} ${t.horario} (${t.alunos.length}/${t.capacidade})` });
   });
 
   const obsColors = { red:'bg-red-50 text-red-700 border-red-200', amber:'bg-amber-50 text-amber-700 border-amber-200', blue:'bg-blue-50 text-blue-700 border-blue-200' };
