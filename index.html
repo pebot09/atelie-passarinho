@@ -423,16 +423,11 @@ function reducer(state, action) {
 
     case 'SYNC_FROM_FIREBASE': {
       const td = todayStr();
-      const inc = action.data || {};
-      // Firebase não armazena arrays vazios — garantir defaults
+      const inc = normalizeState(action.data);
       next = {
         ...inc,
-        turmas:     Array.isArray(inc.turmas)     ? inc.turmas     : [],
-        faltas:     Array.isArray(inc.faltas)     ? inc.faltas     : [],
-        ausencias:  Array.isArray(inc.ausencias)  ? inc.ausencias  : [],
-        snapshots:  Array.isArray(inc.snapshots)  ? inc.snapshots  : [],
-        vagas:      (Array.isArray(inc.vagas)     ? inc.vagas      : []).filter(v => v.data >= td),
-        reposicoes: (Array.isArray(inc.reposicoes)? inc.reposicoes : []).map(r => r.dataReposicao < td ? {...r, realizada: true} : r),
+        vagas:      inc.vagas.filter(v => v.data >= td),
+        reposicoes: inc.reposicoes.map(r => r.dataReposicao < td ? {...r, realizada: true} : r),
       };
       break;
     }
@@ -446,16 +441,20 @@ function reducer(state, action) {
   return next;
 }
 
+function arr(v) { return Array.isArray(v) ? v : []; }
+
 function normalizeState(s) {
-  if (!s) return SEED;
+  if (!s || typeof s !== 'object') return {...SEED};
   return {
     ...s,
-    turmas:     Array.isArray(s.turmas)     ? s.turmas.map(t => ({...t, alunos: Array.isArray(t.alunos) ? t.alunos : []})) : [],
-    faltas:     Array.isArray(s.faltas)     ? s.faltas     : [],
-    ausencias:  Array.isArray(s.ausencias)  ? s.ausencias  : [],
-    snapshots:  Array.isArray(s.snapshots)  ? s.snapshots  : [],
-    vagas:      Array.isArray(s.vagas)      ? s.vagas      : [],
-    reposicoes: Array.isArray(s.reposicoes) ? s.reposicoes : [],
+    turmas:     arr(s.turmas).map(function(t) {
+                  return {...t, alunos: arr(t.alunos)};
+                }),
+    faltas:     arr(s.faltas),
+    ausencias:  arr(s.ausencias),
+    snapshots:  arr(s.snapshots),
+    vagas:      arr(s.vagas),
+    reposicoes: arr(s.reposicoes),
   };
 }
 
@@ -1892,7 +1891,7 @@ function App() {
         var data = parsed.data;
         if (!data || typeof data !== 'object') return;
         if (data._updatedAt && data._updatedAt <= lastOwnSave.current + 3000) return;
-        dispatch({ type: 'SYNC_FROM_FIREBASE', data: data });
+        dispatch({ type: 'SYNC_FROM_FIREBASE', data: normalizeState(data) });
       } catch(err) {}
     });
     es.onerror = function() { setSyncStatus('erro'); };
