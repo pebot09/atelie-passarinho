@@ -29,6 +29,7 @@ const DIA_JS = { segunda:1, terça:2, quarta:3, quinta:4, sexta:5, sábado:6 };
 const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const STORAGE_KEY = 'atelie_passarinho_v2';
 const MAX_SNAPSHOTS = 60;
+const DB_URL = 'https://atelie-passarinho-default-rtdb.firebaseio.com';
 
 // ==================== SEED DATA ====================
 const SEED = {
@@ -406,11 +407,23 @@ function reducer(state, action) {
 
     case 'CLEANUP': {
       const td = todayStr();
-      // Remove past vagas
       const vagas = state.vagas.filter(v => v.data >= td);
-      // Mark past reposicoes as realized
       const reposicoes = state.reposicoes.map(r => r.dataReposicao < td ? {...r, realizada: true} : r);
       next = { ...state, vagas, reposicoes };
+      break;
+    }
+
+    case 'LOAD':
+    case 'SYNC_FROM_FIREBASE': {
+      // Merge incoming data and run cleanup
+      const td = todayStr();
+      const incoming = action.data;
+      next = {
+        ...incoming,
+        _loading: false,
+        vagas: (incoming.vagas || []).filter(v => v.data >= td),
+        reposicoes: (incoming.reposicoes || []).map(r => r.dataReposicao < td ? {...r, realizada: true} : r),
+      };
       break;
     }
 
@@ -418,17 +431,34 @@ function reducer(state, action) {
       return state;
   }
 
-  // Persist
+  // Persist locally as cache
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch(e) {}
   return next;
 }
 
 function loadState() {
+  // Start with seed+loading flag; Firebase will overwrite on mount
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) return { ...JSON.parse(raw), _loading: true };
   } catch(e) {}
-  return SEED;
+  return { ...SEED, _loading: true };
+}
+
+async function fetchFromFirebase() {
+  const r = await fetch(`${DB_URL}/state.json`);
+  const data = await r.json();
+  return data;
+}
+
+async function saveToFirebase(state) {
+  const payload = { ...state, _updatedAt: Date.now(), _loading: undefined };
+  delete payload._loading;
+  await fetch(`${DB_URL}/state.json`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
 }
 
 // ==================== MODAL ====================
@@ -1814,13 +1844,62 @@ function PainelImportacao({ state, dispatch }) {
 // ==================== APP ====================
 function App() {
   const [state, dispatch] = useReducer(reducer, null, loadState);
-  const [section, setSection] = useState(2); // Start on Painel
+  const [section, setSection] = useState(2);
   const [seedDismissed, setSeedDismissed] = useState(false);
+  const [syncStatus, setSyncStatus] = useState('conectando'); // conectando | ok | erro
+  const lastOwnSave = useRef(0);
+  const saveTimer   = useRef(null);
 
-  // Run cleanup on mount
+  // 1. Carrega do Firebase na montagem e abre listener SSE
   useEffect(() => {
-    dispatch({ type: 'CLEANUP' });
+    let es;
+
+    fetchFromFirebase()
+      .then(data => {
+        if (data && Object.keys(data).length > 0) {
+          dispatch({ type: 'LOAD', data });
+        } else {
+          // Banco vazio: sobe o seed
+          dispatch({ type: 'LOAD', data: SEED });
+          saveToFirebase(SEED).catch(() => {});
+        }
+        setSyncStatus('ok');
+      })
+      .catch(() => {
+        // Offline: usa cache local
+        dispatch({ type: 'LOAD', data: loadState() });
+        setSyncStatus('erro');
+      });
+
+    // SSE — atualização em tempo real quando outro dispositivo salvar
+    es = new EventSource(`${DB_URL}/state.json`);
+    es.addEventListener('put', e => {
+      try {
+        const { data } = JSON.parse(e.data);
+        if (!data) return;
+        // Ignora se fomos nós que salvamos (janela de 3s)
+        if (data._updatedAt && data._updatedAt <= lastOwnSave.current + 3000) return;
+        dispatch({ type: 'SYNC_FROM_FIREBASE', data });
+      } catch(_) {}
+    });
+    es.onerror = () => setSyncStatus('erro');
+    es.onopen  = () => setSyncStatus('ok');
+
+    return () => es && es.close();
   }, []);
+
+  // 2. Salva no Firebase a cada mudança de estado (debounce 600ms)
+  useEffect(() => {
+    if (state._loading) return;
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      const ts = Date.now();
+      lastOwnSave.current = ts;
+      saveToFirebase({ ...state, _updatedAt: ts })
+        .then(() => setSyncStatus('ok'))
+        .catch(() => setSyncStatus('erro'));
+    }, 600);
+  }, [state]);
 
   const nav = [
     { label: 'Turmas', icon: '👥' },
@@ -1829,6 +1908,20 @@ function App() {
   ];
 
   const showSeedWarning = state._seedWarning && !seedDismissed;
+
+  if (state._loading) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-4xl mb-3">🎨</div>
+          <div className="text-gray-600 font-medium">Carregando dados…</div>
+          <div className="text-gray-400 text-sm mt-1">Conectando ao servidor</div>
+        </div>
+      </div>
+    );
+  }
+
+  const syncLabel = { conectando: '🔄 conectando', ok: '🟢 sincronizado', erro: '🔴 sem conexão' };
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -1839,7 +1932,10 @@ function App() {
             <h1 className="text-lg font-bold text-gray-900">🎨 Ateliê Passarinho</h1>
             <p className="text-xs text-gray-400">Gestão de Faltas e Reposições</p>
           </div>
-          <div className="text-xs text-gray-400">{new Date().toLocaleDateString('pt-BR', {weekday:'short', day:'2-digit', month:'2-digit', year:'numeric'})}</div>
+          <div className="text-right">
+            <div className="text-xs text-gray-400">{new Date().toLocaleDateString('pt-BR', {weekday:'short', day:'2-digit', month:'2-digit', year:'numeric'})}</div>
+            <div className={`text-xs mt-0.5 ${syncStatus === 'ok' ? 'text-green-600' : syncStatus === 'erro' ? 'text-red-500' : 'text-gray-400'}`}>{syncLabel[syncStatus]}</div>
+          </div>
         </div>
         <div className="border-t border-gray-100">
           <div className="max-w-4xl mx-auto flex">
