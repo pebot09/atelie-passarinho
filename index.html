@@ -8,6 +8,14 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script>
+    // Captura erros globais antes do Babel rodar
+    window.onerror = function(msg, src, line, col, err) {
+      document.getElementById('root').innerHTML =
+        '<div style="padding:2rem;color:#b91c1c;font-family:monospace;background:#fef2f2;margin:1rem;border-radius:8px">' +
+        '<strong>Erro JavaScript:</strong><br>' + msg + '<br><small>' + src + ':' + line + '</small></div>';
+    };
+  </script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     .fade-in { animation: fadeIn 0.15s ease-in; }
@@ -441,19 +449,12 @@ function loadState() {
   return SEED;
 }
 
-async function fetchFromFirebase() {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 8000);
-  try {
-    const r = await fetch(`${DB_URL}/state.json`, { signal: ctrl.signal });
-    return await r.json();
-  } finally {
-    clearTimeout(t);
-  }
+function fetchFromFirebase() {
+  return fetch(DB_URL + '/state.json').then(function(r) { return r.json(); });
 }
 
-async function saveToFirebase(payload) {
-  await fetch(`${DB_URL}/state.json`, {
+function saveToFirebase(payload) {
+  return fetch(DB_URL + '/state.json', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -1850,51 +1851,48 @@ function App() {
   const saveTimer   = useRef(null);
   const initialised = useRef(false);
 
-  // 1. Cleanup local + carrega do Firebase + abre listener SSE
-  useEffect(() => {
+  // 1. Cleanup + carrega Firebase + abre SSE
+  useEffect(function() {
     dispatch({ type: 'CLEANUP' });
 
-    // Busca dados do Firebase em segundo plano (app já abriu com cache local)
     fetchFromFirebase()
-      .then(data => {
+      .then(function(data) {
         if (data && typeof data === 'object' && Object.keys(data).length > 0) {
-          dispatch({ type: 'SYNC_FROM_FIREBASE', data });
-        } else if (!initialised.current) {
-          // Banco vazio: sobe o seed
-          saveToFirebase({ ...SEED, _updatedAt: Date.now() }).catch(() => {});
+          dispatch({ type: 'SYNC_FROM_FIREBASE', data: data });
+        } else {
+          saveToFirebase(Object.assign({}, SEED, { _updatedAt: Date.now() })).catch(function(){});
         }
         initialised.current = true;
         setSyncStatus('ok');
       })
-      .catch(() => setSyncStatus('erro'));
+      .catch(function() { setSyncStatus('erro'); });
 
-    // SSE — atualizações em tempo real
-    const es = new EventSource(`${DB_URL}/state.json`);
-    es.addEventListener('put', e => {
+    var es = new EventSource(DB_URL + '/state.json');
+    es.addEventListener('put', function(e) {
       try {
-        const { data } = JSON.parse(e.data);
+        var parsed = JSON.parse(e.data);
+        var data = parsed.data;
         if (!data || typeof data !== 'object') return;
         if (data._updatedAt && data._updatedAt <= lastOwnSave.current + 3000) return;
-        dispatch({ type: 'SYNC_FROM_FIREBASE', data });
-      } catch(_) {}
+        dispatch({ type: 'SYNC_FROM_FIREBASE', data: data });
+      } catch(err) {}
     });
-    es.onerror = () => setSyncStatus('erro');
-    es.onopen  = () => setSyncStatus('ok');
+    es.onerror = function() { setSyncStatus('erro'); };
+    es.onopen  = function() { setSyncStatus('ok'); };
 
-    return () => es.close();
+    return function() { es.close(); };
   }, []);
 
-  // 2. Salva no Firebase a cada mudança (debounce 600ms, ignora 1º render)
-  useEffect(() => {
+  // 2. Salva no Firebase a cada mudança (debounce 600ms)
+  useEffect(function() {
     if (!initialised.current) return;
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      const ts = Date.now();
+    saveTimer.current = setTimeout(function() {
+      var ts = Date.now();
       lastOwnSave.current = ts;
-      const payload = { ...state, _updatedAt: ts };
-      saveToFirebase(payload)
-        .then(() => setSyncStatus('ok'))
-        .catch(() => setSyncStatus('erro'));
+      saveToFirebase(Object.assign({}, state, { _updatedAt: ts }))
+        .then(function() { setSyncStatus('ok'); })
+        .catch(function() { setSyncStatus('erro'); });
     }, 600);
   }, [state]);
 
