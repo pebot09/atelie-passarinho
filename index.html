@@ -1423,10 +1423,6 @@ function SectionPainel({ state, dispatch }) {
         list.push({ type:'expirando', label: `Férias de ${a.alunoNome} — expira ${fmtBRFull(exp)}` });
       }
     });
-    // Capacidade
-    sortTurmas(state.turmas).forEach(t => {
-      if (t.alunos.length > t.capacidade) list.push({ type:'capacidade', label: `Turma ${ABREV[t.diaSemana]} ${t.horario}: ${t.alunos.length}/${t.capacidade} alunos` });
-    });
     return list;
   }, [state, td, in7]);
 
