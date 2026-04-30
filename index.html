@@ -413,14 +413,11 @@ function reducer(state, action) {
       break;
     }
 
-    case 'LOAD':
     case 'SYNC_FROM_FIREBASE': {
-      // Merge incoming data and run cleanup
       const td = todayStr();
       const incoming = action.data;
       next = {
         ...incoming,
-        _loading: false,
         vagas: (incoming.vagas || []).filter(v => v.data >= td),
         reposicoes: (incoming.reposicoes || []).map(r => r.dataReposicao < td ? {...r, realizada: true} : r),
       };
@@ -437,23 +434,25 @@ function reducer(state, action) {
 }
 
 function loadState() {
-  // Start with seed+loading flag; Firebase will overwrite on mount
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return { ...JSON.parse(raw), _loading: true };
+    if (raw) return JSON.parse(raw);
   } catch(e) {}
-  return { ...SEED, _loading: true };
+  return SEED;
 }
 
 async function fetchFromFirebase() {
-  const r = await fetch(`${DB_URL}/state.json`);
-  const data = await r.json();
-  return data;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const r = await fetch(`${DB_URL}/state.json`, { signal: ctrl.signal });
+    return await r.json();
+  } finally {
+    clearTimeout(t);
+  }
 }
 
-async function saveToFirebase(state) {
-  const payload = { ...state, _updatedAt: Date.now(), _loading: undefined };
-  delete payload._loading;
+async function saveToFirebase(payload) {
   await fetch(`${DB_URL}/state.json`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -1844,40 +1843,37 @@ function PainelImportacao({ state, dispatch }) {
 // ==================== APP ====================
 function App() {
   const [state, dispatch] = useReducer(reducer, null, loadState);
-  const [section, setSection] = useState(2);
+  const [section, setSection]     = useState(2);
   const [seedDismissed, setSeedDismissed] = useState(false);
-  const [syncStatus, setSyncStatus] = useState('conectando'); // conectando | ok | erro
+  const [syncStatus, setSyncStatus] = useState('conectando');
   const lastOwnSave = useRef(0);
   const saveTimer   = useRef(null);
+  const initialised = useRef(false);
 
-  // 1. Carrega do Firebase na montagem e abre listener SSE
+  // 1. Cleanup local + carrega do Firebase + abre listener SSE
   useEffect(() => {
-    let es;
+    dispatch({ type: 'CLEANUP' });
 
+    // Busca dados do Firebase em segundo plano (app já abriu com cache local)
     fetchFromFirebase()
       .then(data => {
-        if (data && Object.keys(data).length > 0) {
-          dispatch({ type: 'LOAD', data });
-        } else {
+        if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+          dispatch({ type: 'SYNC_FROM_FIREBASE', data });
+        } else if (!initialised.current) {
           // Banco vazio: sobe o seed
-          dispatch({ type: 'LOAD', data: SEED });
-          saveToFirebase(SEED).catch(() => {});
+          saveToFirebase({ ...SEED, _updatedAt: Date.now() }).catch(() => {});
         }
+        initialised.current = true;
         setSyncStatus('ok');
       })
-      .catch(() => {
-        // Offline: usa cache local
-        dispatch({ type: 'LOAD', data: loadState() });
-        setSyncStatus('erro');
-      });
+      .catch(() => setSyncStatus('erro'));
 
-    // SSE — atualização em tempo real quando outro dispositivo salvar
-    es = new EventSource(`${DB_URL}/state.json`);
+    // SSE — atualizações em tempo real
+    const es = new EventSource(`${DB_URL}/state.json`);
     es.addEventListener('put', e => {
       try {
         const { data } = JSON.parse(e.data);
-        if (!data) return;
-        // Ignora se fomos nós que salvamos (janela de 3s)
+        if (!data || typeof data !== 'object') return;
         if (data._updatedAt && data._updatedAt <= lastOwnSave.current + 3000) return;
         dispatch({ type: 'SYNC_FROM_FIREBASE', data });
       } catch(_) {}
@@ -1885,17 +1881,18 @@ function App() {
     es.onerror = () => setSyncStatus('erro');
     es.onopen  = () => setSyncStatus('ok');
 
-    return () => es && es.close();
+    return () => es.close();
   }, []);
 
-  // 2. Salva no Firebase a cada mudança de estado (debounce 600ms)
+  // 2. Salva no Firebase a cada mudança (debounce 600ms, ignora 1º render)
   useEffect(() => {
-    if (state._loading) return;
+    if (!initialised.current) return;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       const ts = Date.now();
       lastOwnSave.current = ts;
-      saveToFirebase({ ...state, _updatedAt: ts })
+      const payload = { ...state, _updatedAt: ts };
+      saveToFirebase(payload)
         .then(() => setSyncStatus('ok'))
         .catch(() => setSyncStatus('erro'));
     }, 600);
@@ -1908,19 +1905,6 @@ function App() {
   ];
 
   const showSeedWarning = state._seedWarning && !seedDismissed;
-
-  if (state._loading) {
-    return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-4xl mb-3">🎨</div>
-          <div className="text-gray-600 font-medium">Carregando dados…</div>
-          <div className="text-gray-400 text-sm mt-1">Conectando ao servidor</div>
-        </div>
-      </div>
-    );
-  }
-
   const syncLabel = { conectando: '🔄 conectando', ok: '🟢 sincronizado', erro: '🔴 sem conexão' };
 
   return (
