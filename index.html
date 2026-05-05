@@ -39,6 +39,15 @@ const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho',
 const STORAGE_KEY = 'atelie_passarinho_v3';
 const MAX_SNAPSHOTS = 60;
 const DB_URL = 'https://atelie-passarinho-default-rtdb.firebaseio.com';
+const PROFESSORES = ['Carol', 'Gláucio', 'Laura', 'Pedro'];
+const PROFESSOR_KEY = 'atelie_professor';
+const PROFESSOR_COLORS = {
+  Carol:   { bg: 'bg-pink-100',   text: 'text-pink-700',   dot: 'bg-pink-400'   },
+  Gláucio: { bg: 'bg-blue-100',   text: 'text-blue-700',   dot: 'bg-blue-400'   },
+  Laura:   { bg: 'bg-emerald-100',text: 'text-emerald-700',dot: 'bg-emerald-400' },
+  Pedro:   { bg: 'bg-orange-100', text: 'text-orange-700', dot: 'bg-orange-400'  },
+};
+const MAX_LOG = 150;
 
 // ==================== SEED DATA ====================
 const SEED = {
@@ -112,7 +121,8 @@ const SEED = {
     {id:"v007",turmaId:"qua-17h",data:"2026-05-06",faltaId:"f017"}
   ],
   snapshots: [],
-  estatisticas: { faltasExpiradas: [] }
+  estatisticas: { faltasExpiradas: [] },
+  log: []
 };
 
 // ==================== HELPERS ====================
@@ -206,6 +216,11 @@ function getTurmaLabel(turmas, id) {
   return `${ABREV[t.diaSemana]} ${t.horario}`;
 }
 
+function addLog(currentLog, professor, descricao) {
+  const entry = { id: genId('log'), ts: new Date().toISOString(), professor: professor || '?', descricao };
+  return [entry, ...arr(currentLog)].slice(0, MAX_LOG);
+}
+
 function sortTurmas(turmas) {
   return [...turmas].sort((a,b) => {
     const da = DIAS_ORDER.indexOf(a.diaSemana), db = DIAS_ORDER.indexOf(b.diaSemana);
@@ -266,6 +281,10 @@ function reducer(state, action) {
         if (t.alunos.includes(action.nome)) return t;
         return {...t, alunos: [...t.alunos, action.nome]};
       })};
+      if (!state.turmas.find(t => t.id === action.turmaId)?.alunos.includes(action.nome)) {
+        const tLbl = getTurmaLabel(state.turmas, action.turmaId);
+        next.log = addLog(state.log, action.professor, `Adicionou ${action.nome} à turma ${tLbl}`);
+      }
       break;
     }
 
@@ -274,6 +293,10 @@ function reducer(state, action) {
         if (t.id !== action.turmaId) return t;
         return {...t, alunos: t.alunos.filter(a => a !== action.nome)};
       })};
+      {
+        const tLbl = getTurmaLabel(state.turmas, action.turmaId);
+        next.log = addLog(state.log, action.professor, `Removeu ${action.nome} da turma ${tLbl}`);
+      }
       break;
     }
 
@@ -293,6 +316,11 @@ function reducer(state, action) {
         newVagas.push({ id: genId('v'), turmaId, data, faltaId });
       });
       next = { ...state, faltas: [...state.faltas, ...newFaltas], vagas: [...state.vagas, ...newVagas] };
+      if (newFaltas.length) {
+        const tLbl = getTurmaLabel(state.turmas, turmaId);
+        const datasLbl = fmtDatesText(newFaltas.map(f => f.datas[0]));
+        next.log = addLog(state.log, action.professor, `Registrou falta de ${alunoNome} (${tLbl}) — ${datasLbl}`);
+      }
       break;
     }
 
@@ -309,6 +337,9 @@ function reducer(state, action) {
           faltaId: null, dataReposicao, turmaReposicaoId,
           tipo: 'aula_extra', realizada: false, semVagaOficial, pago: false
         }]};
+        const tOLbl = getTurmaLabel(state.turmas, turmaOrigem?.id);
+        const tRLbl = getTurmaLabel(state.turmas, turmaReposicaoId);
+        next.log = addLog(state.log, action.professor, `Agendou aula extra de ${alunoNome} (${tOLbl}) → ${tRLbl}, ${fmtBRFull(dataReposicao)}`);
       } else {
         const pending = state.faltas
           .filter(f => f.alunoNome === alunoNome && f.status === 'pendente')
@@ -325,6 +356,9 @@ function reducer(state, action) {
             }],
             vagas: state.vagas.filter(v => v.faltaId !== oldest.id)
           };
+          const tOLbl = getTurmaLabel(state.turmas, oldest.turmaId);
+          const tRLbl = getTurmaLabel(state.turmas, turmaReposicaoId);
+          next.log = addLog(state.log, action.professor, `Agendou reposição de ${alunoNome} (${tOLbl}) → ${tRLbl}, ${fmtBRFull(dataReposicao)}`);
         } else {
           // Reposição sem falta vinculada
           const turmaOrigem = state.turmas.find(t => t.alunos.includes(alunoNome));
@@ -336,15 +370,24 @@ function reducer(state, action) {
             semFaltaVinculada: true,
             observacao: 'Reposição sem falta vinculada — verificar'
           }]};
+          const tOLbl = getTurmaLabel(state.turmas, turmaOrigem?.id);
+          const tRLbl = getTurmaLabel(state.turmas, turmaReposicaoId);
+          next.log = addLog(state.log, action.professor, `Agendou reposição de ${alunoNome} (${tOLbl}) → ${tRLbl}, ${fmtBRFull(dataReposicao)}`);
         }
       }
       break;
     }
 
     case 'MARK_PAGO': {
+      const repoMp = state.reposicoes.find(r => r.id === action.id);
       next = { ...state, reposicoes: state.reposicoes.map(r =>
         r.id === action.id ? { ...r, pago: !r.pago } : r
       )};
+      if (repoMp) {
+        const tLbl = getTurmaLabel(state.turmas, repoMp.turmaOrigemId);
+        const novoEstado = !repoMp.pago ? 'paga' : 'não paga';
+        next.log = addLog(state.log, action.professor, `Marcou aula extra de ${repoMp.alunoNome} (${tLbl}) como ${novoEstado}`);
+      }
       break;
     }
 
@@ -371,6 +414,10 @@ function reducer(state, action) {
         vagas: newVagas,
         reposicoes: state.reposicoes.filter(r => r.id !== action.id)
       };
+      {
+        const tLbl = getTurmaLabel(state.turmas, repo.turmaOrigemId);
+        next.log = addLog(state.log, action.professor, `Cancelou reposição de ${repo.alunoNome} (${tLbl}) — ${fmtBRFull(repo.dataReposicao)}`);
+      }
       break;
     }
 
@@ -381,6 +428,10 @@ function reducer(state, action) {
         ...state,
         ausencias: [...state.ausencias, { id: ausId, alunoNome, turmaId, tipo, mesAno, creditoReposicao:1, creditoUsado:false }]
       };
+      {
+        const tLbl = getTurmaLabel(state.turmas, turmaId);
+        next.log = addLog(state.log, action.professor, `Registrou férias de ${alunoNome} (${tLbl}) — ${getMesNome(mesAno).toLowerCase()}`);
+      }
       break;
     }
 
@@ -390,7 +441,12 @@ function reducer(state, action) {
     }
 
     case 'DELETE_AUSENCIA': {
+      const ausDel = state.ausencias.find(a => a.id === action.id);
       next = { ...state, ausencias: state.ausencias.filter(a => a.id !== action.id) };
+      if (ausDel) {
+        const tLbl = getTurmaLabel(state.turmas, ausDel.turmaId);
+        next.log = addLog(state.log, action.professor, `Removeu férias de ${ausDel.alunoNome} (${tLbl}) — ${getMesNome(ausDel.mesAno).toLowerCase()}`);
+      }
       break;
     }
 
@@ -533,6 +589,7 @@ function normalizeState(s) {
     snapshots:  arr(s.snapshots),
     vagas:      arr(s.vagas),
     reposicoes: arr(s.reposicoes),
+    log:        arr(s.log),
     estatisticas: { faltasExpiradas: arr((s.estatisticas || {}).faltasExpiradas) },
   };
   return migrateFaltas(base);
@@ -1446,7 +1503,7 @@ function generatePainelText(state) {
 // ==================== SECTION 3: PAINEL ====================
 function SectionPainel({ state, dispatch }) {
   const [tab, setTab] = useState(0);
-  const tabs = ['Lista atual', 'Histórico', 'Importação'];
+  const tabs = ['Lista atual', 'Histórico', 'Importação', 'Registro'];
   const td = todayStr();
 
   // Alertas
@@ -1494,6 +1551,7 @@ function SectionPainel({ state, dispatch }) {
           {tab === 0 && <PainelLista state={state} dispatch={dispatch} />}
           {tab === 1 && <PainelHistorico state={state} dispatch={dispatch} />}
           {tab === 2 && <PainelImportacao state={state} dispatch={dispatch} />}
+          {tab === 3 && <PainelRegistro state={state} />}
         </div>
       </div>
     </div>
@@ -1504,6 +1562,30 @@ function SectionPainel({ state, dispatch }) {
 function PainelVisual({ state, dispatch }) {
   const td = todayStr();
   const sorted = sortTurmas(state.turmas);
+
+  // Acordeão — quais seções estão abertas
+  const [open, setOpen] = useState({ faltas: false, reposicoes: false, vagas: false, turmas: false, obs: false });
+  const toggle = (key) => setOpen(prev => ({ ...prev, [key]: !prev[key] }));
+
+  // Modal de detalhes
+  const [det, setDet] = useState(null); // { tipo: 'falta'|'reposicao'|'vaga'|'marcada', obj }
+
+  const BlockHeader = ({ children, sub, sKey, count }) => (
+    <div
+      onClick={sKey ? () => toggle(sKey) : undefined}
+      className={`px-4 py-2.5 font-bold text-sm tracking-widest flex items-center justify-between
+        ${sub ? 'bg-gray-100 text-gray-500 border-t border-gray-200 text-xs cursor-default'
+               : `bg-gray-800 text-white ${open[sKey] ? 'rounded-t-xl' : 'rounded-xl'} ${sKey ? 'cursor-pointer hover:bg-gray-700 transition-colors' : ''}`}`}
+    >
+      <span>
+        {children}
+        {count !== undefined && count > 0 && (
+          <span className="ml-1.5 font-normal opacity-60 text-xs">({count})</span>
+        )}
+      </span>
+      {sKey && <span className="opacity-50 text-xs">{open[sKey] ? '▲' : '▼'}</span>}
+    </div>
+  );
 
   // --- FALTAS ---
   const pendentes = state.faltas
@@ -1518,17 +1600,16 @@ function PainelVisual({ state, dispatch }) {
     .filter(a => !a.creditoUsado)
     .sort((a,b) => getLastDayOfMonth(a.mesAno).localeCompare(getLastDayOfMonth(b.mesAno)));
 
-  // Agrupar pendentes por aluno+turma
   const pendentesGrupos = (() => {
     const map = {};
     pendentes.forEach(f => {
       const key = `${f.alunoNome}|${f.turmaId}`;
-      if (!map[key]) map[key] = { alunoNome: f.alunoNome, turmaId: f.turmaId, datas: [] };
+      if (!map[key]) map[key] = { alunoNome: f.alunoNome, turmaId: f.turmaId, datas: [], faltas: [] };
       map[key].datas.push(f.datas[0]);
+      map[key].faltas.push(f);
     });
     return Object.values(map).sort((a, b) => {
-      const ea = [...a.datas].sort()[0];
-      const eb = [...b.datas].sort()[0];
+      const ea = [...a.datas].sort()[0], eb = [...b.datas].sort()[0];
       if (ea !== eb) return ea.localeCompare(eb);
       return (state.turmas.find(t=>t.id===a.turmaId)?.horario||'').localeCompare(state.turmas.find(t=>t.id===b.turmaId)?.horario||'');
     });
@@ -1539,37 +1620,30 @@ function PainelVisual({ state, dispatch }) {
     ...ausencias.map(a => ({ tipo:'ausencia', obj:a, sortKey: getLastDayOfMonth(a.mesAno) }))
   ].sort((a,b) => a.sortKey.localeCompare(b.sortKey));
 
-  // Agrupar marcadas por aluno+turma
   const marcadasGrupos = (() => {
     const map = {};
     state.faltas.filter(f => f.status === 'marcada').forEach(f => {
       const key = `${f.alunoNome}|${f.turmaId}`;
-      if (!map[key]) map[key] = { alunoNome: f.alunoNome, turmaId: f.turmaId, datas: [] };
+      if (!map[key]) map[key] = { alunoNome: f.alunoNome, turmaId: f.turmaId, datas: [], faltas: [] };
       map[key].datas.push(f.datas[0]);
+      map[key].faltas.push(f);
     });
     return Object.values(map).sort((a, b) => [...a.datas].sort()[0].localeCompare([...b.datas].sort()[0]));
   })();
-
-  const marcadas = state.faltas
-    .filter(f => f.status === 'marcada')
-    .sort((a,b) => {
-      const ea = getFaltaEarliest(a), eb = getFaltaEarliest(b);
-      if (ea !== eb) return ea.localeCompare(eb);
-      return (state.turmas.find(t=>t.id===a.turmaId)?.horario||'').localeCompare(state.turmas.find(t=>t.id===b.turmaId)?.horario||'');
-    });
 
   // --- REPOSIÇÕES ---
   const reposAtivas = state.reposicoes
     .filter(r => !r.realizada)
     .sort((a,b) => a.dataReposicao.localeCompare(b.dataReposicao));
 
-  // --- VAGAS ---
+  // --- VAGAS (com alunos vinculados) ---
   const vagasGrupos = (() => {
     const map = {};
     state.vagas.filter(v => v.data >= td).forEach(v => {
       const key = `${v.data}|${v.turmaId}`;
-      if (!map[key]) map[key] = { data: v.data, turmaId: v.turmaId, count: 0 };
+      if (!map[key]) map[key] = { data: v.data, turmaId: v.turmaId, count: 0, vagas: [] };
       map[key].count++;
+      map[key].vagas.push(v);
     });
     return Object.values(map).sort((a,b) => {
       if (a.data !== b.data) return a.data.localeCompare(b.data);
@@ -1581,20 +1655,17 @@ function PainelVisual({ state, dispatch }) {
   const in7 = (() => { const d = new Date(); d.setDate(d.getDate()+7); return dateToStr(d); })();
   const twoDaysAgo = (() => { const d = new Date(); d.setDate(d.getDate()-2); return dateToStr(d); })();
   const obs = [];
-  // Active faltas expiring within 7 days
   state.faltas.filter(f => f.status==='pendente').forEach(f => {
     const exp = getFaltaExpiry(f);
     const t = state.turmas.find(x => x.id===f.turmaId);
     const lbl = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
     if (exp >= td && exp <= in7) obs.push({ level:'amber', text:`Falta expirando em ${fmtBRFull(exp)}: ${f.alunoNome} (${lbl})` });
   });
-  // Recently expired faltas (last 2 days) from statistics
   arr((state.estatisticas || {}).faltasExpiradas)
     .filter(e => e.expiradaEm >= twoDaysAgo && e.expiradaEm < td)
     .forEach(e => {
       const t = state.turmas.find(x => x.id===e.turmaId);
-      const lbl = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
-      obs.push({ level:'red', text:`Falta expirada: ${e.alunoNome} (${lbl}) — ${fmtBR(e.data)}` });
+      obs.push({ level:'red', text:`Falta expirada: ${e.alunoNome} (${t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?'}) — ${fmtBR(e.data)}` });
     });
   state.ausencias.filter(a => !a.creditoUsado).forEach(a => {
     const exp = getAusenciaExpiry(a);
@@ -1611,71 +1682,254 @@ function PainelVisual({ state, dispatch }) {
   const obsColors = { red:'bg-red-50 text-red-700 border-red-200', amber:'bg-amber-50 text-amber-700 border-amber-200', blue:'bg-blue-50 text-blue-700 border-blue-200' };
   const obsIcons  = { red:'🔴', amber:'⚠️', blue:'ℹ️' };
 
-  const BlockHeader = ({ children, sub }) => (
-    <div className={`px-4 py-2.5 font-bold text-sm tracking-widest ${sub ? 'bg-gray-100 text-gray-500 border-t border-gray-200 text-xs' : 'bg-gray-800 text-white rounded-t-xl'}`}>
-      {children}
-    </div>
-  );
+  // ---- MODAL DE DETALHES ----
+  const DetModal = () => {
+    if (!det) return null;
+    const { tipo, obj } = det;
+    let title = '', body = null;
+
+    if (tipo === 'falta') {
+      const t = state.turmas.find(x => x.id === obj.turmaId);
+      const lbl = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
+      title = `${obj.alunoNome} — ${lbl}`;
+      body = (
+        <div className="space-y-2">
+          {[...obj.faltas].sort((a,b) => a.datas[0].localeCompare(b.datas[0])).map(f => {
+            const exp = getFaltaExpiry(f);
+            const expiring = exp >= td && exp <= in7;
+            return (
+              <div key={f.id} className={`rounded-lg px-3 py-2 text-sm ${expiring ? 'bg-amber-50 border border-amber-200' : 'bg-gray-50'}`}>
+                <div className="font-semibold text-gray-800">📅 {fmtBRFull(f.datas[0])}</div>
+                <div className="text-gray-500 mt-0.5">Expira em: {fmtBRFull(exp)}
+                  {expiring && <span className="ml-1 text-amber-600 font-medium">⚠️ em breve</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    if (tipo === 'marcada') {
+      const t = state.turmas.find(x => x.id === obj.turmaId);
+      const lbl = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
+      // Find linked reposição
+      const repo = obj.faltas[0]?.reposicaoId ? state.reposicoes.find(r => r.id === obj.faltas[0].reposicaoId) : null;
+      const tRepo = repo ? state.turmas.find(x => x.id === repo.turmaReposicaoId) : null;
+      title = `${obj.alunoNome} — ${lbl}`;
+      body = (
+        <div className="space-y-2 text-sm">
+          <div className="bg-gray-50 rounded-lg px-3 py-2">
+            <div className="text-gray-500 text-xs mb-1">Falta(s) marcada(s)</div>
+            <div className="font-semibold text-gray-800">{fmtDatesText([...obj.datas].sort())}</div>
+          </div>
+          {repo && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+              <div className="text-blue-600 text-xs mb-1">Reposição agendada</div>
+              <div className="font-semibold text-gray-800">{EXTENSO[getDiaSemanaFromDateStr(repo.dataReposicao)]}, {fmtBRFull(repo.dataReposicao)}</div>
+              <div className="text-gray-600">{tRepo ? `${ABREV[tRepo.diaSemana]} ${tRepo.horario}` : '?'}</div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (tipo === 'reposicao') {
+      const r = obj;
+      const tOrigem = state.turmas.find(x => x.id === r.turmaOrigemId);
+      const tRepo   = state.turmas.find(x => x.id === r.turmaReposicaoId);
+      const dia     = getDiaSemanaFromDateStr(r.dataReposicao);
+      const isExtra = r.tipo === 'aula_extra';
+      const faltaVinc = r.faltaId ? state.faltas.find(f => f.id === r.faltaId) : null;
+      title = `${r.alunoNome}`;
+      body = (
+        <div className="space-y-2 text-sm">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-gray-50 rounded-lg px-3 py-2">
+              <div className="text-gray-400 text-xs">Turma origem</div>
+              <div className="font-semibold">{tOrigem ? `${ABREV[tOrigem.diaSemana]} ${tOrigem.horario}` : '?'}</div>
+            </div>
+            <div className="bg-gray-50 rounded-lg px-3 py-2">
+              <div className="text-gray-400 text-xs">Turma reposição</div>
+              <div className="font-semibold">{tRepo ? `${ABREV[tRepo.diaSemana]} ${tRepo.horario}` : '?'}</div>
+            </div>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+            <div className="text-blue-600 text-xs mb-0.5">{isExtra ? 'Aula extra em' : 'Repõe em'}</div>
+            <div className="font-bold text-gray-900">{EXTENSO[dia]}, {fmtBRFull(r.dataReposicao)}, {tRepo?.horario || '?'}</div>
+          </div>
+          {faltaVinc && (
+            <div className="bg-gray-50 rounded-lg px-3 py-2">
+              <div className="text-gray-400 text-xs">Falta vinculada</div>
+              <div className="font-semibold">{fmtBRFull(faltaVinc.datas[0])}</div>
+            </div>
+          )}
+          <div className="flex items-center gap-2 flex-wrap">
+            {isExtra && (
+              <span className="bg-purple-100 text-purple-700 text-xs font-medium px-2 py-0.5 rounded-full">Aula extra</span>
+            )}
+            {r.semFaltaVinculada && (
+              <span className="bg-amber-100 text-amber-700 text-xs font-medium px-2 py-0.5 rounded-full">Sem falta vinculada</span>
+            )}
+            {isExtra && (
+              <button
+                onClick={() => { dispatch({ type: 'MARK_PAGO', id: r.id }); setDet(prev => prev ? { ...prev, obj: { ...r, pago: !r.pago } } : null); }}
+                className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border transition-colors ${r.pago ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-500 border-gray-300 hover:border-green-500 hover:text-green-600'}`}
+              >{r.pago ? '✓ PAGO' : 'PAGO'}</button>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    if (tipo === 'vaga') {
+      const v = obj;
+      const t = state.turmas.find(x => x.id === v.turmaId);
+      const dia = getDiaSemanaFromDateStr(v.data);
+      const alunos = v.vagas.map(vg => {
+        const f = state.faltas.find(f => f.id === vg.faltaId);
+        return f ? f.alunoNome : null;
+      }).filter(Boolean);
+      title = `Vagas — ${t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?'}`;
+      body = (
+        <div className="space-y-2 text-sm">
+          <div className="bg-gray-50 rounded-lg px-3 py-2">
+            <div className="text-gray-400 text-xs">Data</div>
+            <div className="font-bold text-gray-900">{EXTENSO[dia]}, {fmtBRFull(v.data)}</div>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+            <div className="text-blue-600 text-xs mb-1">{v.count} vaga{v.count > 1 ? 's' : ''} gerada{v.count > 1 ? 's' : ''} por</div>
+            {alunos.map((a, i) => (
+              <div key={i} className="font-semibold text-gray-800">· {a}</div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <Modal title={title} onClose={() => setDet(null)}>
+        {body}
+      </Modal>
+    );
+  };
 
   return (
     <div className="space-y-4">
+      <DetModal />
 
       {/* FALTAS */}
       <div className="rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-        <BlockHeader>FALTAS</BlockHeader>
-        {combined.length === 0 && marcadas.length === 0 && (
-          <div className="px-4 py-3 text-sm text-gray-400 italic">Nenhuma falta registrada.</div>
-        )}
-        <div className="divide-y divide-gray-100">
-          {combined.map(({ tipo, obj }, i) => {
-            const t = state.turmas.find(x => x.id === obj.turmaId);
-            const lbl = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
-            if (tipo === 'falta') {
-              const datasOrdenadas = [...obj.datas].sort();
-              // Nearest expiry among grouped dates
-              const nearestExp = datasOrdenadas.map(d => { const dt = parseDate(d); dt.setDate(dt.getDate()+30); return dateToStr(dt); }).sort()[0];
-              const expiring = nearestExp >= td && nearestExp <= in7;
-              return (
-                <div key={i} className={`px-4 py-3 ${expiring ? 'bg-amber-50' : 'bg-white'}`}>
-                  <div className="flex justify-between items-start">
-                    <span className="font-semibold text-gray-800">{obj.alunoNome}</span>
-                    <span className="text-xs text-gray-400 ml-2">{lbl}</span>
-                  </div>
-                  <div className="text-sm text-gray-600 mt-0.5">
-                    Falta: <span className="font-bold text-gray-900">{fmtDatesText(datasOrdenadas)}</span>
-                    {expiring && <span className="ml-2 text-xs text-amber-600 font-medium">· expira {fmtBRFull(nearestExp)}</span>}
-                  </div>
-                </div>
-              );
-            } else {
-              const exp = getAusenciaExpiry(obj);
-              return (
-                <div key={i} className="px-4 py-3 bg-white">
-                  <div className="flex justify-between items-start">
-                    <span className="font-semibold text-gray-800">{obj.alunoNome}</span>
-                    <span className="text-xs text-gray-400 ml-2">{lbl}</span>
-                  </div>
-                  <div className="text-sm text-gray-600 mt-0.5">Férias: <span className="font-medium">{getMesNome(obj.mesAno).toLowerCase()}</span></div>
-                </div>
-              );
-            }
-          })}
-        </div>
-
-        {marcadasGrupos.length > 0 && (
+        <BlockHeader sKey="faltas" count={combined.length + marcadasGrupos.length}>FALTAS</BlockHeader>
+        {open.faltas && (
           <>
-            <BlockHeader sub>JÁ MARCADAS</BlockHeader>
+            {combined.length === 0 && marcadasGrupos.length === 0 && (
+              <div className="px-4 py-3 text-sm text-gray-400 italic">Nenhuma falta registrada.</div>
+            )}
             <div className="divide-y divide-gray-100">
-              {marcadasGrupos.map((g, i) => {
-                const t = state.turmas.find(x => x.id === g.turmaId);
+              {combined.map(({ tipo, obj }, i) => {
+                const t = state.turmas.find(x => x.id === obj.turmaId);
                 const lbl = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
-                return (
-                  <div key={i} className="px-4 py-3 bg-white">
-                    <div className="flex justify-between items-start">
-                      <span className="font-medium text-gray-500">{g.alunoNome}</span>
-                      <span className="text-xs text-gray-400 ml-2">{lbl}</span>
+                if (tipo === 'falta') {
+                  const datasOrdenadas = [...obj.datas].sort();
+                  const nearestExp = datasOrdenadas.map(d => { const dt = parseDate(d); dt.setDate(dt.getDate()+30); return dateToStr(dt); }).sort()[0];
+                  const expiring = nearestExp >= td && nearestExp <= in7;
+                  return (
+                    <div key={i} onClick={() => setDet({ tipo:'falta', obj })}
+                      className={`px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors ${expiring ? 'bg-amber-50 hover:bg-amber-100' : 'bg-white'}`}>
+                      <div className="flex justify-between items-start">
+                        <span className="font-semibold text-gray-800">{obj.alunoNome}</span>
+                        <span className="text-xs text-gray-400 ml-2">{lbl}</span>
+                      </div>
+                      <div className="text-sm text-gray-600 mt-0.5">
+                        Falta: <span className="font-bold text-gray-900">{fmtDatesText(datasOrdenadas)}</span>
+                        {expiring && <span className="ml-2 text-xs text-amber-600 font-medium">· expira {fmtBRFull(nearestExp)}</span>}
+                      </div>
                     </div>
-                    <div className="text-sm text-gray-400 mt-0.5">Falta: {fmtDatesText([...g.datas].sort())}</div>
+                  );
+                } else {
+                  return (
+                    <div key={i} className="px-4 py-3 bg-white">
+                      <div className="flex justify-between items-start">
+                        <span className="font-semibold text-gray-800">{obj.alunoNome}</span>
+                        <span className="text-xs text-gray-400 ml-2">{lbl}</span>
+                      </div>
+                      <div className="text-sm text-gray-600 mt-0.5">Férias: <span className="font-medium">{getMesNome(obj.mesAno).toLowerCase()}</span></div>
+                    </div>
+                  );
+                }
+              })}
+            </div>
+
+            {marcadasGrupos.length > 0 && (
+              <>
+                <BlockHeader sub>JÁ MARCADAS</BlockHeader>
+                <div className="divide-y divide-gray-100">
+                  {marcadasGrupos.map((g, i) => {
+                    const t = state.turmas.find(x => x.id === g.turmaId);
+                    const lbl = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
+                    return (
+                      <div key={i} onClick={() => setDet({ tipo:'marcada', obj: g })}
+                        className="px-4 py-3 bg-white cursor-pointer hover:bg-gray-50 transition-colors">
+                        <div className="flex justify-between items-start">
+                          <span className="font-medium text-gray-500">{g.alunoNome}</span>
+                          <span className="text-xs text-gray-400 ml-2">{lbl}</span>
+                        </div>
+                        <div className="text-sm text-gray-400 mt-0.5">Falta: {fmtDatesText([...g.datas].sort())}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* REPOSIÇÕES */}
+      <div className="rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+        <BlockHeader sKey="reposicoes" count={reposAtivas.length}>REPOSIÇÕES</BlockHeader>
+        {open.reposicoes && (
+          <>
+            {reposAtivas.length === 0 && (
+              <div className="px-4 py-3 text-sm text-gray-400 italic">Nenhuma reposição agendada.</div>
+            )}
+            <div className="divide-y divide-gray-100">
+              {reposAtivas.map((r, i) => {
+                const tOrigem = state.turmas.find(t => t.id === r.turmaOrigemId);
+                const tRepo   = state.turmas.find(t => t.id === r.turmaReposicaoId);
+                const dia     = getDiaSemanaFromDateStr(r.dataReposicao);
+                const origemLbl = tOrigem ? `${ABREV[tOrigem.diaSemana]} ${tOrigem.horario}` : '?';
+                const isExtra   = r.tipo === 'aula_extra';
+                const semFalta  = r.semFaltaVinculada;
+                const occupancyNum = r.semVagaOficial ? calcOccupancy(r.turmaReposicaoId, r.dataReposicao, state) : null;
+                return (
+                  <div key={i} onClick={() => setDet({ tipo:'reposicao', obj: r })}
+                    className="px-4 py-3 bg-white cursor-pointer hover:bg-gray-50 transition-colors">
+                    <div className="flex justify-between items-start">
+                      <span className="font-semibold text-gray-800">{r.alunoNome}</span>
+                      <span className="text-xs text-gray-400 ml-2">{origemLbl}</span>
+                    </div>
+                    <div className="text-sm text-gray-600 mt-0.5">
+                      <span className="text-gray-400">{isExtra ? 'Aula extra:' : 'Repõe:'}</span>{' '}
+                      <span className="font-bold text-gray-900">{EXTENSO[dia]}, {fmtBR(r.dataReposicao)}, {tRepo?.horario || '?'}</span>
+                      {occupancyNum !== null && (
+                        <span className="ml-2 text-xs text-gray-500">({occupancyNum} alunos esperados)</span>
+                      )}
+                    </div>
+                    <div className="mt-1 flex items-center gap-2 flex-wrap">
+                      {(isExtra || semFalta) && (
+                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${isExtra ? 'bg-purple-100 text-purple-700' : 'bg-amber-100 text-amber-700'}`}>
+                          {isExtra ? 'Aula extra' : 'Sem falta vinculada'}
+                        </span>
+                      )}
+                      {isExtra && (
+                        <button onClick={e => { e.stopPropagation(); dispatch({ type: 'MARK_PAGO', id: r.id }); }}
+                          className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border transition-colors ${r.pago ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-500 border-gray-300 hover:border-green-500 hover:text-green-600'}`}>
+                          {r.pago ? '✓ PAGO' : 'PAGO'}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -1684,113 +1938,73 @@ function PainelVisual({ state, dispatch }) {
         )}
       </div>
 
-      {/* REPOSIÇÕES */}
-      <div className="rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-        <BlockHeader>REPOSIÇÕES</BlockHeader>
-        {reposAtivas.length === 0 && (
-          <div className="px-4 py-3 text-sm text-gray-400 italic">Nenhuma reposição agendada.</div>
-        )}
-        <div className="divide-y divide-gray-100">
-          {reposAtivas.map((r, i) => {
-            const tOrigem = state.turmas.find(t => t.id === r.turmaOrigemId);
-            const tRepo   = state.turmas.find(t => t.id === r.turmaReposicaoId);
-            const dia     = getDiaSemanaFromDateStr(r.dataReposicao);
-            const origemLbl = tOrigem ? `${ABREV[tOrigem.diaSemana]} ${tOrigem.horario}` : '?';
-            const isExtra   = r.tipo === 'aula_extra';
-            const semFalta  = r.semFaltaVinculada;
-            const occupancyNum = r.semVagaOficial ? calcOccupancy(r.turmaReposicaoId, r.dataReposicao, state) : null;
-            return (
-              <div key={i} className="px-4 py-3 bg-white">
-                <div className="flex justify-between items-start">
-                  <span className="font-semibold text-gray-800">{r.alunoNome}</span>
-                  <span className="text-xs text-gray-400 ml-2">{origemLbl}</span>
-                </div>
-                <div className="text-sm text-gray-600 mt-0.5">
-                  <span className="text-gray-400">{isExtra ? 'Aula extra:' : 'Repõe:'}</span>{' '}
-                  <span className="font-bold text-gray-900">{EXTENSO[dia]}, {fmtBR(r.dataReposicao)}, {tRepo?.horario || '?'}</span>
-                  {occupancyNum !== null && (
-                    <span className="ml-2 text-xs text-gray-500">({occupancyNum} alunos esperados)</span>
-                  )}
-                </div>
-                <div className="mt-1 flex items-center gap-2 flex-wrap">
-                  {(isExtra || semFalta) && (
-                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${isExtra ? 'bg-purple-100 text-purple-700' : 'bg-amber-100 text-amber-700'}`}>
-                      {isExtra ? 'Aula extra' : 'Sem falta vinculada'}
-                    </span>
-                  )}
-                  {isExtra && (
-                    <button
-                      onClick={() => dispatch({ type: 'MARK_PAGO', id: r.id })}
-                      className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border transition-colors ${r.pago ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-500 border-gray-300 hover:border-green-500 hover:text-green-600'}`}
-                    >
-                      {r.pago ? '✓ PAGO' : 'PAGO'}
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
       {/* VAGAS */}
       <div className="rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-        <BlockHeader>VAGAS</BlockHeader>
-        {vagasGrupos.length === 0 && (
-          <div className="px-4 py-3 text-sm text-gray-400 italic">Nenhuma vaga aberta.</div>
+        <BlockHeader sKey="vagas" count={vagasGrupos.length}>VAGAS</BlockHeader>
+        {open.vagas && (
+          <>
+            {vagasGrupos.length === 0 && (
+              <div className="px-4 py-3 text-sm text-gray-400 italic">Nenhuma vaga aberta.</div>
+            )}
+            <div className="divide-y divide-gray-100">
+              {vagasGrupos.map((v, i) => {
+                const t   = state.turmas.find(x => x.id === v.turmaId);
+                const dia = getDiaSemanaFromDateStr(v.data);
+                return (
+                  <div key={i} onClick={() => setDet({ tipo:'vaga', obj: v })}
+                    className="px-4 py-3 bg-white cursor-pointer hover:bg-gray-50 transition-colors flex justify-between items-center">
+                    <div>
+                      <span className="font-bold text-gray-900">{EXTENSO[dia]}, {fmtBR(v.data)}</span>
+                      <span className="text-gray-500 ml-2 text-sm">{t?.horario || '?'}</span>
+                    </div>
+                    {v.count > 1 && (
+                      <span className="bg-blue-100 text-blue-700 text-xs font-bold px-2 py-0.5 rounded-full">{v.count} vagas</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </>
         )}
-        <div className="divide-y divide-gray-100">
-          {vagasGrupos.map((v, i) => {
-            const t   = state.turmas.find(x => x.id === v.turmaId);
-            const dia = getDiaSemanaFromDateStr(v.data);
-            return (
-              <div key={i} className="px-4 py-3 bg-white flex justify-between items-center">
-                <div>
-                  <span className="font-bold text-gray-900">{EXTENSO[dia]}, {fmtBR(v.data)}</span>
-                  <span className="text-gray-500 ml-2 text-sm">{t?.horario || '?'}</span>
-                </div>
-                {v.count > 1 && (
-                  <span className="bg-blue-100 text-blue-700 text-xs font-bold px-2 py-0.5 rounded-full">{v.count} vagas</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
       </div>
 
       {/* TURMAS */}
       <div className="rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-        <BlockHeader>TURMAS</BlockHeader>
-        <div className="divide-y divide-gray-100">
-          {sorted.map((t, i) => {
-            const over = t.alunos.length > t.capacidade;
-            const full = t.alunos.length === t.capacidade;
-            return (
-              <div key={i} className="px-4 py-2.5 bg-white flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-gray-700">{ABREV[t.diaSemana]} {t.horario}</span>
-                  {t.observacao && <span className="text-xs text-gray-400">({t.observacao})</span>}
+        <BlockHeader sKey="turmas" count={sorted.length}>TURMAS</BlockHeader>
+        {open.turmas && (
+          <div className="divide-y divide-gray-100">
+            {sorted.map((t, i) => {
+              const over = t.alunos.length > t.capacidade;
+              const full = t.alunos.length === t.capacidade;
+              return (
+                <div key={i} className="px-4 py-2.5 bg-white flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-gray-700">{ABREV[t.diaSemana]} {t.horario}</span>
+                    {t.observacao && <span className="text-xs text-gray-400">({t.observacao})</span>}
+                  </div>
+                  <span className={`text-sm font-medium ${over ? 'text-red-600' : full ? 'text-amber-600' : 'text-gray-500'}`}>
+                    {t.alunos.length}/{t.capacidade}
+                  </span>
                 </div>
-                <span className={`text-sm font-medium ${over ? 'text-red-600' : full ? 'text-amber-600' : 'text-gray-500'}`}>
-                  {t.alunos.length}/{t.capacidade}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* OBSERVAÇÕES */}
       {obs.length > 0 && (
         <div className="rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-          <BlockHeader>OBSERVAÇÕES</BlockHeader>
-          <div className="divide-y divide-gray-100">
-            {obs.map((o, i) => (
-              <div key={i} className={`px-4 py-3 text-sm border-l-4 ${obsColors[o.level]} border-l-current`}>
-                {obsIcons[o.level]} {o.text}
-              </div>
-            ))}
-          </div>
+          <BlockHeader sKey="obs" count={obs.length}>OBSERVAÇÕES</BlockHeader>
+          {open.obs && (
+            <div className="divide-y divide-gray-100">
+              {obs.map((o, i) => (
+                <div key={i} className={`px-4 py-3 text-sm border-l-4 ${obsColors[o.level]} border-l-current`}>
+                  {obsIcons[o.level]} {o.text}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1798,17 +2012,48 @@ function PainelVisual({ state, dispatch }) {
 }
 
 function PainelLista({ state, dispatch }) {
-  const [copied, setCopied]     = useState(false);
-  const [snapLabel, setSnapLabel] = useState('');
-  const [snapSaved, setSnapSaved] = useState(false);
-  const [showRaw, setShowRaw]   = useState(false);
+  const [copied, setCopied]         = useState(false);
+  const [copiedVagas, setCopiedVagas] = useState(false);
+  const [snapLabel, setSnapLabel]   = useState('');
+  const [snapSaved, setSnapSaved]   = useState(false);
+  const [showRaw, setShowRaw]       = useState(false);
 
   const text = useMemo(() => generatePainelText(state), [state]);
+  const vagasWhatsApp = useMemo(() => {
+    const td = todayStr();
+    const in6 = (() => { const d = new Date(); d.setDate(d.getDate()+6); return dateToStr(d); })();
+    const seen = new Set();
+    const linhas = [];
+    [...state.vagas]
+      .filter(v => v.data >= td && v.data <= in6)
+      .sort((a, b) => {
+        if (a.data !== b.data) return a.data.localeCompare(b.data);
+        return (state.turmas.find(t => t.id === a.turmaId)?.horario||'').localeCompare(state.turmas.find(t => t.id === b.turmaId)?.horario||'');
+      })
+      .forEach(v => {
+        const key = `${v.data}|${v.turmaId}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        const t = state.turmas.find(x => x.id === v.turmaId);
+        const dia = getDiaSemanaFromDateStr(v.data);
+        const diaCurto = (EXTENSO[dia] || dia).replace('-feira', '');
+        linhas.push(`${diaCurto}, ${fmtBR(v.data)}, ${t?.horario || '?'}`);
+      });
+    const corpo = linhas.length ? linhas.join('\n\n') : '_Nenhuma vaga nos próximos 6 dias_';
+    return `Oi gente! Seguem as vagas para reposição essa semana\n\n\n${corpo}\n\nSe puder vir me manda uma mensagem!`;
+  }, [state]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
+    });
+  };
+
+  const handleCopyVagas = () => {
+    navigator.clipboard.writeText(vagasWhatsApp).then(() => {
+      setCopiedVagas(true);
+      setTimeout(() => setCopiedVagas(false), 2500);
     });
   };
 
@@ -1826,6 +2071,10 @@ function PainelLista({ state, dispatch }) {
         <button onClick={handleCopy}
           className={`px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-1.5 ${copied ? 'bg-green-600 text-white' : 'bg-gray-800 text-white hover:bg-gray-900'}`}>
           {copied ? '✓ Copiado!' : '📋 Copiar lista'}
+        </button>
+        <button onClick={handleCopyVagas}
+          className={`px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-1.5 ${copiedVagas ? 'bg-green-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+          {copiedVagas ? '✓ Copiado!' : '🪑 Copiar vagas'}
         </button>
         <button onClick={() => setShowRaw(v => !v)}
           className="px-4 py-2 rounded-lg font-medium text-sm border border-gray-300 text-gray-600 hover:bg-gray-50">
@@ -2030,9 +2279,34 @@ function PainelImportacao({ state, dispatch }) {
   );
 }
 
+// ==================== PROFESSOR MODAL ====================
+function ProfessorModal({ onSelect }) {
+  return (
+    <div className="min-h-screen bg-amber-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl p-8 max-w-xs w-full text-center">
+        <div className="text-5xl mb-3">🎨</div>
+        <h1 className="text-xl font-bold text-gray-900 mb-1">Ateliê Passarinho</h1>
+        <p className="text-gray-500 text-sm mb-6">Quem está usando o app?</p>
+        <div className="space-y-3">
+          {PROFESSORES.map(p => {
+            const c = PROFESSOR_COLORS[p] || { bg:'bg-gray-100', text:'text-gray-700' };
+            return (
+              <button key={p} onClick={() => onSelect(p)}
+                className={`w-full py-3 rounded-xl font-bold text-base transition-colors ${c.bg} ${c.text} hover:opacity-80 active:scale-95`}>
+                {p}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ==================== APP ====================
 function App() {
-  const [state, dispatch] = useReducer(reducer, null, loadState);
+  const [state, baseDispatch] = useReducer(reducer, null, loadState);
+  const [professor, setProfessor] = useState(() => localStorage.getItem(PROFESSOR_KEY) || '');
   const [section, setSection]     = useState(2);
   const [seedDismissed, setSeedDismissed] = useState(false);
   const [syncStatus, setSyncStatus] = useState('conectando');
@@ -2040,14 +2314,29 @@ function App() {
   const saveTimer   = useRef(null);
   const initialised = useRef(false);
 
+  // Wrapper que injeta o professor em toda ação
+  const dispatch = useCallback((action) => {
+    baseDispatch({ ...action, professor });
+  }, [professor]);
+
+  const handleSelectProfessor = (p) => {
+    localStorage.setItem(PROFESSOR_KEY, p);
+    setProfessor(p);
+  };
+
+  const handleChangeProfessor = () => {
+    localStorage.removeItem(PROFESSOR_KEY);
+    setProfessor('');
+  };
+
   // 1. Cleanup + carrega Firebase + abre SSE
   useEffect(function() {
-    dispatch({ type: 'CLEANUP' });
+    baseDispatch({ type: 'CLEANUP' });
 
     fetchFromFirebase()
       .then(function(data) {
         if (data && typeof data === 'object' && Object.keys(data).length > 0) {
-          dispatch({ type: 'SYNC_FROM_FIREBASE', data: normalizeState(data) });
+          baseDispatch({ type: 'SYNC_FROM_FIREBASE', data: normalizeState(data) });
         } else {
           saveToFirebase(Object.assign({}, SEED, { _updatedAt: Date.now() })).catch(function(){});
         }
@@ -2063,7 +2352,7 @@ function App() {
         var data = parsed.data;
         if (!data || typeof data !== 'object') return;
         if (data._updatedAt && data._updatedAt <= lastOwnSave.current + 3000) return;
-        dispatch({ type: 'SYNC_FROM_FIREBASE', data: normalizeState(data) });
+        baseDispatch({ type: 'SYNC_FROM_FIREBASE', data: normalizeState(data) });
       } catch(err) {}
     });
     es.onerror = function() { setSyncStatus('erro'); };
@@ -2093,6 +2382,12 @@ function App() {
 
   const showSeedWarning = state._seedWarning && !seedDismissed;
   const syncLabel = { conectando: '🔄 conectando', ok: '🟢 sincronizado', erro: '🔴 sem conexão' };
+  const profColors = PROFESSOR_COLORS[professor] || { bg:'bg-gray-100', text:'text-gray-700', dot:'bg-gray-400' };
+
+  // Tela de seleção de professor — renderização condicional DENTRO do return
+  if (!professor) {
+    return <ProfessorModal onSelect={handleSelectProfessor} />;
+  }
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -2103,9 +2398,13 @@ function App() {
             <h1 className="text-lg font-bold text-gray-900">🎨 Ateliê Passarinho</h1>
             <p className="text-xs text-gray-400">Gestão de Faltas e Reposições</p>
           </div>
-          <div className="text-right">
-            <div className="text-xs text-gray-400">{new Date().toLocaleDateString('pt-BR', {weekday:'short', day:'2-digit', month:'2-digit', year:'numeric'})}</div>
-            <div className={`text-xs mt-0.5 ${syncStatus === 'ok' ? 'text-green-600' : syncStatus === 'erro' ? 'text-red-500' : 'text-gray-400'}`}>{syncLabel[syncStatus]}</div>
+          <div className="text-right flex flex-col items-end gap-1">
+            <button onClick={handleChangeProfessor}
+              className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg ${profColors.bg} ${profColors.text} hover:opacity-75 transition-opacity`}>
+              <span className={`w-2 h-2 rounded-full ${profColors.dot}`}></span>
+              {professor} ▾
+            </button>
+            <div className={`text-xs ${syncStatus === 'ok' ? 'text-green-600' : syncStatus === 'erro' ? 'text-red-500' : 'text-gray-400'}`}>{syncLabel[syncStatus]}</div>
           </div>
         </div>
         <div className="border-t border-gray-100">
@@ -2140,6 +2439,38 @@ function App() {
         {section === 1 && <SectionFaltasReposicoes state={state} dispatch={dispatch} />}
         {section === 2 && <SectionPainel state={state} dispatch={dispatch} />}
       </div>
+    </div>
+  );
+}
+
+// ==================== PAINEL: REGISTRO ====================
+function PainelRegistro({ state }) {
+  const log = arr(state.log);
+
+  if (log.length === 0) {
+    return <p className="text-gray-400 text-sm text-center py-8">Nenhuma ação registrada ainda.</p>;
+  }
+
+  return (
+    <div className="space-y-2">
+      {log.map(entry => {
+        const c = PROFESSOR_COLORS[entry.professor] || { bg:'bg-gray-100', text:'text-gray-600', dot:'bg-gray-400' };
+        const dt = new Date(entry.ts);
+        const dataHora = dt.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' }) +
+                         ' ' + dt.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
+        return (
+          <div key={entry.id} className="flex items-start gap-3 py-2.5 border-b border-gray-100 last:border-0">
+            <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap mt-0.5 ${c.bg} ${c.text}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`}></span>
+              {entry.professor}
+            </span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-gray-800">{entry.descricao}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{dataHora}</p>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
