@@ -302,6 +302,7 @@ function reducer(state, action) {
     case 'ADD_REPOSICAO': {
       const { alunoNome, dataReposicao, turmaReposicaoId, tipo } = action;
       const repoId = genId('r');
+      const semVagaOficial = action.semVagaOficial || false;
 
       if (tipo === 'aula_extra') {
         const turmaOrigem = state.turmas.find(t => t.alunos.includes(alunoNome));
@@ -309,7 +310,7 @@ function reducer(state, action) {
           id: repoId, alunoNome,
           turmaOrigemId: turmaOrigem?.id || null,
           faltaId: null, dataReposicao, turmaReposicaoId,
-          tipo: 'aula_extra', realizada: false
+          tipo: 'aula_extra', realizada: false, semVagaOficial, pago: false
         }]};
       } else {
         const pending = state.faltas
@@ -323,7 +324,7 @@ function reducer(state, action) {
             reposicoes: [...state.reposicoes, {
               id: repoId, alunoNome,
               turmaOrigemId: oldest.turmaId, faltaId: oldest.id,
-              dataReposicao, turmaReposicaoId, tipo: 'reposicao', realizada: false
+              dataReposicao, turmaReposicaoId, tipo: 'reposicao', realizada: false, semVagaOficial
             }],
             vagas: state.vagas.filter(v => v.faltaId !== oldest.id)
           };
@@ -334,12 +335,19 @@ function reducer(state, action) {
             id: repoId, alunoNome,
             turmaOrigemId: turmaOrigem?.id || null,
             faltaId: null, dataReposicao, turmaReposicaoId,
-            tipo: 'reposicao', realizada: false,
+            tipo: 'reposicao', realizada: false, semVagaOficial,
             semFaltaVinculada: true,
             observacao: 'Reposição sem falta vinculada — verificar'
           }]};
         }
       }
+      break;
+    }
+
+    case 'MARK_PAGO': {
+      next = { ...state, reposicoes: state.reposicoes.map(r =>
+        r.id === action.id ? { ...r, pago: !r.pago } : r
+      )};
       break;
     }
 
@@ -865,16 +873,17 @@ function TabRegistrarFalta({ state, dispatch }) {
 function TabRegistrarReposicao({ state, dispatch }) {
   const [turmaOrigemId, setTurmaOrigemId] = useState('');
   const [alunoNome, setAlunoNome]         = useState('');
-  const [vagaSel, setVagaSel]             = useState(''); // vagaId | 'extra'
+  const [vagaSel, setVagaSel]             = useState(''); // vagaId | 'livre'
   const [extraData, setExtraData]         = useState('');
   const [extraTurma, setExtraTurma]       = useState('');
+  const [tipoManual, setTipoManual]       = useState('reposicao'); // quando !hasPending + isManual
   const [success, setSuccess]             = useState('');
 
   const td     = todayStr();
   const sorted = useMemo(() => sortTurmas(state.turmas), [state.turmas]);
   const turmaOrigem = state.turmas.find(t => t.id === turmaOrigemId);
 
-  // Vagas futuras ordenadas e sem duplicatas (mesma turma + data = uma só opção)
+  // Vagas futuras ordenadas e sem duplicatas
   const vagasFuturas = useMemo(() => {
     const seen = new Set();
     return [...state.vagas]
@@ -893,15 +902,17 @@ function TabRegistrarReposicao({ state, dispatch }) {
       });
   }, [state.vagas, state.turmas, td]);
 
-  const isExtra     = vagaSel === 'extra';
-  const vagaObj     = !isExtra && vagaSel ? state.vagas.find(v => v.id === vagaSel) : null;
-  const dataRepo    = isExtra ? extraData  : (vagaObj?.data || '');
-  const turmaRepoId = isExtra ? extraTurma : (vagaObj?.turmaId || '');
+  const hasPending  = alunoNome ? state.faltas.some(f => f.alunoNome === alunoNome && f.status === 'pendente') : false;
+  const isManual    = vagaSel === 'livre';
+  const vagaObj     = !isManual && vagaSel ? state.vagas.find(v => v.id === vagaSel) : null;
+  const dataRepo    = isManual ? extraData   : (vagaObj?.data || '');
+  const turmaRepoId = isManual ? extraTurma  : (vagaObj?.turmaId || '');
   const turmaRepo   = state.turmas.find(t => t.id === turmaRepoId);
 
-  const hasPending = alunoNome
-    ? state.faltas.some(f => f.alunoNome === alunoNome && f.status === 'pendente')
-    : false;
+  // Tipo: com falta pendente → sempre reposicao
+  //       sem falta + vaga oficial → reposicao sem falta vinculada
+  //       sem falta + manual → tipoManual (escolha explícita)
+  const tipo = hasPending ? 'reposicao' : (isManual ? tipoManual : 'reposicao');
 
   const faltaInfo = useMemo(() => {
     if (!alunoNome) return null;
@@ -922,10 +933,9 @@ function TabRegistrarReposicao({ state, dispatch }) {
 
   const handleSubmit = () => {
     if (!canSubmit) return;
-    const tipo = isExtra ? 'aula_extra' : 'reposicao';
-    dispatch({ type: 'ADD_REPOSICAO', alunoNome, dataReposicao: dataRepo, turmaReposicaoId: turmaRepoId, tipo });
-    setSuccess(`Reposição de ${alunoNome} agendada para ${fmtBRFull(dataRepo)}.`);
-    setAlunoNome(''); setVagaSel(''); setExtraData(''); setExtraTurma('');
+    dispatch({ type: 'ADD_REPOSICAO', alunoNome, dataReposicao: dataRepo, turmaReposicaoId: turmaRepoId, tipo, semVagaOficial: isManual });
+    setSuccess(`${tipo === 'aula_extra' ? 'Aula extra' : 'Reposição'} de ${alunoNome} agendada para ${fmtBRFull(dataRepo)}.`);
+    setAlunoNome(''); setVagaSel(''); setExtraData(''); setExtraTurma(''); setTipoManual('reposicao');
     setTimeout(() => setSuccess(''), 4000);
   };
 
@@ -940,9 +950,7 @@ function TabRegistrarReposicao({ state, dispatch }) {
           className="w-full border border-gray-300 rounded-lg px-3 py-2">
           <option value="">— Selecione a turma —</option>
           {sorted.map(t => (
-            <option key={t.id} value={t.id}>
-              {EXTENSO[t.diaSemana]} {t.horario}{t.observacao ? ` (${t.observacao})` : ''}
-            </option>
+            <option key={t.id} value={t.id}>{EXTENSO[t.diaSemana]} {t.horario}</option>
           ))}
         </select>
       </div>
@@ -951,10 +959,10 @@ function TabRegistrarReposicao({ state, dispatch }) {
       {turmaOrigem && (
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Aluno</label>
-          <select value={alunoNome} onChange={e => { setAlunoNome(e.target.value); setVagaSel(''); }}
+          <select value={alunoNome} onChange={e => { setAlunoNome(e.target.value); setVagaSel(''); setTipoManual('reposicao'); }}
             className="w-full border border-gray-300 rounded-lg px-3 py-2">
             <option value="">— Selecione o aluno —</option>
-            {turmaOrigem.alunos.map(n => <option key={n} value={n}>{n}</option>)}
+            {[...turmaOrigem.alunos].sort((a,b) => a.localeCompare(b,'pt')).map(n => <option key={n} value={n}>{n}</option>)}
           </select>
           {turmaOrigem.alunos.length === 0 && (
             <p className="text-amber-600 text-sm mt-1">Esta turma não tem alunos cadastrados.</p>
@@ -962,7 +970,7 @@ function TabRegistrarReposicao({ state, dispatch }) {
         </div>
       )}
 
-      {/* Info: falta mais antiga ou aviso sem falta */}
+      {/* Info: falta mais antiga */}
       {alunoNome && faltaInfo && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
           <div className="font-medium text-blue-800">Falta mais antiga a consumir:</div>
@@ -972,17 +980,12 @@ function TabRegistrarReposicao({ state, dispatch }) {
           <div className="text-blue-600 mt-0.5">Expira em: {fmtBRFull(faltaInfo.expiry)}</div>
         </div>
       )}
-      {alunoNome && !hasPending && (
-        <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 text-sm text-amber-800">
-          ⚠️ <strong>{alunoNome}</strong> não tem faltas pendentes. A reposição será marcada como <em>"sem falta vinculada"</em>.
-        </div>
-      )}
 
       {/* 3. Vaga */}
       {alunoNome && (
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Vaga</label>
-          <select value={vagaSel} onChange={e => { setVagaSel(e.target.value); setExtraData(''); setExtraTurma(''); }}
+          <select value={vagaSel} onChange={e => { setVagaSel(e.target.value); setExtraData(''); setExtraTurma(''); setTipoManual('reposicao'); }}
             className="w-full border border-gray-300 rounded-lg px-3 py-2">
             <option value="">— Selecione a vaga —</option>
             {vagasFuturas.map(v => {
@@ -994,19 +997,19 @@ function TabRegistrarReposicao({ state, dispatch }) {
                 </option>
               );
             })}
-            <option value="extra">✦ Aula extra — escolher data e turma</option>
+            <option value="livre">✦ Escolher data / turma</option>
           </select>
-          {vagasFuturas.length === 0 && !isExtra && (
+          {vagasFuturas.length === 0 && !isManual && (
             <p className="text-gray-400 text-sm mt-1">Nenhuma vaga aberta no momento.</p>
           )}
         </div>
       )}
 
-      {/* Campos extras para aula extra */}
-      {isExtra && (
+      {/* Campos para data/turma livre */}
+      {isManual && (
         <div className="space-y-3 pl-3 border-l-2 border-blue-300">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Data da aula extra</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Data</label>
             <input type="date" value={extraData} min={td} onChange={e => setExtraData(e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2" />
           </div>
@@ -1016,12 +1019,26 @@ function TabRegistrarReposicao({ state, dispatch }) {
               className="w-full border border-gray-300 rounded-lg px-3 py-2">
               <option value="">— Selecione a turma —</option>
               {sorted.map(t => (
-                <option key={t.id} value={t.id}>
-                  {EXTENSO[t.diaSemana]} {t.horario}{t.observacao ? ` (${t.observacao})` : ''}
-                </option>
+                <option key={t.id} value={t.id}>{EXTENSO[t.diaSemana]} {t.horario}</option>
               ))}
             </select>
           </div>
+          {/* Quando não tem falta pendente, pergunta o tipo */}
+          {!hasPending && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Tipo</label>
+              <div className="flex gap-3">
+                <label className={`flex-1 flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors ${tipoManual === 'reposicao' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}>
+                  <input type="radio" name="tipoManual" value="reposicao" checked={tipoManual === 'reposicao'} onChange={() => setTipoManual('reposicao')} />
+                  <span className="text-sm font-medium">Reposição sem falta vinculada</span>
+                </label>
+                <label className={`flex-1 flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors ${tipoManual === 'aula_extra' ? 'border-purple-500 bg-purple-50' : 'border-gray-200'}`}>
+                  <input type="radio" name="tipoManual" value="aula_extra" checked={tipoManual === 'aula_extra'} onChange={() => setTipoManual('aula_extra')} />
+                  <span className="text-sm font-medium">Aula extra</span>
+                </label>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1487,7 +1504,7 @@ function SectionPainel({ state, dispatch }) {
 }
 
 // ==================== PAINEL: VISUAL RENDERER ====================
-function PainelVisual({ state }) {
+function PainelVisual({ state, dispatch }) {
   const td = todayStr();
   const sorted = sortTurmas(state.turmas);
 
@@ -1684,6 +1701,7 @@ function PainelVisual({ state }) {
             const origemLbl = tOrigem ? `${ABREV[tOrigem.diaSemana]} ${tOrigem.horario}` : '?';
             const isExtra   = r.tipo === 'aula_extra';
             const semFalta  = r.semFaltaVinculada;
+            const occupancyNum = r.semVagaOficial ? calcOccupancy(r.turmaReposicaoId, r.dataReposicao, state) : null;
             return (
               <div key={i} className="px-4 py-3 bg-white">
                 <div className="flex justify-between items-start">
@@ -1693,14 +1711,25 @@ function PainelVisual({ state }) {
                 <div className="text-sm text-gray-600 mt-0.5">
                   <span className="text-gray-400">{isExtra ? 'Aula extra:' : 'Repõe:'}</span>{' '}
                   <span className="font-bold text-gray-900">{EXTENSO[dia]}, {fmtBR(r.dataReposicao)}, {tRepo?.horario || '?'}</span>
+                  {occupancyNum !== null && (
+                    <span className="ml-2 text-xs text-gray-500">({occupancyNum} alunos esperados)</span>
+                  )}
                 </div>
-                {(isExtra || semFalta) && (
-                  <div className="mt-1">
+                <div className="mt-1 flex items-center gap-2 flex-wrap">
+                  {(isExtra || semFalta) && (
                     <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${isExtra ? 'bg-purple-100 text-purple-700' : 'bg-amber-100 text-amber-700'}`}>
                       {isExtra ? 'Aula extra' : 'Sem falta vinculada'}
                     </span>
-                  </div>
-                )}
+                  )}
+                  {isExtra && (
+                    <button
+                      onClick={() => dispatch({ type: 'MARK_PAGO', id: r.id })}
+                      className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border transition-colors ${r.pago ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-500 border-gray-300 hover:border-green-500 hover:text-green-600'}`}
+                    >
+                      {r.pago ? '✓ PAGO' : 'PAGO'}
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -1820,7 +1849,7 @@ function PainelLista({ state, dispatch }) {
       {/* Conteúdo */}
       {showRaw
         ? <pre className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-xs text-gray-700 font-mono leading-relaxed overflow-x-auto">{text}</pre>
-        : <PainelVisual state={state} />
+        : <PainelVisual state={state} dispatch={dispatch} />
       }
     </div>
   );
