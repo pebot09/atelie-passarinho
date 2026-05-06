@@ -444,6 +444,34 @@ function reducer(state, action) {
       break;
     }
 
+    case 'CANCEL_FALTA': {
+      const falta = state.faltas.find(f => f.id === action.id);
+      if (!falta) return state;
+      let newVagas = state.vagas.filter(v => v.faltaId !== falta.id);
+      let newRepos = state.reposicoes;
+      const repoVinc = state.reposicoes.find(r => r.vagaConsumedFaltaId === falta.id);
+      if (repoVinc) {
+        const outraVaga = newVagas.find(v =>
+          v.turmaId === repoVinc.turmaReposicaoId && v.data === repoVinc.dataReposicao
+        );
+        if (outraVaga) {
+          newRepos = newRepos.map(r => r.id === repoVinc.id ? { ...r, vagaConsumedFaltaId: outraVaga.faltaId } : r);
+          newVagas = newVagas.filter(v => v.id !== outraVaga.id);
+        } else {
+          newRepos = newRepos.map(r => r.id === repoVinc.id ? { ...r, vagaConsumedFaltaId: null } : r);
+        }
+      }
+      next = {
+        ...state,
+        faltas: state.faltas.filter(f => f.id !== falta.id),
+        vagas: newVagas,
+        reposicoes: newRepos,
+      };
+      const tLbl = getTurmaLabel(state.turmas, falta.turmaId);
+      next.log = addLog(state.log, action.professor, `Cancelou falta de ${falta.alunoNome} (${tLbl}) — ${fmtBRFull(falta.datas[0])}`);
+      break;
+    }
+
     case 'ADD_AUSENCIA': {
       const { alunoNome, turmaId, tipo, mesAno } = action;
       const ausId = genId('aus');
@@ -1315,10 +1343,125 @@ function TabAusenciaProgramada({ state, dispatch }) {
   );
 }
 
+function TabCancelarFalta({ state, dispatch }) {
+  const [turmaId, setTurmaId] = useState('');
+  const [alunoNome, setAlunoNome] = useState('');
+  const [faltaId, setFaltaId] = useState('');
+  const [confirm, setConfirm] = useState(false);
+  const [success, setSuccess] = useState('');
+  const td = todayStr();
+
+  const faltasFuturas = useMemo(() =>
+    state.faltas.filter(f => f.status === 'pendente' && f.datas[0] >= td),
+    [state.faltas, td]);
+
+  const turmas = useMemo(() => {
+    const ids = new Set(faltasFuturas.map(f => f.turmaId));
+    return sortTurmas(state.turmas.filter(t => ids.has(t.id)));
+  }, [faltasFuturas, state.turmas]);
+
+  const alunos = useMemo(() => {
+    if (!turmaId) return [];
+    const nomes = [...new Set(faltasFuturas.filter(f => f.turmaId === turmaId).map(f => f.alunoNome))].sort();
+    return nomes;
+  }, [turmaId, faltasFuturas]);
+
+  const faltas = useMemo(() => {
+    if (!turmaId || !alunoNome) return [];
+    return faltasFuturas.filter(f => f.turmaId === turmaId && f.alunoNome === alunoNome)
+      .sort((a,b) => a.datas[0].localeCompare(b.datas[0]));
+  }, [turmaId, alunoNome, faltasFuturas]);
+
+  const falta = faltas.find(f => f.id === faltaId);
+  const repoVinc = falta ? state.reposicoes.find(r => r.vagaConsumedFaltaId === falta.id) : null;
+  const outraVaga = repoVinc ? state.vagas.find(v =>
+    v.turmaId === repoVinc.turmaReposicaoId && v.data === repoVinc.dataReposicao && v.faltaId !== falta.id
+  ) : null;
+
+  const handleCancel = () => {
+    dispatch({ type: 'CANCEL_FALTA', id: faltaId });
+    setSuccess(`Falta de ${alunoNome} em ${fmtBRFull(falta.datas[0])} cancelada.`);
+    setTurmaId(''); setAlunoNome(''); setFaltaId(''); setConfirm(false);
+    setTimeout(() => setSuccess(''), 4000);
+  };
+
+  return (
+    <div className="space-y-4">
+      <h3 className="font-semibold text-gray-700">Cancelar Falta</h3>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Turma</label>
+        <select value={turmaId} onChange={e => { setTurmaId(e.target.value); setAlunoNome(''); setFaltaId(''); }}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2">
+          <option value="">— Selecione —</option>
+          {turmas.map(t => <option key={t.id} value={t.id}>{getTurmaLabel(state.turmas, t.id)}</option>)}
+        </select>
+      </div>
+
+      {turmaId && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Aluno</label>
+          <select value={alunoNome} onChange={e => { setAlunoNome(e.target.value); setFaltaId(''); }}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2">
+            <option value="">— Selecione —</option>
+            {alunos.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+        </div>
+      )}
+
+      {alunoNome && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Falta</label>
+          <select value={faltaId} onChange={e => setFaltaId(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2">
+            <option value="">— Selecione —</option>
+            {faltas.map(f => <option key={f.id} value={f.id}>{fmtBRFull(f.datas[0])}</option>)}
+          </select>
+        </div>
+      )}
+
+      {falta && (
+        <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1">
+          <div><span className="font-medium">Aluno:</span> {falta.alunoNome}</div>
+          <div><span className="font-medium">Data:</span> {fmtBRFull(falta.datas[0])}</div>
+          <div><span className="font-medium">Turma:</span> {getTurmaLabel(state.turmas, falta.turmaId)}</div>
+          {repoVinc && (
+            <div className={`mt-1 text-xs px-2 py-1 rounded ${outraVaga ? 'bg-amber-50 text-amber-700' : 'bg-orange-50 text-orange-700'}`}>
+              {outraVaga
+                ? `A reposição de ${repoVinc.alunoNome} em ${fmtBRFull(repoVinc.dataReposicao)} será vinculada a outra vaga disponível.`
+                : `A reposição de ${repoVinc.alunoNome} em ${fmtBRFull(repoVinc.dataReposicao)} ficará sem vaga vinculada.`}
+            </div>
+          )}
+        </div>
+      )}
+
+      {success && <div className="bg-green-50 text-green-700 rounded-lg px-4 py-3 text-sm font-medium">{success}</div>}
+
+      <button
+        onClick={() => setConfirm(true)}
+        disabled={!faltaId}
+        className="w-full py-2.5 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        Cancelar Falta
+      </button>
+
+      {confirm && falta && (
+        <ConfirmModal
+          title="Cancelar falta?" danger
+          message={`Cancelar a falta de ${falta.alunoNome} em ${fmtBRFull(falta.datas[0])}?`}
+          onConfirm={handleCancel}
+          onCancel={() => setConfirm(false)}
+          confirmLabel="Cancelar falta"
+        />
+      )}
+    </div>
+  );
+}
+
 // ==================== SECTION 2: FALTAS & REPOSIÇÕES ====================
 function SectionFaltasReposicoes({ state, dispatch }) {
   const [tab, setTab] = useState(0);
-  const tabs = ['Registrar Falta', 'Registrar Reposição', 'Cancelar Reposição', 'Ausência Programada'];
+  const tabs = ['Registrar Falta', 'Registrar Reposição', 'Cancelar Reposição', 'Cancelar Falta', 'Ausência Programada'];
 
   return (
     <div className="max-w-2xl mx-auto p-4">
@@ -1333,7 +1476,8 @@ function SectionFaltasReposicoes({ state, dispatch }) {
           {tab === 0 && <TabRegistrarFalta state={state} dispatch={dispatch} />}
           {tab === 1 && <TabRegistrarReposicao state={state} dispatch={dispatch} />}
           {tab === 2 && <TabCancelarReposicao state={state} dispatch={dispatch} />}
-          {tab === 3 && <TabAusenciaProgramada state={state} dispatch={dispatch} />}
+          {tab === 3 && <TabCancelarFalta state={state} dispatch={dispatch} />}
+          {tab === 4 && <TabAusenciaProgramada state={state} dispatch={dispatch} />}
         </div>
       </div>
     </div>
