@@ -417,26 +417,40 @@ function reducer(state, action) {
     case 'CANCEL_REPOSICAO': {
       const repo = state.reposicoes.find(r => r.id === action.id);
       if (!repo) return state;
+
+      // Remaining reposições after removing the canceled one
+      const remainingRepos = state.reposicoes.filter(r => r.id !== repo.id);
+
+      // Active reposições for this student+turmaOrigem (excluding aula_extra)
+      const activeRepos = remainingRepos
+        .filter(r => r.alunoNome === repo.alunoNome && r.turmaOrigemId === repo.turmaOrigemId && !r.realizada && r.faltaId)
+        .sort((a, b) => getFaltaEarliest(a).localeCompare(getFaltaEarliest(b)));
+
+      // All marcada faltas for this student+turmaOrigem, oldest first
+      const marcadas = state.faltas
+        .filter(f => f.alunoNome === repo.alunoNome && f.turmaId === repo.turmaOrigemId && f.status === 'marcada')
+        .sort((a, b) => getFaltaEarliest(a).localeCompare(getFaltaEarliest(b)));
+
       let newFaltas = state.faltas;
       let newVagas = state.vagas;
-      if (repo.faltaId) {
-        // revert falta to pendente
-        newFaltas = state.faltas.map(f => f.id === repo.faltaId ? {...f, status:'pendente', reposicaoId: undefined} : f);
-        // reopen vagas for the original falta dates
-        const falta = newFaltas.find(f => f.id === repo.faltaId);
-        if (falta) {
+      let newReposicoes = remainingRepos;
+
+      marcadas.forEach((falta, i) => {
+        if (i < activeRepos.length) {
+          // Relink oldest faltas to remaining reposições
+          newFaltas = newFaltas.map(f => f.id === falta.id ? { ...f, reposicaoId: activeRepos[i].id } : f);
+          newReposicoes = newReposicoes.map(r => r.id === activeRepos[i].id ? { ...r, faltaId: falta.id } : r);
+        } else {
+          // Newest falta — free it back to pendente and reopen its vaga
+          newFaltas = newFaltas.map(f => f.id === falta.id ? { ...f, status: 'pendente', reposicaoId: undefined } : f);
           const extra = falta.datas
             .filter(d => !newVagas.some(v => v.turmaId === falta.turmaId && v.data === d && v.faltaId === falta.id))
             .map(d => ({ id: genId('v'), turmaId: falta.turmaId, data: d, faltaId: falta.id }));
           newVagas = [...newVagas, ...extra];
         }
-      }
-      next = {
-        ...state,
-        faltas: newFaltas,
-        vagas: newVagas,
-        reposicoes: state.reposicoes.filter(r => r.id !== action.id)
-      };
+      });
+
+      next = { ...state, faltas: newFaltas, vagas: newVagas, reposicoes: newReposicoes };
       {
         const tLbl = getTurmaLabel(state.turmas, repo.turmaOrigemId);
         next.log = addLog(state.log, action.professor, `Cancelou reposição de ${repo.alunoNome} (${tLbl}) — ${fmtBRFull(repo.dataReposicao)}`);
@@ -1034,7 +1048,13 @@ function TabRegistrarReposicao({ state, dispatch }) {
     return calcOccupancy(turmaRepoId, dataRepo, state);
   }, [turmaRepoId, dataRepo, state]);
 
-  const canSubmit = turmaOrigemId && alunoNome && vagaSel && dataRepo && turmaRepoId;
+  const jaTemReposicao = !!(alunoNome && dataRepo && turmaRepoId &&
+    state.reposicoes.some(r =>
+      r.alunoNome === alunoNome && r.dataReposicao === dataRepo &&
+      r.turmaReposicaoId === turmaRepoId && !r.realizada
+    ));
+
+  const canSubmit = turmaOrigemId && alunoNome && vagaSel && dataRepo && turmaRepoId && !jaTemReposicao;
 
   const handleSubmit = () => {
     if (!canSubmit) return;
@@ -1159,6 +1179,12 @@ function TabRegistrarReposicao({ state, dispatch }) {
           {getTurmaLabel(state.turmas, turmaRepoId)} em {fmtBRFull(dataRepo)}:{' '}
           {occupancy + 1}/{turmaRepo.capacidade} alunos esperados
           {occupancy + 1 > turmaRepo.capacidade && ' ⚠️ Acima da capacidade!'}
+        </div>
+      )}
+
+      {jaTemReposicao && (
+        <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700 font-medium">
+          {alunoNome} já tem reposição marcada nesse horário ({getTurmaLabel(state.turmas, turmaRepoId)}, {fmtBRFull(dataRepo)}).
         </div>
       )}
 
