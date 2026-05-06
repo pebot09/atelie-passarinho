@@ -304,8 +304,8 @@ function reducer(state, action) {
       const { alunoNome, turmaId, datas } = action;
       const newFaltas = [];
       const newVagas = [];
+      let reposicoes = state.reposicoes;
       datas.forEach(data => {
-        // Prevent duplicate: skip if this student already has a falta for this date in this turma
         const exists = state.faltas.some(f =>
           f.alunoNome === alunoNome && f.turmaId === turmaId &&
           f.datas.includes(data) && (f.status === 'pendente' || f.status === 'marcada')
@@ -313,9 +313,20 @@ function reducer(state, action) {
         if (exists) return;
         const faltaId = genId('f');
         newFaltas.push({ id: faltaId, alunoNome, turmaId, datas: [data], status: 'pendente' });
-        newVagas.push({ id: genId('v'), turmaId, data, faltaId });
+        // If a reposição already occupies this slot with no vaga linked, associate directly
+        const repoOrfao = reposicoes.find(r =>
+          r.turmaReposicaoId === turmaId && r.dataReposicao === data &&
+          !r.realizada && !r.vagaConsumedFaltaId
+        );
+        if (repoOrfao) {
+          reposicoes = reposicoes.map(r =>
+            r.id === repoOrfao.id ? { ...r, vagaConsumedFaltaId: faltaId } : r
+          );
+        } else {
+          newVagas.push({ id: genId('v'), turmaId, data, faltaId });
+        }
       });
-      next = { ...state, faltas: [...state.faltas, ...newFaltas], vagas: [...state.vagas, ...newVagas] };
+      next = { ...state, faltas: [...state.faltas, ...newFaltas], vagas: [...state.vagas, ...newVagas], reposicoes };
       if (newFaltas.length) {
         const tLbl = getTurmaLabel(state.turmas, turmaId);
         const datasLbl = fmtDatesText(newFaltas.map(f => f.datas[0]));
@@ -328,21 +339,28 @@ function reducer(state, action) {
       const { alunoNome, dataReposicao, turmaReposicaoId, tipo } = action;
       const repoId = genId('r');
       const semVagaOficial = action.semVagaOficial || false;
+      const vagaConsumed = action.vagaSelId ? state.vagas.find(v => v.id === action.vagaSelId) : null;
+      const vagaConsumedFaltaId = vagaConsumed?.faltaId || null;
+      const removeVagaSel = vs => action.vagaSelId ? vs.filter(v => v.id !== action.vagaSelId) : vs;
 
       if (tipo === 'aula_extra') {
         const turmaOrigem = state.turmas.find(t => t.alunos.includes(alunoNome));
-        next = { ...state, reposicoes: [...state.reposicoes, {
-          id: repoId, alunoNome,
-          turmaOrigemId: turmaOrigem?.id || null,
-          faltaId: null, dataReposicao, turmaReposicaoId,
-          tipo: 'aula_extra', realizada: false, semVagaOficial, pago: false
-        }]};
+        next = { ...state,
+          reposicoes: [...state.reposicoes, {
+            id: repoId, alunoNome,
+            turmaOrigemId: turmaOrigem?.id || null,
+            faltaId: null, dataReposicao, turmaReposicaoId,
+            tipo: 'aula_extra', realizada: false, semVagaOficial, pago: false,
+            vagaConsumedFaltaId
+          }],
+          vagas: removeVagaSel(state.vagas)
+        };
         const tOLbl = getTurmaLabel(state.turmas, turmaOrigem?.id);
         const tRLbl = getTurmaLabel(state.turmas, turmaReposicaoId);
         next.log = addLog(state.log, action.professor, `Agendou aula extra de ${alunoNome} (${tOLbl}) → ${tRLbl}, ${fmtBRFull(dataReposicao)}`);
       } else {
         const pending = state.faltas
-          .filter(f => f.alunoNome === alunoNome && f.status === 'pendente')
+          .filter(f => f.alunoNome === alunoNome && f.turmaId === action.turmaOrigemId && f.status === 'pendente')
           .sort((a,b) => getFaltaEarliest(a).localeCompare(getFaltaEarliest(b)));
         if (pending.length) {
           const oldest = pending[0];
@@ -352,9 +370,10 @@ function reducer(state, action) {
             reposicoes: [...state.reposicoes, {
               id: repoId, alunoNome,
               turmaOrigemId: oldest.turmaId, faltaId: oldest.id,
-              dataReposicao, turmaReposicaoId, tipo: 'reposicao', realizada: false, semVagaOficial
+              dataReposicao, turmaReposicaoId, tipo: 'reposicao', realizada: false, semVagaOficial,
+              vagaConsumedFaltaId
             }],
-            vagas: state.vagas.filter(v => v.faltaId !== oldest.id)
+            vagas: removeVagaSel(state.vagas.filter(v => v.faltaId !== oldest.id))
           };
           const tOLbl = getTurmaLabel(state.turmas, oldest.turmaId);
           const tRLbl = getTurmaLabel(state.turmas, turmaReposicaoId);
@@ -362,14 +381,18 @@ function reducer(state, action) {
         } else {
           // Reposição sem falta vinculada
           const turmaOrigem = state.turmas.find(t => t.alunos.includes(alunoNome));
-          next = { ...state, reposicoes: [...state.reposicoes, {
-            id: repoId, alunoNome,
-            turmaOrigemId: turmaOrigem?.id || null,
-            faltaId: null, dataReposicao, turmaReposicaoId,
-            tipo: 'reposicao', realizada: false, semVagaOficial,
-            semFaltaVinculada: true,
-            observacao: 'Reposição sem falta vinculada — verificar'
-          }]};
+          next = { ...state,
+            reposicoes: [...state.reposicoes, {
+              id: repoId, alunoNome,
+              turmaOrigemId: turmaOrigem?.id || null,
+              faltaId: null, dataReposicao, turmaReposicaoId,
+              tipo: 'reposicao', realizada: false, semVagaOficial,
+              vagaConsumedFaltaId,
+              semFaltaVinculada: true,
+              observacao: 'Reposição sem falta vinculada — verificar'
+            }],
+            vagas: removeVagaSel(state.vagas)
+          };
           const tOLbl = getTurmaLabel(state.turmas, turmaOrigem?.id);
           const tRLbl = getTurmaLabel(state.turmas, turmaReposicaoId);
           next.log = addLog(state.log, action.professor, `Agendou reposição de ${alunoNome} (${tOLbl}) → ${tRLbl}, ${fmtBRFull(dataReposicao)}`);
@@ -987,7 +1010,7 @@ function TabRegistrarReposicao({ state, dispatch }) {
 
   const handleSubmit = () => {
     if (!canSubmit) return;
-    dispatch({ type: 'ADD_REPOSICAO', alunoNome, dataReposicao: dataRepo, turmaReposicaoId: turmaRepoId, tipo, semVagaOficial: isManual });
+    dispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId, dataReposicao: dataRepo, turmaReposicaoId: turmaRepoId, tipo, semVagaOficial: isManual, vagaSelId: vagaObj?.id || null });
     setSuccess(`${tipo === 'aula_extra' ? 'Aula extra' : 'Reposição'} de ${alunoNome} agendada para ${fmtBRFull(dataRepo)}.`);
     setAlunoNome(''); setVagaSel(''); setExtraData(''); setExtraTurma(''); setTipoManual('reposicao');
     setTimeout(() => setSuccess(''), 4000);
@@ -1741,6 +1764,8 @@ function PainelVisual({ state, dispatch }) {
       const dia     = getDiaSemanaFromDateStr(r.dataReposicao);
       const isExtra = r.tipo === 'aula_extra';
       const faltaVinc = r.faltaId ? state.faltas.find(f => f.id === r.faltaId) : null;
+      const faltaLiberou = r.vagaConsumedFaltaId ? state.faltas.find(f => f.id === r.vagaConsumedFaltaId) : null;
+      const tLiberou = faltaLiberou ? state.turmas.find(x => x.id === faltaLiberou.turmaId) : null;
       title = `${r.alunoNome}`;
       body = (
         <div className="space-y-2 text-sm">
@@ -1762,6 +1787,19 @@ function PainelVisual({ state, dispatch }) {
             <div className="bg-gray-50 rounded-lg px-3 py-2">
               <div className="text-gray-400 text-xs">Falta vinculada</div>
               <div className="font-semibold">{fmtBRFull(faltaVinc.datas[0])}</div>
+            </div>
+          )}
+          {faltaLiberou ? (
+            <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+              <div className="text-green-600 text-xs mb-0.5">Vaga liberada por</div>
+              <div className="font-semibold text-gray-800">{faltaLiberou.alunoNome} ({tLiberou ? `${ABREV[tLiberou.diaSemana]} ${tLiberou.horario}` : '?'})</div>
+              <div className="text-gray-500 text-xs mt-0.5">Falta de {fmtBRFull(faltaLiberou.datas[0])}</div>
+            </div>
+          ) : (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              <div className="text-amber-700 text-xs font-medium">
+                {isExtra ? 'Aula extra — sem vaga vinculada' : 'Data extra — nenhuma falta liberou esta vaga'}
+              </div>
             </div>
           )}
           <div className="flex items-center gap-2 flex-wrap">
@@ -1902,7 +1940,7 @@ function PainelVisual({ state, dispatch }) {
                 const origemLbl = tOrigem ? `${ABREV[tOrigem.diaSemana]} ${tOrigem.horario}` : '?';
                 const isExtra   = r.tipo === 'aula_extra';
                 const semFalta  = r.semFaltaVinculada;
-                const occupancyNum = r.semVagaOficial ? calcOccupancy(r.turmaReposicaoId, r.dataReposicao, state) : null;
+                const occupancyNum = calcOccupancy(r.turmaReposicaoId, r.dataReposicao, state);
                 return (
                   <div key={i} onClick={() => setDet({ tipo:'reposicao', obj: r })}
                     className="px-4 py-3 bg-white cursor-pointer hover:bg-gray-50 transition-colors">
