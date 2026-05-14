@@ -174,6 +174,19 @@ function getNextOccurrences(diaSemana, n = 8) {
   return dates;
 }
 
+function getClassDatesInRange(turma, fromStr, toStr) {
+  const target = DIA_JS[turma.diaSemana];
+  if (target === undefined) return [];
+  const dates = [];
+  const d = new Date(fromStr + 'T00:00:00');
+  const end = new Date(toStr + 'T00:00:00');
+  while (d <= end) {
+    if (d.getDay() === target) dates.push(dateToStr(d));
+    d.setDate(d.getDate() + 1);
+  }
+  return dates;
+}
+
 function getDiaSemanaFromDateStr(dateStr) {
   const d = parseDate(dateStr);
   const names = ['domingo','segunda','terça','quarta','quinta','sexta','sábado'];
@@ -342,6 +355,7 @@ function reducer(state, action) {
       const semVagaOficial = action.semVagaOficial || false;
       const vagaConsumed = action.vagaSelId ? state.vagas.find(v => v.id === action.vagaSelId) : null;
       const vagaConsumedFaltaId = vagaConsumed?.faltaId || null;
+      const isVagaExtra = !!(vagaConsumed?.vagaExtra);
       const removeVagaSel = vs => action.vagaSelId ? vs.filter(v => v.id !== action.vagaSelId) : vs;
 
       if (tipo === 'aula_extra') {
@@ -352,7 +366,7 @@ function reducer(state, action) {
             turmaOrigemId: turmaOrigem?.id || null,
             faltaId: null, dataReposicao, turmaReposicaoId,
             tipo: 'aula_extra', realizada: false, semVagaOficial, pago: false,
-            vagaConsumedFaltaId
+            vagaConsumedFaltaId, vagaExtra: isVagaExtra
           }],
           vagas: removeVagaSel(state.vagas)
         };
@@ -372,7 +386,7 @@ function reducer(state, action) {
               id: repoId, alunoNome,
               turmaOrigemId: oldest.turmaId, faltaId: oldest.id,
               dataReposicao, turmaReposicaoId, tipo: 'reposicao', realizada: false, semVagaOficial,
-              vagaConsumedFaltaId
+              vagaConsumedFaltaId, vagaExtra: isVagaExtra
             }],
             vagas: removeVagaSel(state.vagas.filter(v => v.faltaId !== oldest.id))
           };
@@ -388,7 +402,7 @@ function reducer(state, action) {
               turmaOrigemId: turmaOrigem?.id || null,
               faltaId: null, dataReposicao, turmaReposicaoId,
               tipo: 'reposicao', realizada: false, semVagaOficial,
-              vagaConsumedFaltaId,
+              vagaConsumedFaltaId, vagaExtra: isVagaExtra,
               semFaltaVinculada: true,
               observacao: 'Reposição sem falta vinculada — verificar'
             }],
@@ -603,7 +617,44 @@ function reducer(state, action) {
         ...(state.estatisticas || {}),
         faltasExpiradas: [...arr((state.estatisticas || {}).faltasExpiradas), ...newExpStats]
       };
-      next = { ...state, vagas, reposicoes, faltas: activeFaltas, estatisticas };
+      // Vagas extras: abre slots de capacidade excedente a partir das 10h do dia anterior
+      const now = new Date();
+      const endDateStr = (() => { const e = new Date(); e.setDate(e.getDate()+60); return dateToStr(e); })();
+      let vagasComExtras = [...vagas];
+      state.turmas.forEach(turma => {
+        const classDates = getClassDatesInRange(turma, td, endDateStr);
+        classDates.forEach(date => {
+          const dayBefore = new Date(date + 'T10:00:00');
+          dayBefore.setDate(dayBefore.getDate() - 1);
+          if (now < dayBefore) return;
+          const faltasCount = state.faltas.filter(f =>
+            f.turmaId === turma.id && f.datas.includes(date) &&
+            (f.status === 'pendente' || f.status === 'marcada')
+          ).length;
+          const totalRepos = reposicoes.filter(r =>
+            r.turmaReposicaoId === turma.id && r.dataReposicao === date && !r.realizada
+          ).length;
+          const target = Math.max(0, 8 - turma.alunos.length + faltasCount - totalRepos);
+          const existingExtras = vagasComExtras.filter(v => v.vagaExtra && v.turmaId === turma.id && v.data === date);
+          const diff = target - existingExtras.length;
+          if (diff > 0) {
+            for (let i = 0; i < diff; i++) {
+              vagasComExtras.push({ id: genId('ve'), turmaId: turma.id, data: date, vagaExtra: true, faltaId: null });
+            }
+          } else if (diff < 0) {
+            let toRemove = -diff;
+            vagasComExtras = vagasComExtras.filter(v => {
+              if (v.vagaExtra && v.turmaId === turma.id && v.data === date && toRemove > 0) {
+                toRemove--;
+                return false;
+              }
+              return true;
+            });
+          }
+        });
+      });
+
+      next = { ...state, vagas: vagasComExtras, reposicoes, faltas: activeFaltas, estatisticas };
       break;
     }
 
@@ -1241,7 +1292,7 @@ function TabRegistrarReposicao({ state, dispatch }) {
               const dia = getDiaSemanaFromDateStr(v.data);
               return (
                 <option key={v.id} value={v.id}>
-                  {fmtBRFull(v.data)} ({ABREV[dia]}) — {t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?'}
+                  {fmtBRFull(v.data)} ({ABREV[dia]}) — {t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?'}{v.vagaExtra ? ' ✦ vaga extra' : ''}
                 </option>
               );
             })}
@@ -1988,6 +2039,20 @@ function PainelVisual({ state, dispatch }) {
     if (exp < td) obs.push({ level:'red', text:`Crédito de férias expirado: ${a.alunoNome} (${getMesNome(a.mesAno)})` });
     else if (exp <= in7) obs.push({ level:'amber', text:`Férias de ${a.alunoNome} expirando em ${fmtBRFull(exp)}` });
   });
+  const vagasExtrasAbertas = state.vagas.filter(v => v.vagaExtra && v.data >= td);
+  if (vagasExtrasAbertas.length > 0) {
+    const porTurmaData = {};
+    vagasExtrasAbertas.forEach(v => {
+      const key = v.turmaId + '|' + v.data;
+      if (!porTurmaData[key]) porTurmaData[key] = { turmaId: v.turmaId, data: v.data, count: 0 };
+      porTurmaData[key].count++;
+    });
+    Object.values(porTurmaData).sort((a,b) => a.data.localeCompare(b.data)).forEach(({ turmaId, data, count }) => {
+      const t = state.turmas.find(x => x.id === turmaId);
+      const lbl = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
+      obs.push({ level:'teal', text:`${count} vaga${count>1?'s':''} extra${count>1?'s':''} disponíve${count>1?'is':'l'}: ${lbl} — ${fmtBRFull(data)}` });
+    });
+  }
   state.reposicoes.filter(r => !r.realizada && r.tipo==='aula_extra').forEach(r => {
     obs.push({ level:'blue', text:`Aula extra sem falta vinculada: ${r.alunoNome} — ${fmtBRFull(r.dataReposicao)}` });
   });
@@ -1995,8 +2060,8 @@ function PainelVisual({ state, dispatch }) {
     obs.push({ level:'blue', text:`Reposição sem falta vinculada: ${r.alunoNome} — ${fmtBRFull(r.dataReposicao)}` });
   });
 
-  const obsColors = { red:'bg-red-50 text-red-700 border-red-200', amber:'bg-amber-50 text-amber-700 border-amber-200', blue:'bg-blue-50 text-blue-700 border-blue-200' };
-  const obsIcons  = { red:'🔴', amber:'⚠️', blue:'ℹ️' };
+  const obsColors = { red:'bg-red-50 text-red-700 border-red-200', amber:'bg-amber-50 text-amber-700 border-amber-200', blue:'bg-blue-50 text-blue-700 border-blue-200', teal:'bg-teal-50 text-teal-700 border-teal-200' };
+  const obsIcons  = { red:'🔴', amber:'⚠️', blue:'ℹ️', teal:'✦' };
 
   // ---- MODAL DE DETALHES ----
   const DetModal = () => {
@@ -2249,6 +2314,11 @@ function PainelVisual({ state, dispatch }) {
                       )}
                     </div>
                     <div className="mt-1 flex items-center gap-2 flex-wrap">
+                      {(r.vagaExtra || r.semVagaOficial) && (
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-teal-100 text-teal-700">
+                          vaga extra
+                        </span>
+                      )}
                       {(isExtra || semFalta) && (
                         <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${isExtra ? 'bg-purple-100 text-purple-700' : 'bg-amber-100 text-amber-700'}`}>
                           {isExtra ? 'Aula extra' : 'Sem falta vinculada'}
