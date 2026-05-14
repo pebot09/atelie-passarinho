@@ -632,6 +632,7 @@ function reducer(state, action) {
             f.turmaId === turma.id && f.datas.includes(date) &&
             (f.status === 'pendente' || f.status === 'marcada')
           ).length;
+          if (faltasCount >= turma.alunos.length) return; // todos faltando — aula não acontece
           const totalRepos = reposicoes.filter(r =>
             r.turmaReposicaoId === turma.id && r.dataReposicao === date && !r.realizada
           ).length;
