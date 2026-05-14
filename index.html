@@ -38,6 +38,8 @@ const DIA_JS = { segunda:1, terça:2, quarta:3, quinta:4, sexta:5, sábado:6 };
 const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const STORAGE_KEY = 'atelie_passarinho_v3';
 const MAX_SNAPSHOTS = 60;
+const PROFESSOR_PIN = '109';
+const PIN_KEY = 'atelie_pin_ok';
 const DB_URL = 'https://atelie-passarinho-default-rtdb.firebaseio.com';
 const PROFESSORES = ['Carol', 'Gláucio', 'Laura', 'Pedro'];
 const PROFESSOR_KEY = 'atelie_professor';
@@ -2683,6 +2685,44 @@ function PainelImportacao({ state, dispatch }) {
 }
 
 // ==================== PROFESSOR MODAL ====================
+function PinModal({ onSuccess }) {
+  const [pin, setPin] = useState('');
+  const [erro, setErro] = useState(false);
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (pin === PROFESSOR_PIN) {
+      localStorage.setItem(PIN_KEY, '1');
+      onSuccess();
+    } else {
+      setErro(true);
+      setPin('');
+      setTimeout(() => setErro(false), 1800);
+    }
+  };
+  return (
+    <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
+      <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-xl p-8 max-w-xs w-full text-center space-y-5">
+        <div className="text-4xl">🔐</div>
+        <div>
+          <div className="font-bold text-gray-900 text-lg">Acesso restrito</div>
+          <div className="text-sm text-gray-400 mt-1">Digite o PIN do ateliê</div>
+        </div>
+        <input
+          type="password" inputMode="numeric" maxLength={10}
+          value={pin} onChange={e => setPin(e.target.value)} autoFocus
+          placeholder="PIN"
+          className={`w-full text-center text-2xl tracking-widest border-2 rounded-xl px-4 py-3 outline-none transition-colors ${erro ? 'border-red-400 bg-red-50' : 'border-gray-200 focus:border-amber-400'}`}
+        />
+        {erro && <div className="text-red-500 text-sm font-medium">PIN incorreto</div>}
+        <button type="submit"
+          className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl transition-colors">
+          Entrar
+        </button>
+      </form>
+    </div>
+  );
+}
+
 function ProfessorModal({ onSelect }) {
   return (
     <div className="min-h-screen bg-amber-50 flex items-center justify-center p-4">
@@ -2709,6 +2749,7 @@ function ProfessorModal({ onSelect }) {
 // ==================== APP ====================
 function App() {
   const [state, baseDispatch] = useReducer(reducer, null, loadState);
+  const [pinOk, setPinOk]         = useState(() => localStorage.getItem(PIN_KEY) === '1');
   const [professor, setProfessor] = useState(() => localStorage.getItem(PROFESSOR_KEY) || '');
   const [section, setSection]     = useState(2);
   const [seedDismissed, setSeedDismissed] = useState(false);
@@ -2811,6 +2852,11 @@ function App() {
       );
     }
     return <AlunoView state={state} dispatch={baseDispatch} acesso={acessoAluno} />;
+  }
+
+  // PIN guard — bloqueia acesso ao painel sem PIN verificado
+  if (!pinOk) {
+    return <PinModal onSuccess={() => setPinOk(true)} />;
   }
 
   // Tela de seleção de professor — renderização condicional DENTRO do return
