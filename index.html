@@ -122,7 +122,8 @@ const SEED = {
   ],
   snapshots: [],
   estatisticas: { faltasExpiradas: [] },
-  log: []
+  log: [],
+  acessos: []
 };
 
 // ==================== HELPERS ====================
@@ -458,6 +459,37 @@ function reducer(state, action) {
       break;
     }
 
+    case 'CANCEL_REPOSICAO_SEM_CREDITO': {
+      // Remove a reposição sem reverter a falta (menos de 24h).
+      // Se a reposição consumia uma vagaConsumedFaltaId, libera a vaga de volta (recria).
+      const repo = state.reposicoes.find(r => r.id === action.id);
+      if (!repo) return state;
+      const remainingRepos = state.reposicoes.filter(r => r.id !== repo.id);
+      let newVagas = state.vagas;
+      // Se havia uma vaga "consumida" por essa reposição, recria a vaga para outros usarem
+      if (repo.vagaConsumedFaltaId) {
+        const jaExiste = newVagas.some(v => v.turmaId === repo.turmaReposicaoId && v.data === repo.dataReposicao && v.faltaId === repo.vagaConsumedFaltaId);
+        if (!jaExiste) {
+          newVagas = [...newVagas, { id: genId('v'), turmaId: repo.turmaReposicaoId, data: repo.dataReposicao, faltaId: repo.vagaConsumedFaltaId }];
+        }
+      }
+      next = { ...state, reposicoes: remainingRepos, vagas: newVagas };
+      const tLbl = getTurmaLabel(state.turmas, repo.turmaOrigemId);
+      next.log = addLog(state.log, action.professor, `Cancelou reposição sem crédito — ${repo.alunoNome} (${tLbl}) em ${fmtBRFull(repo.dataReposicao)}`);
+      break;
+    }
+
+    case 'GERAR_ACESSO': {
+      const { alunoNome, turmaId } = action;
+      const existing = state.acessos.find(a => a.alunoNome === alunoNome && a.turmaId === turmaId);
+      if (existing) { next = state; break; }
+      const codigo = String(Math.floor(100000 + Math.random() * 900000));
+      next = { ...state, acessos: [...state.acessos, { id: genId('ac'), codigo, alunoNome, turmaId }] };
+      const tLbl = getTurmaLabel(state.turmas, turmaId);
+      next.log = addLog(state.log, action.professor, `Gerou link de acesso para ${alunoNome} (${tLbl})`);
+      break;
+    }
+
     case 'CANCEL_FALTA': {
       const falta = state.faltas.find(f => f.id === action.id);
       if (!falta) return state;
@@ -655,6 +687,7 @@ function normalizeState(s) {
     vagas:      arr(s.vagas),
     reposicoes: arr(s.reposicoes),
     log:        arr(s.log),
+    acessos:    arr(s.acessos),
     estatisticas: { faltasExpiradas: arr((s.estatisticas || {}).faltasExpiradas) },
   };
   return migrateFaltas(base);
@@ -714,6 +747,91 @@ function ConfirmModal({ title, message, onConfirm, onCancel, danger, confirmLabe
   );
 }
 
+// ==================== HELPER: PRÓXIMAS DATAS DE TURMA ====================
+function getProximasDatas(turmaId, turmas, n, horasMin) {
+  if (horasMin === undefined) horasMin = 24;
+  const turma = turmas.find(t => t.id === turmaId);
+  if (!turma) return [];
+  const DIAS = { segunda:1, terça:2, quarta:3, quinta:4, sexta:5, sábado:6, domingo:0 };
+  const targetDay = DIAS[turma.diaSemana];
+  const horaAula = parseInt((turma.horario || '09h').replace('h',''), 10);
+  const cutoff = new Date(Date.now() + horasMin * 3600 * 1000);
+  const datas = [];
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  for (let i = 0; datas.length < n && i < 365; i++) {
+    d.setDate(d.getDate() + 1);
+    if (d.getDay() === targetDay) {
+      const aula = new Date(d);
+      aula.setHours(horaAula, 0, 0, 0);
+      if (aula >= cutoff) datas.push(dateToStr(d));
+    }
+  }
+  return datas;
+}
+
+// ==================== MODAL: GERAR LINK DO ALUNO ====================
+function GerarLinkModal({ state, dispatch, onClose }) {
+  const [turmaId, setTurmaId] = useState('');
+  const [alunoNome, setAlunoNome] = useState('');
+  const [copied, setCopied] = useState(false);
+  const sorted = useMemo(() => sortTurmas(state.turmas), [state.turmas]);
+  const turma = state.turmas.find(t => t.id === turmaId);
+  const alunos = turma ? [...turma.alunos].sort((a,b) => a.localeCompare(b,'pt')) : [];
+  const acesso = state.acessos.find(a => a.alunoNome === alunoNome && a.turmaId === turmaId);
+  const link = acesso ? `${window.location.origin}${window.location.pathname}?c=${acesso.codigo}` : '';
+
+  const handleGerar = () => {
+    if (!turmaId || !alunoNome) return;
+    dispatch({ type: 'GERAR_ACESSO', alunoNome, turmaId });
+  };
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+  };
+
+  return (
+    <Modal title="Gerar link do aluno" onClose={onClose}>
+      <div className="space-y-3 text-sm">
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Turma</label>
+          <select value={turmaId} onChange={e => { setTurmaId(e.target.value); setAlunoNome(''); }}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2">
+            <option value="">— Selecione —</option>
+            {sorted.map(t => <option key={t.id} value={t.id}>{getTurmaLabel(state.turmas, t.id)}</option>)}
+          </select>
+        </div>
+        {turmaId && (
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Aluno</label>
+            <select value={alunoNome} onChange={e => setAlunoNome(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2">
+              <option value="">— Selecione —</option>
+              {alunos.map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+          </div>
+        )}
+        {alunoNome && !acesso && (
+          <button onClick={handleGerar}
+            className="w-full py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700">
+            Gerar link
+          </button>
+        )}
+        {acesso && (
+          <div className="space-y-2">
+            <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-xs text-gray-600 break-all">{link}</div>
+            <button onClick={handleCopy}
+              className={`w-full py-2 rounded-lg font-medium text-sm transition-colors ${copied ? 'bg-green-600 text-white' : 'bg-gray-800 text-white hover:bg-gray-900'}`}>
+              {copied ? '✓ Copiado!' : 'Copiar link'}
+            </button>
+            <p className="text-xs text-gray-400 text-center">Este link é permanente para {alunoNome}.</p>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 // ==================== SECTION 1: TURMAS ====================
 function SectionTurmas({ state, dispatch }) {
   const [expandedId, setExpandedId] = useState(null);
@@ -723,6 +841,7 @@ function SectionTurmas({ state, dispatch }) {
   const [newTurma, setNewTurma] = useState({ diaSemana:'segunda', horario:'09h', observacao:'' });
   const [showNewTurma, setShowNewTurma] = useState(false);
   const [editObs, setEditObs] = useState({});
+  const [showGerarLink, setShowGerarLink] = useState(false);
 
   const sorted = useMemo(() => sortTurmas(state.turmas), [state.turmas]);
 
@@ -735,9 +854,13 @@ function SectionTurmas({ state, dispatch }) {
 
   return (
     <div className="max-w-4xl mx-auto p-4 space-y-3">
+      {showGerarLink && <GerarLinkModal state={state} dispatch={dispatch} onClose={() => setShowGerarLink(false)} />}
       <div className="flex justify-between items-center mb-2">
         <h2 className="text-xl font-bold text-gray-800">Turmas</h2>
-        <button onClick={() => setShowNewTurma(true)} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm">+ Nova Turma</button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowGerarLink(true)} className="px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 font-medium text-sm">🔗 Link do aluno</button>
+          <button onClick={() => setShowNewTurma(true)} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm">+ Nova Turma</button>
+        </div>
       </div>
 
       {sorted.map(turma => {
@@ -2592,6 +2715,32 @@ function App() {
   const syncLabel = { conectando: '🔄 conectando', ok: '🟢 sincronizado', erro: '🔴 sem conexão' };
   const profColors = PROFESSOR_COLORS[professor] || { bg:'bg-gray-100', text:'text-gray-700', dot:'bg-gray-400' };
 
+  // Tela do aluno — detecta ?c=CODIGO na URL
+  const urlCode = useMemo(() => new URLSearchParams(window.location.search).get('c'), []);
+  const acessoAluno = useMemo(() => urlCode ? state.acessos.find(a => a.codigo === urlCode) : null, [urlCode, state.acessos]);
+  if (urlCode) {
+    // Aguarda o Firebase carregar antes de mostrar "inválido"
+    if (syncStatus === 'conectando') {
+      return (
+        <div className="min-h-screen bg-amber-50 flex items-center justify-center p-6">
+          <div className="text-gray-400 text-sm">Carregando...</div>
+        </div>
+      );
+    }
+    if (!acessoAluno) {
+      return (
+        <div className="min-h-screen bg-amber-50 flex items-center justify-center p-6">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 max-w-sm text-center space-y-3">
+            <div className="text-4xl">🔒</div>
+            <div className="font-bold text-gray-800">Link inválido</div>
+            <div className="text-sm text-gray-500">O código de acesso não foi encontrado. Peça ao ateliê um novo link.</div>
+          </div>
+        </div>
+      );
+    }
+    return <AlunoView state={state} dispatch={baseDispatch} acesso={acessoAluno} />;
+  }
+
   // Tela de seleção de professor — renderização condicional DENTRO do return
   if (!professor) {
     return <ProfessorModal onSelect={handleSelectProfessor} />;
@@ -2646,6 +2795,311 @@ function App() {
         {section === 0 && <SectionTurmas state={state} dispatch={dispatch} />}
         {section === 1 && <SectionFaltasReposicoes state={state} dispatch={dispatch} />}
         {section === 2 && <SectionPainel state={state} dispatch={dispatch} />}
+      </div>
+    </div>
+  );
+}
+
+// ==================== TELA DO ALUNO ====================
+function AlunoView({ state, dispatch, acesso }) {
+  const { alunoNome, turmaId } = acesso;
+  const td = todayStr();
+  const turma = state.turmas.find(t => t.id === turmaId);
+
+  // Wrap dispatch to log as aluno
+  const alunoDispatch = (action) => dispatch({ ...action, professor: alunoNome });
+
+  // Accordion state
+  const [open, setOpen] = useState({ falta: false, reposicao: false, minhas: false });
+  const toggle = (key) => setOpen(o => ({ ...o, [key]: !o[key] }));
+
+  // Registrar falta
+  const proximasDatas = useMemo(() => getProximasDatas(turmaId, state.turmas, 8, 24), [turmaId, state.turmas]);
+  const [selectedDates, setSelectedDates] = useState([]);
+  const [successFalta, setSuccessFalta] = useState('');
+  const toggleDate = (d) => setSelectedDates(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]);
+  const handleRegistrarFalta = () => {
+    if (!selectedDates.length) return;
+    alunoDispatch({ type: 'ADD_FALTA', alunoNome, turmaId, datas: selectedDates });
+    setSelectedDates([]);
+    setSuccessFalta('Falta registrada com sucesso!');
+    setOpen(o => ({ ...o, falta: false }));
+    setTimeout(() => setSuccessFalta(''), 4000);
+  };
+
+  // Marcar reposição
+  const vagasFuturas = useMemo(() =>
+    state.vagas.filter(v => v.data >= td).sort((a,b) => a.data.localeCompare(b.data)),
+    [state.vagas, td]);
+  const [vagaSel, setVagaSel] = useState('');
+  const [successRepo, setSuccessRepo] = useState('');
+  const vagaObj = vagasFuturas.find(v => v.id === vagaSel);
+  const dataRepo = vagaObj?.data || '';
+  const turmaRepoId = vagaObj?.turmaId || '';
+  const jaTemReposicao = !!(vagaSel && state.reposicoes.some(r =>
+    r.alunoNome === alunoNome && r.dataReposicao === dataRepo &&
+    r.turmaReposicaoId === turmaRepoId && !r.realizada));
+  const hasPending = state.faltas.some(f => f.alunoNome === alunoNome && f.turmaId === turmaId && f.status === 'pendente');
+  const handleMarcarRepo = () => {
+    if (!vagaSel || jaTemReposicao) return;
+    alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: dataRepo, turmaReposicaoId: turmaRepoId, tipo: hasPending ? 'reposicao' : 'aula_extra', semVagaOficial: false, vagaSelId: vagaObj?.id || null });
+    setVagaSel('');
+    setSuccessRepo('Reposição marcada com sucesso!');
+    setOpen(o => ({ ...o, reposicao: false }));
+    setTimeout(() => setSuccessRepo(''), 4000);
+  };
+
+  // Cancelar reposição
+  const [confirmCancel, setConfirmCancel] = useState(null);
+  const minhasRepos = useMemo(() =>
+    state.reposicoes.filter(r => r.alunoNome === alunoNome && !r.realizada)
+      .sort((a,b) => a.dataReposicao.localeCompare(b.dataReposicao)),
+    [state.reposicoes, alunoNome]);
+
+  const isLessThan24h = (repo) => {
+    const tRepo = state.turmas.find(t => t.id === repo.turmaReposicaoId);
+    const horaAula = parseInt((tRepo?.horario || '09h').replace('h',''), 10);
+    const aula = new Date(repo.dataReposicao + 'T00:00:00');
+    aula.setHours(horaAula, 0, 0, 0);
+    return (aula - Date.now()) < 24 * 3600 * 1000;
+  };
+
+  const handleCancelarRepo = (repo) => {
+    if (isLessThan24h(repo)) {
+      setConfirmCancel({ repo, semCredito: true });
+    } else {
+      setConfirmCancel({ repo, semCredito: false });
+    }
+  };
+
+  const confirmarCancelamento = () => {
+    if (!confirmCancel) return;
+    if (confirmCancel.semCredito) {
+      // Remove reposição mas não reverte falta
+      alunoDispatch({ type: 'CANCEL_REPOSICAO_SEM_CREDITO', id: confirmCancel.repo.id });
+    } else {
+      alunoDispatch({ type: 'CANCEL_REPOSICAO', id: confirmCancel.repo.id });
+    }
+    setConfirmCancel(null);
+  };
+
+  // Alertas
+  const in7 = (() => { const d = new Date(); d.setDate(d.getDate()+7); return dateToStr(d); })();
+  const alertas = [];
+  state.faltas.filter(f => f.alunoNome === alunoNome && f.status === 'pendente').forEach(f => {
+    const exp = getFaltaExpiry(f);
+    if (exp >= td && exp <= in7) alertas.push({ level:'red', text:`Falta de ${fmtBR(f.datas[0])} expira em ${fmtBRFull(exp)} — marque uma reposição!` });
+    else if (exp >= td) alertas.push({ level:'amber', text:`Falta pendente: ${fmtBR(f.datas[0])} — expira em ${fmtBRFull(exp)}` });
+  });
+  minhasRepos.filter(r => { const d = new Date(r.dataReposicao + 'T00:00:00'); return (d - Date.now()) <= 7*24*3600*1000; }).forEach(r => {
+    const tRepo = state.turmas.find(t => t.id === r.turmaReposicaoId);
+    alertas.push({ level:'blue', text:`Reposição em ${fmtBRFull(r.dataReposicao)} às ${tRepo?.horario || '?'}` });
+  });
+
+  const alertColors = { red:'bg-red-50 border-red-200 text-red-700', amber:'bg-amber-50 border-amber-200 text-amber-700', blue:'bg-blue-50 border-blue-200 text-blue-700' };
+  const alertIcons  = { red:'⚠️', amber:'📋', blue:'📅' };
+
+  // Vagas da semana
+  const in6 = (() => { const d = new Date(); d.setDate(d.getDate()+6); return dateToStr(d); })();
+  const vagasSemana = vagasFuturas.filter(v => v.data <= in6);
+
+  return (
+    <div className="min-h-screen bg-amber-50">
+      {/* Header */}
+      <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shadow-sm sticky top-0 z-40">
+        <div>
+          <div className="text-xs text-gray-400">Ateliê Passarinho</div>
+          <div className="font-bold text-gray-900 text-lg leading-tight">Olá, {alunoNome} 👋</div>
+        </div>
+        <div className="text-right">
+          <div className="text-xs text-gray-400">Sua turma</div>
+          <div className="text-sm font-semibold text-gray-700">{turma ? `${EXTENSO[turma.diaSemana]} ${turma.horario}` : '?'}</div>
+        </div>
+      </div>
+
+      <div className="max-w-md mx-auto p-4 space-y-4">
+
+        {/* Alertas */}
+        {alertas.length > 0 && (
+          <div className="space-y-2">
+            {alertas.map((a, i) => (
+              <div key={i} className={`border rounded-xl px-4 py-3 flex items-start gap-3 ${alertColors[a.level]}`}>
+                <div className="text-lg mt-0.5">{alertIcons[a.level]}</div>
+                <div className="text-sm font-medium">{a.text}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Vagas da semana */}
+        {vagasSemana.length > 0 && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <div className="font-semibold text-gray-800 text-sm">Vagas disponíveis esta semana</div>
+              <div className="text-xs text-gray-400">{vagasSemana.length} vaga{vagasSemana.length > 1 ? 's' : ''}</div>
+            </div>
+            <div className="divide-y divide-gray-50">
+              {vagasSemana.map(v => {
+                const tV = state.turmas.find(t => t.id === v.turmaId);
+                const dia = getDiaSemanaFromDateStr(v.data);
+                return (
+                  <div key={v.id} className="px-4 py-3">
+                    <div className="font-medium text-gray-800 text-sm">{EXTENSO[dia]}, {fmtBRFull(v.data)}</div>
+                    <div className="text-xs text-gray-500">{tV ? `${ABREV[tV.diaSemana]} ${tV.horario}` : '?'}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Registrar falta */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <button onClick={() => toggle('falta')} className="w-full px-4 py-3 flex items-center justify-between text-left">
+            <div className="flex items-center gap-3">
+              <div className="text-xl">🙋</div>
+              <div>
+                <div className="font-semibold text-gray-800 text-sm">Registrar falta</div>
+                <div className="text-xs text-gray-500">Avise com pelo menos 24h de antecedência</div>
+              </div>
+            </div>
+            <div className="text-gray-400 text-sm">{open.falta ? '‹' : '›'}</div>
+          </button>
+          {open.falta && (
+            <div className="border-t border-gray-100 px-4 py-3 space-y-3">
+              {proximasDatas.length === 0 ? (
+                <p className="text-sm text-gray-400 italic">Nenhuma aula disponível para registrar falta.</p>
+              ) : (
+                <>
+                  <label className="block text-xs font-medium text-gray-600">Quais aulas você vai faltar?</label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {proximasDatas.map(d => {
+                      const sel = selectedDates.includes(d);
+                      const jaFalta = state.faltas.some(f => f.alunoNome === alunoNome && f.turmaId === turmaId && f.datas.includes(d));
+                      if (jaFalta) return null;
+                      return (
+                        <label key={d} className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${sel ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                          <input type="checkbox" checked={sel} onChange={() => toggleDate(d)} className="accent-amber-500 w-4 h-4 shrink-0" />
+                          <span className="text-sm text-gray-800">{fmtBR(d).slice(0,5)}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <div className="text-xs text-gray-400">Só aparecem aulas a mais de 24h de distância</div>
+                  <button onClick={handleRegistrarFalta} disabled={!selectedDates.length}
+                    className="w-full py-2 bg-amber-500 text-white rounded-lg text-sm font-semibold disabled:opacity-40">
+                    Confirmar falta
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+          {successFalta && <div className="px-4 pb-3"><div className="bg-green-50 text-green-700 rounded-lg px-3 py-2 text-sm font-medium">{successFalta}</div></div>}
+        </div>
+
+        {/* Marcar reposição */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <button onClick={() => toggle('reposicao')} className="w-full px-4 py-3 flex items-center justify-between text-left">
+            <div className="flex items-center gap-3">
+              <div className="text-xl">✅</div>
+              <div>
+                <div className="font-semibold text-gray-800 text-sm">Marcar reposição</div>
+                <div className="text-xs text-gray-500">Escolha uma vaga disponível</div>
+              </div>
+            </div>
+            <div className="text-gray-400 text-sm">{open.reposicao ? '‹' : '›'}</div>
+          </button>
+          {open.reposicao && (
+            <div className="border-t border-gray-100 px-4 py-3 space-y-3">
+              {vagasFuturas.length === 0 ? (
+                <p className="text-sm text-gray-400 italic">Nenhuma vaga disponível no momento.</p>
+              ) : (
+                <>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Vaga</label>
+                  <select value={vagaSel} onChange={e => setVagaSel(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                    <option value="">— Selecione uma vaga —</option>
+                    {vagasFuturas.map(v => {
+                      const tV = state.turmas.find(t => t.id === v.turmaId);
+                      const dia = getDiaSemanaFromDateStr(v.data);
+                      return <option key={v.id} value={v.id}>{fmtBRFull(v.data)} ({ABREV[dia]}) — {tV ? `${ABREV[tV.diaSemana]} ${tV.horario}` : '?'}</option>;
+                    })}
+                  </select>
+                  {jaTemReposicao && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700 font-medium">
+                      Você já tem reposição marcada nesse horário.
+                    </div>
+                  )}
+                  <button onClick={handleMarcarRepo} disabled={!vagaSel || jaTemReposicao}
+                    className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold disabled:opacity-40">
+                    Confirmar reposição
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+          {successRepo && <div className="px-4 pb-3"><div className="bg-green-50 text-green-700 rounded-lg px-3 py-2 text-sm font-medium">{successRepo}</div></div>}
+        </div>
+
+        {/* Minhas reposições */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <button onClick={() => toggle('minhas')} className="w-full px-4 py-3 flex items-center justify-between text-left">
+            <div className="flex items-center gap-3">
+              <div className="text-xl">🗓️</div>
+              <div>
+                <div className="font-semibold text-gray-800 text-sm">Minhas reposições</div>
+                <div className="text-xs text-gray-500">{minhasRepos.length} agendada{minhasRepos.length !== 1 ? 's' : ''}</div>
+              </div>
+            </div>
+            <div className="text-gray-400 text-sm">{open.minhas ? '‹' : '›'}</div>
+          </button>
+          {open.minhas && (
+            <div className="border-t border-gray-100">
+              {minhasRepos.length === 0 ? (
+                <p className="px-4 py-3 text-sm text-gray-400 italic">Nenhuma reposição agendada.</p>
+              ) : (
+                <div className="divide-y divide-gray-50">
+                  {minhasRepos.map(r => {
+                    const tRepo = state.turmas.find(t => t.id === r.turmaReposicaoId);
+                    const faltaVinc = r.faltaId ? state.faltas.find(f => f.id === r.faltaId) : null;
+                    const menos24h = isLessThan24h(r);
+                    return (
+                      <div key={r.id} className="px-4 py-3 flex items-center justify-between gap-3">
+                        <div>
+                          <div className="font-medium text-gray-800 text-sm">{EXTENSO[getDiaSemanaFromDateStr(r.dataReposicao)]}, {fmtBRFull(r.dataReposicao)}</div>
+                          <div className="text-xs text-gray-500">{tRepo ? `${ABREV[tRepo.diaSemana]} ${tRepo.horario}` : '?'}{faltaVinc ? ` · Repõe falta de ${fmtBR(faltaVinc.datas[0])}` : ''}</div>
+                          {menos24h && <div className="text-xs text-orange-500 mt-0.5">⚠️ Menos de 24h — falta não volta ao crédito se cancelar</div>}
+                        </div>
+                        <button onClick={() => handleCancelarRepo(r)}
+                          className="text-xs text-red-500 border border-red-200 px-2.5 py-1 rounded-lg font-medium shrink-0">
+                          Cancelar
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Confirm cancel modal */}
+        {confirmCancel && (
+          <ConfirmModal
+            title="Cancelar reposição?" danger
+            message={confirmCancel.semCredito
+              ? `A reposição está a menos de 24h. Você pode cancelar, mas a falta não voltará ao seu crédito. Deseja cancelar mesmo assim?`
+              : `Cancelar a reposição de ${fmtBRFull(confirmCancel.repo.dataReposicao)}? A falta voltará para pendente.`}
+            onConfirm={confirmarCancelamento}
+            onCancel={() => setConfirmCancel(null)}
+            confirmLabel="Cancelar reposição"
+          />
+        )}
+
+        {/* Rodapé */}
+        <div className="text-center text-xs text-gray-400 py-4">
+          Qualquer coisa contate o ateliê 🎨
+        </div>
+
       </div>
     </div>
   );
