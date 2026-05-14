@@ -2828,9 +2828,18 @@ function AlunoView({ state, dispatch, acesso }) {
   };
 
   // Marcar reposição
-  const vagasFuturas = useMemo(() =>
-    state.vagas.filter(v => v.data >= td).sort((a,b) => a.data.localeCompare(b.data)),
-    [state.vagas, td]);
+  const vagasFuturas = useMemo(() => {
+    const seen = new Set();
+    return state.vagas
+      .filter(v => v.data >= td)
+      .sort((a,b) => a.data.localeCompare(b.data))
+      .filter(v => {
+        const key = v.data + '|' + v.turmaId;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }, [state.vagas, td]);
   const [vagaSel, setVagaSel] = useState('');
   const [successRepo, setSuccessRepo] = useState('');
   const vagaObj = vagasFuturas.find(v => v.id === vagaSel);
