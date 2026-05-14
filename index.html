@@ -2931,7 +2931,7 @@ function AlunoView({ state, dispatch, acesso }) {
   // Cancelar reposição
   const [confirmCancel, setConfirmCancel] = useState(null);
   const minhasRepos = useMemo(() =>
-    state.reposicoes.filter(r => r.alunoNome === alunoNome && !r.realizada)
+    state.reposicoes.filter(r => r.alunoNome === alunoNome && r.turmaOrigemId === turmaId && !r.realizada)
       .sort((a,b) => a.dataReposicao.localeCompare(b.dataReposicao)),
     [state.reposicoes, alunoNome]);
 
@@ -2965,7 +2965,7 @@ function AlunoView({ state, dispatch, acesso }) {
   // Alertas — só faltas expirando em ≤7 dias e reposições próximas
   const in7 = (() => { const d = new Date(); d.setDate(d.getDate()+7); return dateToStr(d); })();
   const alertas = [];
-  state.faltas.filter(f => f.alunoNome === alunoNome && f.status === 'pendente').forEach(f => {
+  state.faltas.filter(f => f.alunoNome === alunoNome && f.turmaId === turmaId && f.status === 'pendente').forEach(f => {
     const exp = getFaltaExpiry(f);
     if (exp >= td && exp <= in7) alertas.push({ level:'red', text:`Falta de ${fmtBR(f.datas[0])} expira em ${fmtBRFull(exp)} — marque uma reposição!` });
   });
@@ -2979,7 +2979,7 @@ function AlunoView({ state, dispatch, acesso }) {
 
   // Minhas faltas — todas as pendentes e marcadas, ordenadas por data
   const minhasFaltas = state.faltas
-    .filter(f => f.alunoNome === alunoNome && (f.status === 'pendente' || f.status === 'marcada'))
+    .filter(f => f.alunoNome === alunoNome && f.turmaId === turmaId && (f.status === 'pendente' || f.status === 'marcada'))
     .sort((a, b) => a.datas[0].localeCompare(b.datas[0]));
 
   // Vagas da semana
