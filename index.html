@@ -622,6 +622,7 @@ function reducer(state, action) {
       const endDateStr = (() => { const e = new Date(); e.setDate(e.getDate()+60); return dateToStr(e); })();
       let vagasComExtras = [...vagas];
       state.turmas.forEach(turma => {
+        if (turma.alunos.length === 0) return; // turma vazia não libera vagas extras
         const classDates = getClassDatesInRange(turma, td, endDateStr);
         classDates.forEach(date => {
           const dayBefore = new Date(date + 'T10:00:00');
