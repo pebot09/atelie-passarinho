@@ -189,6 +189,47 @@ function getClassDatesInRange(turma, fromStr, toStr) {
   return dates;
 }
 
+function computeVagasExtras(turmas, faltas, reposicoes, vagasBase, td) {
+  const now = new Date();
+  const endDateStr = (() => { const e = new Date(); e.setDate(e.getDate()+60); return dateToStr(e); })();
+  let vagas = [...vagasBase];
+  turmas.forEach(turma => {
+    if (turma.alunos.length === 0) return;
+    const classDates = getClassDatesInRange(turma, td, endDateStr);
+    classDates.forEach(date => {
+      const dayBefore = new Date(date + 'T10:00:00');
+      dayBefore.setDate(dayBefore.getDate() - 1);
+      if (now < dayBefore) return;
+      const faltasCount = faltas.filter(f =>
+        f.turmaId === turma.id && f.datas.includes(date) &&
+        (f.status === 'pendente' || f.status === 'marcada')
+      ).length;
+      if (faltasCount >= turma.alunos.length) return;
+      const totalRepos = reposicoes.filter(r =>
+        r.turmaReposicaoId === turma.id && r.dataReposicao === date && !r.realizada
+      ).length;
+      const target = Math.max(0, 8 - turma.alunos.length + faltasCount - totalRepos);
+      const existingExtras = vagas.filter(v => v.vagaExtra && v.turmaId === turma.id && v.data === date);
+      const diff = target - existingExtras.length;
+      if (diff > 0) {
+        for (let i = 0; i < diff; i++) {
+          vagas.push({ id: genId('ve'), turmaId: turma.id, data: date, vagaExtra: true, faltaId: null });
+        }
+      } else if (diff < 0) {
+        let toRemove = -diff;
+        vagas = vagas.filter(v => {
+          if (v.vagaExtra && v.turmaId === turma.id && v.data === date && toRemove > 0) {
+            toRemove--;
+            return false;
+          }
+          return true;
+        });
+      }
+    });
+  });
+  return vagas;
+}
+
 function getDiaSemanaFromDateStr(dateStr) {
   const d = parseDate(dateStr);
   const names = ['domingo','segunda','terça','quarta','quinta','sexta','sábado'];
@@ -619,45 +660,7 @@ function reducer(state, action) {
         ...(state.estatisticas || {}),
         faltasExpiradas: [...arr((state.estatisticas || {}).faltasExpiradas), ...newExpStats]
       };
-      // Vagas extras: abre slots de capacidade excedente a partir das 10h do dia anterior
-      const now = new Date();
-      const endDateStr = (() => { const e = new Date(); e.setDate(e.getDate()+60); return dateToStr(e); })();
-      let vagasComExtras = [...vagas];
-      state.turmas.forEach(turma => {
-        if (turma.alunos.length === 0) return; // turma vazia não libera vagas extras
-        const classDates = getClassDatesInRange(turma, td, endDateStr);
-        classDates.forEach(date => {
-          const dayBefore = new Date(date + 'T10:00:00');
-          dayBefore.setDate(dayBefore.getDate() - 1);
-          if (now < dayBefore) return;
-          const faltasCount = state.faltas.filter(f =>
-            f.turmaId === turma.id && f.datas.includes(date) &&
-            (f.status === 'pendente' || f.status === 'marcada')
-          ).length;
-          if (faltasCount >= turma.alunos.length) return; // todos faltando — aula não acontece
-          const totalRepos = reposicoes.filter(r =>
-            r.turmaReposicaoId === turma.id && r.dataReposicao === date && !r.realizada
-          ).length;
-          const target = Math.max(0, 8 - turma.alunos.length + faltasCount - totalRepos);
-          const existingExtras = vagasComExtras.filter(v => v.vagaExtra && v.turmaId === turma.id && v.data === date);
-          const diff = target - existingExtras.length;
-          if (diff > 0) {
-            for (let i = 0; i < diff; i++) {
-              vagasComExtras.push({ id: genId('ve'), turmaId: turma.id, data: date, vagaExtra: true, faltaId: null });
-            }
-          } else if (diff < 0) {
-            let toRemove = -diff;
-            vagasComExtras = vagasComExtras.filter(v => {
-              if (v.vagaExtra && v.turmaId === turma.id && v.data === date && toRemove > 0) {
-                toRemove--;
-                return false;
-              }
-              return true;
-            });
-          }
-        });
-      });
-
+      const vagasComExtras = computeVagasExtras(state.turmas, state.faltas, reposicoes, vagas, td);
       next = { ...state, vagas: vagasComExtras, reposicoes, faltas: activeFaltas, estatisticas };
       break;
     }
@@ -680,10 +683,12 @@ function reducer(state, action) {
       const cleanFaltas = activeFaltas.filter(f =>
         !(f.status === 'marcada' && f.reposicaoId && realizadasIdsSynced.has(f.reposicaoId))
       );
+      const vagasFiltradas = inc.vagas.filter(v => v.data >= td);
+      const vagasComExtras = computeVagasExtras(inc.turmas, cleanFaltas, reposSynced, vagasFiltradas, td);
       next = {
         ...inc,
         faltas:     cleanFaltas,
-        vagas:      inc.vagas.filter(v => v.data >= td),
+        vagas:      vagasComExtras,
         reposicoes: reposSynced,
         estatisticas,
       };
