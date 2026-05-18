@@ -189,6 +189,15 @@ function getClassDatesInRange(turma, fromStr, toStr) {
   return dates;
 }
 
+function getClassDatetime(turmaId, date, turmas) {
+  const turma = turmas.find(t => t.id === turmaId);
+  if (!turma) return null;
+  const hora = parseInt((turma.horario || '09h').replace('h',''), 10);
+  const dt = parseDate(date);
+  dt.setHours(hora, 0, 0, 0);
+  return dt;
+}
+
 function computeVagasExtras(turmas, faltas, reposicoes, vagasBase, td) {
   const now = new Date();
   const endDateStr = (() => { const e = new Date(); e.setDate(e.getDate()+60); return dateToStr(e); })();
@@ -358,19 +367,19 @@ function reducer(state, action) {
     }
 
     case 'ADD_FALTA': {
-      const { alunoNome, turmaId, datas } = action;
+      const { alunoNome, turmaId } = action;
+      const datasComTipo = action.datasComTipo || (action.datas || []).map(d => ({ data: d, semAntecedencia: false }));
       const newFaltas = [];
       const newVagas = [];
       let reposicoes = state.reposicoes;
-      datas.forEach(data => {
+      datasComTipo.forEach(({ data, semAntecedencia }) => {
         const exists = state.faltas.some(f =>
           f.alunoNome === alunoNome && f.turmaId === turmaId &&
           f.datas.includes(data) && (f.status === 'pendente' || f.status === 'marcada')
         );
         if (exists) return;
         const faltaId = genId('f');
-        newFaltas.push({ id: faltaId, alunoNome, turmaId, datas: [data], status: 'pendente' });
-        // If a reposição already occupies this slot with no vaga linked, associate directly
+        newFaltas.push({ id: faltaId, alunoNome, turmaId, datas: [data], status: 'pendente', semAntecedencia: !!semAntecedencia });
         const repoOrfao = reposicoes.find(r =>
           r.turmaReposicaoId === turmaId && r.dataReposicao === data &&
           !r.realizada && !r.vagaConsumedFaltaId
@@ -387,7 +396,8 @@ function reducer(state, action) {
       if (newFaltas.length) {
         const tLbl = getTurmaLabel(state.turmas, turmaId);
         const datasLbl = fmtDatesText(newFaltas.map(f => f.datas[0]));
-        next.log = addLog(state.log, action.professor, `Registrou falta de ${alunoNome} (${tLbl}) — ${datasLbl}`);
+        const hasSemAnt = newFaltas.some(f => f.semAntecedencia);
+        next.log = addLog(state.log, action.professor, `Registrou falta${hasSemAnt ? ' sem antecedência' : ''} de ${alunoNome} (${tLbl}) — ${datasLbl}`);
       }
       break;
     }
@@ -417,9 +427,11 @@ function reducer(state, action) {
         const tRLbl = getTurmaLabel(state.turmas, turmaReposicaoId);
         next.log = addLog(state.log, action.professor, `Agendou aula extra de ${alunoNome} (${tOLbl}) → ${tRLbl}, ${fmtBRFull(dataReposicao)}`);
       } else {
-        const pending = state.faltas
-          .filter(f => f.alunoNome === alunoNome && f.turmaId === action.turmaOrigemId && f.status === 'pendente')
-          .sort((a,b) => getFaltaEarliest(a).localeCompare(getFaltaEarliest(b)));
+        const pending = action.faltaId
+          ? state.faltas.filter(f => f.id === action.faltaId && f.status === 'pendente')
+          : state.faltas
+              .filter(f => f.alunoNome === alunoNome && f.turmaId === action.turmaOrigemId && f.status === 'pendente' && !f.semAntecedencia)
+              .sort((a,b) => getFaltaEarliest(a).localeCompare(getFaltaEarliest(b)));
         if (pending.length) {
           const oldest = pending[0];
           next = {
@@ -1085,6 +1097,7 @@ function TabRegistrarFalta({ state, dispatch }) {
   const [alunoNome, setAlunoNome] = useState('');
   const [selectedDates, setSelectedDates] = useState([]);
   const [success, setSuccess] = useState('');
+  const [tiposModal, setTiposModal] = useState(null); // [{data, semAntecedencia}] for dates <24h
 
   const sorted = useMemo(() => sortTurmas(state.turmas), [state.turmas]);
   const turma = state.turmas.find(t => t.id === turmaId);
@@ -1092,16 +1105,28 @@ function TabRegistrarFalta({ state, dispatch }) {
 
   const toggleDate = d => setSelectedDates(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]);
 
-  const handleSubmit = () => {
-    if (!turmaId || !alunoNome || !selectedDates.length) return;
-    // Check for duplicate
-    const exists = state.faltas.find(f => f.alunoNome === alunoNome && f.turmaId === turmaId && f.status === 'pendente');
-    // Allow: duplicates are ignored (they'll just add new falta entry)
-    dispatch({ type: 'ADD_FALTA', alunoNome, turmaId, datas: selectedDates });
-    setSuccess(`Falta de ${alunoNome} registrada para ${selectedDates.length} data(s).`);
+  const doSubmit = (datasComTipo) => {
+    dispatch({ type: 'ADD_FALTA', alunoNome, turmaId, datasComTipo });
+    setSuccess(`Falta de ${alunoNome} registrada para ${datasComTipo.length} data(s).`);
     setAlunoNome('');
     setSelectedDates([]);
+    setTiposModal(null);
     setTimeout(() => setSuccess(''), 4000);
+  };
+
+  const handleSubmit = () => {
+    if (!turmaId || !alunoNome || !selectedDates.length) return;
+    const menosde24h = selectedDates.filter(d => {
+      const dt = getClassDatetime(turmaId, d, state.turmas);
+      if (!dt) return false;
+      const horas = (dt - Date.now()) / 3600000;
+      return horas >= 0 && horas < 24;
+    });
+    if (menosde24h.length > 0) {
+      setTiposModal(menosde24h.map(d => ({ data: d, semAntecedencia: true })));
+      return;
+    }
+    doSubmit(selectedDates.map(d => ({ data: d, semAntecedencia: false })));
   };
 
   return (
@@ -1158,6 +1183,39 @@ function TabRegistrarFalta({ state, dispatch }) {
         </div>
       )}
 
+      {tiposModal && (
+        <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 space-y-3">
+          <div className="font-semibold text-orange-800 text-sm">⚠️ Falta registrada com menos de 24h de antecedência</div>
+          <div className="text-xs text-orange-700">Classifique cada data:</div>
+          {tiposModal.map((item, i) => (
+            <div key={item.data} className="flex items-center justify-between gap-3">
+              <span className="text-sm font-medium text-gray-800">{fmtBRFull(item.data)}</span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setTiposModal(prev => prev.map((x, j) => j === i ? { ...x, semAntecedencia: false } : x))}
+                  className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors ${!item.semAntecedencia ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300'}`}>
+                  Comum
+                </button>
+                <button
+                  onClick={() => setTiposModal(prev => prev.map((x, j) => j === i ? { ...x, semAntecedencia: true } : x))}
+                  className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors ${item.semAntecedencia ? 'bg-orange-500 text-white border-orange-500' : 'bg-white text-gray-600 border-gray-300'}`}>
+                  Sem antecedência
+                </button>
+              </div>
+            </div>
+          ))}
+          <div className="flex gap-2 pt-1">
+            <button onClick={() => setTiposModal(null)} className="flex-1 py-2 border border-gray-300 rounded-lg text-sm text-gray-600">Cancelar</button>
+            <button onClick={() => {
+              const datasComTipo = selectedDates.map(d => {
+                const found = tiposModal.find(x => x.data === d);
+                return { data: d, semAntecedencia: found ? found.semAntecedencia : false };
+              });
+              doSubmit(datasComTipo);
+            }} className="flex-1 py-2 bg-orange-500 text-white rounded-lg text-sm font-semibold">Confirmar</button>
+          </div>
+        </div>
+      )}
       {success && <div className="bg-green-50 text-green-700 rounded-lg px-4 py-3 text-sm font-medium">{success}</div>}
 
       <button
@@ -2062,6 +2120,11 @@ function PainelVisual({ state, dispatch }) {
       obs.push({ level:'teal', text:`${count} vaga${count>1?'s':''} extra${count>1?'s':''} disponíve${count>1?'is':'l'}: ${lbl} — ${fmtBRFull(data)}` });
     });
   }
+  state.faltas.filter(f => f.status === 'pendente' && f.semAntecedencia).forEach(f => {
+    const t = state.turmas.find(x => x.id === f.turmaId);
+    const lbl = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
+    obs.push({ level:'orange', text:`Falta sem antecedência: ${f.alunoNome} (${lbl}) — ${fmtBR(f.datas[0])}` });
+  });
   state.reposicoes.filter(r => !r.realizada && r.tipo==='aula_extra').forEach(r => {
     obs.push({ level:'blue', text:`Aula extra sem falta vinculada: ${r.alunoNome} — ${fmtBRFull(r.dataReposicao)}` });
   });
@@ -2069,8 +2132,8 @@ function PainelVisual({ state, dispatch }) {
     obs.push({ level:'blue', text:`Reposição sem falta vinculada: ${r.alunoNome} — ${fmtBRFull(r.dataReposicao)}` });
   });
 
-  const obsColors = { red:'bg-red-50 text-red-700 border-red-200', amber:'bg-amber-50 text-amber-700 border-amber-200', blue:'bg-blue-50 text-blue-700 border-blue-200', teal:'bg-teal-50 text-teal-700 border-teal-200' };
-  const obsIcons  = { red:'🔴', amber:'⚠️', blue:'ℹ️', teal:'✦' };
+  const obsColors = { red:'bg-red-50 text-red-700 border-red-200', amber:'bg-amber-50 text-amber-700 border-amber-200', blue:'bg-blue-50 text-blue-700 border-blue-200', teal:'bg-teal-50 text-teal-700 border-teal-200', orange:'bg-orange-50 text-orange-700 border-orange-200' };
+  const obsIcons  = { red:'🔴', amber:'⚠️', blue:'ℹ️', teal:'✦', orange:'⏱️' };
 
   // ---- MODAL DE DETALHES ----
   const DetModal = () => {
@@ -2089,7 +2152,10 @@ function PainelVisual({ state, dispatch }) {
             const expiring = exp >= td && exp <= in7;
             return (
               <div key={f.id} className={`rounded-lg px-3 py-2 text-sm ${expiring ? 'bg-amber-50 border border-amber-200' : 'bg-gray-50'}`}>
-                <div className="font-semibold text-gray-800">📅 {fmtBRFull(f.datas[0])}</div>
+                <div className="font-semibold text-gray-800 flex items-center gap-2">
+                  📅 {fmtBRFull(f.datas[0])}
+                  {f.semAntecedencia && <span className="text-xs font-medium px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700">sem antecedência</span>}
+                </div>
                 <div className="text-gray-500 mt-0.5">Expira em: {fmtBRFull(exp)}
                   {expiring && <span className="ml-1 text-amber-600 font-medium">⚠️ em breve</span>}
                 </div>
@@ -2250,6 +2316,9 @@ function PainelVisual({ state, dispatch }) {
                         Falta: <span className="font-bold text-gray-900">{fmtDatesText(datasOrdenadas)}</span>
                         {expiring && <span className="ml-2 text-xs text-amber-600 font-medium">· expira {fmtBRFull(nearestExp)}</span>}
                       </div>
+                      {obj.faltas.some(f => f.semAntecedencia) && (
+                        <div className="mt-1"><span className="text-xs font-medium px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">sem antecedência</span></div>
+                      )}
                     </div>
                   );
                 } else {
@@ -2970,7 +3039,15 @@ function AlunoView({ state, dispatch, acesso }) {
   const jaTemReposicao = !!(vagaSel && state.reposicoes.some(r =>
     r.alunoNome === alunoNome && r.dataReposicao === dataRepo &&
     r.turmaReposicaoId === turmaRepoId && !r.realizada));
-  const hasPending = state.faltas.some(f => f.alunoNome === alunoNome && f.turmaId === turmaId && f.status === 'pendente');
+  const pendingNormal = useMemo(() =>
+    state.faltas.filter(f => f.alunoNome === alunoNome && f.turmaId === turmaId && f.status === 'pendente' && !f.semAntecedencia)
+      .sort((a,b) => a.datas[0].localeCompare(b.datas[0])),
+    [state.faltas, alunoNome, turmaId]);
+  const pendingSemAnt = useMemo(() =>
+    state.faltas.filter(f => f.alunoNome === alunoNome && f.turmaId === turmaId && f.status === 'pendente' && f.semAntecedencia)
+      .sort((a,b) => a.datas[0].localeCompare(b.datas[0])),
+    [state.faltas, alunoNome, turmaId]);
+  const hasPending = pendingNormal.length > 0;
   const handleMarcarRepo = () => {
     if (!vagaSel || jaTemReposicao) return;
     alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: dataRepo, turmaReposicaoId: turmaRepoId, tipo: hasPending ? 'reposicao' : 'aula_extra', semVagaOficial: false, vagaSelId: vagaObj?.id || null });
@@ -2984,6 +3061,7 @@ function AlunoView({ state, dispatch, acesso }) {
   const [confirmCancel, setConfirmCancel] = useState(null);
   // Confirmar aula extra
   const [confirmAulaExtra, setConfirmAulaExtra] = useState(null); // vaga selecionada
+  const [confirmEscolhaFalta, setConfirmEscolhaFalta] = useState(null); // {vaga, opcoes:[falta]}
   const minhasRepos = useMemo(() =>
     state.reposicoes.filter(r => r.alunoNome === alunoNome && r.turmaOrigemId === turmaId && !r.realizada)
       .sort((a,b) => a.dataReposicao.localeCompare(b.dataReposicao)),
@@ -3170,57 +3248,87 @@ function AlunoView({ state, dispatch, acesso }) {
         </div>
 
         {/* Marcar reposição / aula extra */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <button onClick={() => toggle('reposicao')} className="w-full px-4 py-3 flex items-center justify-between text-left">
-            <div className="flex items-center gap-3">
-              <div className="text-xl">{hasPending ? '✅' : '➕'}</div>
-              <div>
-                <div className="font-semibold text-gray-800 text-sm">{hasPending ? 'Marcar reposição' : 'Marcar aula extra'}</div>
-                <div className="text-xs text-gray-500">Escolha uma vaga disponível</div>
-              </div>
-            </div>
-            <div className="text-gray-400 text-sm">{open.reposicao ? '‹' : '›'}</div>
-          </button>
-          {open.reposicao && (
-            <div className="border-t border-gray-100">
-              {vagasFuturas.length === 0 ? (
-                <p className="px-4 py-3 text-sm text-gray-400 italic">Nenhuma vaga disponível no momento.</p>
-              ) : (
-                <div className="divide-y divide-gray-50">
-                  {vagasFuturas.map(v => {
-                    const tV = state.turmas.find(t => t.id === v.turmaId);
-                    const jaOcupada = state.reposicoes.some(r =>
-                      r.alunoNome === alunoNome && r.dataReposicao === v.data &&
-                      r.turmaReposicaoId === v.turmaId && !r.realizada);
-                    return (
-                      <div key={v.id} className="px-4 py-3 flex items-center justify-between gap-3">
-                        <div>
-                          <div className="font-medium text-gray-800 text-sm">{fmtBRFull(v.data)}</div>
-                          <div className="text-xs text-gray-500">{tV ? `${ABREV[tV.diaSemana]} ${tV.horario}` : '?'}</div>
-                          {jaOcupada && <div className="text-xs text-red-500 mt-0.5">Você já tem reposição nesse horário</div>}
-                        </div>
-                        <button
-                          onClick={() => {
-                            if (jaOcupada) return;
-                            if (!hasPending) { setConfirmAulaExtra(v); return; }
-                            alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: v.data, turmaReposicaoId: v.turmaId, tipo: 'reposicao', semVagaOficial: false, vagaSelId: v.id });
-                            setSuccessRepo('Reposição marcada com sucesso!');
-                            setOpen(o => ({ ...o, reposicao: false }));
-                            setTimeout(() => setSuccessRepo(''), 4000);
-                          }}
-                          disabled={jaOcupada}
-                          className={`text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-40 shrink-0 border ${hasPending ? 'text-blue-600 border-blue-300 bg-blue-50' : 'text-green-700 border-green-300 bg-green-50'}`}>
-                          {hasPending ? 'Repor' : 'Aula extra'}
-                        </button>
-                      </div>
-                    );
-                  })}
+        {(() => {
+          const someWithin2h = vagasFuturas.some(v => {
+            const dt = getClassDatetime(v.turmaId, v.data, state.turmas);
+            if (!dt) return false;
+            const h = (dt - Date.now()) / 3600000;
+            return h >= 0 && h <= 2;
+          });
+          const cardTitle = (hasPending || (pendingSemAnt.length > 0 && someWithin2h))
+            ? 'Marcar reposição' : 'Marcar aula extra';
+          const cardIcon = cardTitle === 'Marcar reposição' ? '✅' : '➕';
+          return (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+              <button onClick={() => toggle('reposicao')} className="w-full px-4 py-3 flex items-center justify-between text-left">
+                <div className="flex items-center gap-3">
+                  <div className="text-xl">{cardIcon}</div>
+                  <div>
+                    <div className="font-semibold text-gray-800 text-sm">{cardTitle}</div>
+                    <div className="text-xs text-gray-500">Escolha uma vaga disponível</div>
+                  </div>
+                </div>
+                <div className="text-gray-400 text-sm">{open.reposicao ? '‹' : '›'}</div>
+              </button>
+              {open.reposicao && (
+                <div className="border-t border-gray-100">
+                  {vagasFuturas.length === 0 ? (
+                    <p className="px-4 py-3 text-sm text-gray-400 italic">Nenhuma vaga disponível no momento.</p>
+                  ) : (
+                    <div className="divide-y divide-gray-50">
+                      {vagasFuturas.map(v => {
+                        const tV = state.turmas.find(t => t.id === v.turmaId);
+                        const jaOcupada = state.reposicoes.some(r =>
+                          r.alunoNome === alunoNome && r.dataReposicao === v.data &&
+                          r.turmaReposicaoId === v.turmaId && !r.realizada);
+                        const dt = getClassDatetime(v.turmaId, v.data, state.turmas);
+                        const horasAte = dt ? (dt - Date.now()) / 3600000 : null;
+                        const within2h = horasAte !== null && horasAte >= 0 && horasAte <= 2;
+                        // Eligible faltas for this vaga
+                        const allPending = [...pendingNormal, ...pendingSemAnt].sort((a,b) => a.datas[0].localeCompare(b.datas[0]));
+                        const eligibleFaltas = within2h ? allPending : pendingNormal;
+                        const canRepor = eligibleFaltas.length > 0;
+                        // Need choice modal: within2h, has both types, normal is older than oldest semAnt
+                        const needsChoice = within2h && pendingNormal.length > 0 && pendingSemAnt.length > 0
+                          && pendingNormal[0].datas[0] < pendingSemAnt[0].datas[0];
+                        const handleClick = () => {
+                          if (jaOcupada) return;
+                          if (!canRepor) { setConfirmAulaExtra(v); return; }
+                          if (needsChoice) {
+                            setConfirmEscolhaFalta({ vaga: v, opcoes: [pendingNormal[0], pendingSemAnt[0]] });
+                            return;
+                          }
+                          const faltaId = eligibleFaltas[0].id;
+                          alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: v.data, turmaReposicaoId: v.turmaId, tipo: 'reposicao', semVagaOficial: false, vagaSelId: v.id, faltaId });
+                          setSuccessRepo('Reposição marcada com sucesso!');
+                          setOpen(o => ({ ...o, reposicao: false }));
+                          setTimeout(() => setSuccessRepo(''), 4000);
+                        };
+                        return (
+                          <div key={v.id} className="px-4 py-3 flex items-center justify-between gap-3">
+                            <div>
+                              <div className="font-medium text-gray-800 text-sm">{fmtBRFull(v.data)}</div>
+                              <div className="text-xs text-gray-500">{tV ? `${ABREV[tV.diaSemana]} ${tV.horario}` : '?'}</div>
+                              {jaOcupada && <div className="text-xs text-red-500 mt-0.5">Você já tem reposição nesse horário</div>}
+                              {!jaOcupada && !canRepor && pendingSemAnt.length > 0 && !within2h && (
+                                <div className="text-xs text-orange-500 mt-0.5">Disponível para reposição em menos de 2h</div>
+                              )}
+                            </div>
+                            <button onClick={handleClick} disabled={jaOcupada}
+                              className={`text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-40 shrink-0 border ${canRepor ? 'text-blue-600 border-blue-300 bg-blue-50' : 'text-green-700 border-green-300 bg-green-50'}`}>
+                              {canRepor ? 'Repor' : 'Aula extra'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
+              {successRepo && <div className="px-4 pb-3"><div className="bg-green-50 text-green-700 rounded-lg px-3 py-2 text-sm font-medium">{successRepo}</div></div>}
             </div>
-          )}
-          {successRepo && <div className="px-4 pb-3"><div className="bg-green-50 text-green-700 rounded-lg px-3 py-2 text-sm font-medium">{successRepo}</div></div>}
-        </div>
+          );
+        })()}
 
         {/* Confirm aula extra modal */}
         {confirmAulaExtra && (() => {
@@ -3239,6 +3347,32 @@ function AlunoView({ state, dispatch, acesso }) {
               }}
               onCancel={() => setConfirmAulaExtra(null)}
             />
+          );
+        })()}
+
+        {/* Confirm escolha de falta (normal vs semAntecedencia) */}
+        {confirmEscolhaFalta && (() => {
+          const { vaga, opcoes } = confirmEscolhaFalta;
+          return (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full space-y-4">
+                <div className="font-bold text-gray-900">Qual falta deseja repor?</div>
+                <div className="text-sm text-gray-500">Você tem uma falta comum e uma sem antecedência. Escolha qual usar para esta reposição.</div>
+                {opcoes.map(f => (
+                  <button key={f.id} onClick={() => {
+                    alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: vaga.data, turmaReposicaoId: vaga.turmaId, tipo: 'reposicao', semVagaOficial: false, vagaSelId: vaga.id, faltaId: f.id });
+                    setSuccessRepo('Reposição marcada com sucesso!');
+                    setOpen(o => ({ ...o, reposicao: false }));
+                    setConfirmEscolhaFalta(null);
+                    setTimeout(() => setSuccessRepo(''), 4000);
+                  }} className="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:border-blue-400 hover:bg-blue-50 transition-colors">
+                    <div className="font-semibold text-gray-800 text-sm">Falta de {fmtBRFull(f.datas[0])}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">{f.semAntecedencia ? '⏱️ Sem antecedência' : '✓ Falta comum'}</div>
+                  </button>
+                ))}
+                <button onClick={() => setConfirmEscolhaFalta(null)} className="w-full py-2 text-sm text-gray-500 hover:text-gray-700">Cancelar</button>
+              </div>
+            </div>
           );
         })()}
 
