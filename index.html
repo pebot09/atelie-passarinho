@@ -2982,6 +2982,8 @@ function AlunoView({ state, dispatch, acesso }) {
 
   // Cancelar reposição
   const [confirmCancel, setConfirmCancel] = useState(null);
+  // Confirmar aula extra
+  const [confirmAulaExtra, setConfirmAulaExtra] = useState(null); // vaga selecionada
   const minhasRepos = useMemo(() =>
     state.reposicoes.filter(r => r.alunoNome === alunoNome && r.turmaOrigemId === turmaId && !r.realizada)
       .sort((a,b) => a.dataReposicao.localeCompare(b.dataReposicao)),
@@ -3086,7 +3088,7 @@ function AlunoView({ state, dispatch, acesso }) {
                     <div className="flex items-center justify-between gap-2">
                       <div className="font-medium text-gray-800 text-sm">{fmtBRFull(f.datas[0])}</div>
                       {f.status === 'marcada'
-                        ? <span className="text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5">Reposta</span>
+                        ? <span className="text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5">Marcada</span>
                         : <span className="text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">Pendente</span>
                       }
                     </div>
@@ -3167,13 +3169,13 @@ function AlunoView({ state, dispatch, acesso }) {
           {successFalta && <div className="px-4 pb-3"><div className="bg-green-50 text-green-700 rounded-lg px-3 py-2 text-sm font-medium">{successFalta}</div></div>}
         </div>
 
-        {/* Marcar reposição */}
+        {/* Marcar reposição / aula extra */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <button onClick={() => toggle('reposicao')} className="w-full px-4 py-3 flex items-center justify-between text-left">
             <div className="flex items-center gap-3">
-              <div className="text-xl">✅</div>
+              <div className="text-xl">{hasPending ? '✅' : '➕'}</div>
               <div>
-                <div className="font-semibold text-gray-800 text-sm">Marcar reposição</div>
+                <div className="font-semibold text-gray-800 text-sm">{hasPending ? 'Marcar reposição' : 'Marcar aula extra'}</div>
                 <div className="text-xs text-gray-500">Escolha uma vaga disponível</div>
               </div>
             </div>
@@ -3187,7 +3189,6 @@ function AlunoView({ state, dispatch, acesso }) {
                 <div className="divide-y divide-gray-50">
                   {vagasFuturas.map(v => {
                     const tV = state.turmas.find(t => t.id === v.turmaId);
-                    const dia = getDiaSemanaFromDateStr(v.data);
                     const jaOcupada = state.reposicoes.some(r =>
                       r.alunoNome === alunoNome && r.dataReposicao === v.data &&
                       r.turmaReposicaoId === v.turmaId && !r.realizada);
@@ -3201,15 +3202,15 @@ function AlunoView({ state, dispatch, acesso }) {
                         <button
                           onClick={() => {
                             if (jaOcupada) return;
-                            const hPend = state.faltas.some(f => f.alunoNome === alunoNome && f.turmaId === turmaId && f.status === 'pendente');
-                            alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: v.data, turmaReposicaoId: v.turmaId, tipo: hPend ? 'reposicao' : 'aula_extra', semVagaOficial: false, vagaSelId: v.id });
+                            if (!hasPending) { setConfirmAulaExtra(v); return; }
+                            alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: v.data, turmaReposicaoId: v.turmaId, tipo: 'reposicao', semVagaOficial: false, vagaSelId: v.id });
                             setSuccessRepo('Reposição marcada com sucesso!');
                             setOpen(o => ({ ...o, reposicao: false }));
                             setTimeout(() => setSuccessRepo(''), 4000);
                           }}
                           disabled={jaOcupada}
-                          className="text-xs font-semibold text-blue-600 border border-blue-300 bg-blue-50 px-3 py-1.5 rounded-lg disabled:opacity-40 shrink-0">
-                          Repor
+                          className={`text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-40 shrink-0 border ${hasPending ? 'text-blue-600 border-blue-300 bg-blue-50' : 'text-green-700 border-green-300 bg-green-50'}`}>
+                          {hasPending ? 'Repor' : 'Aula extra'}
                         </button>
                       </div>
                     );
@@ -3220,6 +3221,26 @@ function AlunoView({ state, dispatch, acesso }) {
           )}
           {successRepo && <div className="px-4 pb-3"><div className="bg-green-50 text-green-700 rounded-lg px-3 py-2 text-sm font-medium">{successRepo}</div></div>}
         </div>
+
+        {/* Confirm aula extra modal */}
+        {confirmAulaExtra && (() => {
+          const tV = state.turmas.find(t => t.id === confirmAulaExtra.turmaId);
+          return (
+            <ConfirmModal
+              title="Confirmar aula extra?"
+              message={`Você não tem faltas pendentes, então essa será uma aula extra em ${fmtBRFull(confirmAulaExtra.data)}${tV ? ` (${ABREV[tV.diaSemana]} ${tV.horario})` : ''}. Aulas extras podem ter custo adicional — confirme com o ateliê.`}
+              confirmLabel="Confirmar aula extra"
+              onConfirm={() => {
+                alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: confirmAulaExtra.data, turmaReposicaoId: confirmAulaExtra.turmaId, tipo: 'aula_extra', semVagaOficial: false, vagaSelId: confirmAulaExtra.id });
+                setSuccessRepo('Aula extra marcada com sucesso!');
+                setOpen(o => ({ ...o, reposicao: false }));
+                setConfirmAulaExtra(null);
+                setTimeout(() => setSuccessRepo(''), 4000);
+              }}
+              onCancel={() => setConfirmAulaExtra(null)}
+            />
+          );
+        })()}
 
         {/* Minhas reposições */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
