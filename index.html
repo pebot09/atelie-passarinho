@@ -2773,10 +2773,8 @@ function App() {
     setProfessor('');
   };
 
-  // 1. Cleanup + carrega Firebase + abre SSE
+  // 1. Carrega Firebase + abre SSE + roda CLEANUP após sync
   useEffect(function() {
-    baseDispatch({ type: 'CLEANUP' });
-
     fetchFromFirebase()
       .then(function(data) {
         if (data && typeof data === 'object' && Object.keys(data).length > 0) {
@@ -2785,6 +2783,7 @@ function App() {
           saveToFirebase(Object.assign({}, SEED, { _updatedAt: Date.now() })).catch(function(){});
         }
         initialised.current = true;
+        baseDispatch({ type: 'CLEANUP' }); // roda após sync e após initialised=true, para que vagasExtras sejam salvas
         setSyncStatus('ok');
       })
       .catch(function() { setSyncStatus('erro'); });
