@@ -678,6 +678,11 @@ function reducer(state, action) {
     case 'SYNC_FROM_FIREBASE': {
       const td = todayStr();
       const inc = normalizeState(action.data);
+      // Rejeita estado corrompido: se não tem turmas, provavelmente é dado inválido
+      if (inc.turmas.length === 0 && state.turmas.length > 0) {
+        console.warn('SYNC_FROM_FIREBASE ignorado: estado recebido sem turmas, mantendo estado local');
+        return state;
+      }
       const expiredFaltas = inc.faltas.filter(f => f.status === 'pendente' && getFaltaExpiry(f) < td);
       const activeFaltas  = inc.faltas.filter(f => !(f.status === 'pendente' && getFaltaExpiry(f) < td));
       const newExpStats = expiredFaltas.map(f => ({
@@ -2944,13 +2949,29 @@ function App() {
             <h1 className="text-lg font-bold text-gray-900">🎨 Escola Passarinho</h1>
             <p className="text-xs text-gray-400">Gestão de Faltas e Reposições</p>
           </div>
-          <div className="text-right flex flex-col items-end gap-1">
-            <button onClick={handleChangeProfessor}
-              className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg ${profColors.bg} ${profColors.text} hover:opacity-75 transition-opacity`}>
-              <span className={`w-2 h-2 rounded-full ${profColors.dot}`}></span>
-              {professor} ▾
-            </button>
-            <div className={`text-xs ${syncStatus === 'ok' ? 'text-green-600' : syncStatus === 'erro' ? 'text-red-500' : 'text-gray-400'}`}>{syncLabel[syncStatus]}</div>
+          <div className="flex items-center gap-3">
+            {professor === 'Pedro' && (
+              <button onClick={() => {
+                const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                const d = new Date();
+                a.href = url;
+                a.download = `passarinho-backup-${d.toISOString().slice(0,10)}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }} className="hidden sm:flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors" title="Exportar backup JSON">
+                ⬇ Backup
+              </button>
+            )}
+            <div className="text-right flex flex-col items-end gap-1">
+              <button onClick={handleChangeProfessor}
+                className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg ${profColors.bg} ${profColors.text} hover:opacity-75 transition-opacity`}>
+                <span className={`w-2 h-2 rounded-full ${profColors.dot}`}></span>
+                {professor} ▾
+              </button>
+              <div className={`text-xs ${syncStatus === 'ok' ? 'text-green-600' : syncStatus === 'erro' ? 'text-red-500' : 'text-gray-400'}`}>{syncLabel[syncStatus]}</div>
+            </div>
           </div>
         </div>
         <div className="border-t border-gray-100">
