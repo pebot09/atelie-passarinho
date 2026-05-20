@@ -443,7 +443,7 @@ function reducer(state, action) {
               dataReposicao, turmaReposicaoId, tipo: 'reposicao', realizada: false, semVagaOficial,
               vagaConsumedFaltaId, vagaExtra: isVagaExtra
             }],
-            vagas: removeVagaSel(state.vagas.filter(v => v.faltaId !== oldest.id))
+            vagas: removeVagaSel(state.vagas)
           };
           const tOLbl = getTurmaLabel(state.turmas, oldest.turmaId);
           const tRLbl = getTurmaLabel(state.turmas, turmaReposicaoId);
