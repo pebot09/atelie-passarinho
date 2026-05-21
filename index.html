@@ -442,7 +442,7 @@ function reducer(state, action) {
         );
         if (repoOrfao) {
           reposicoes = reposicoes.map(r =>
-            r.id === repoOrfao.id ? { ...r, vagaConsumedFaltaId: faltaId } : r
+            r.id === repoOrfao.id ? { ...r, vagaConsumedFaltaId: faltaId, vagaExtra: false, semVagaOficial: false } : r
           );
         } else {
           newVagas.push({ id: genId('v'), turmaId, data, faltaId });
@@ -939,6 +939,16 @@ function normalizeState(s) {
       afterFaltaMig = { ...afterFaltaMig, vagas: [...afterFaltaMig.vagas, ...newVagasMig] };
     }
   }
+  // Migration: clear vagaExtra/semVagaOficial on reposições that were later backed by a real falta vaga
+  afterFaltaMig = {
+    ...afterFaltaMig,
+    reposicoes: afterFaltaMig.reposicoes.map(function(r) {
+      if (r.vagaConsumedFaltaId && (r.vagaExtra || r.semVagaOficial)) {
+        return { ...r, vagaExtra: false, semVagaOficial: false };
+      }
+      return r;
+    })
+  };
   return afterFaltaMig;
 }
 
@@ -2620,7 +2630,7 @@ function PainelVisual({ state, dispatch }) {
                       )}
                     </div>
                     <div className="mt-1 flex items-center gap-2 flex-wrap">
-                      {(r.vagaExtra || r.semVagaOficial) && (
+                      {(r.vagaExtra || r.semVagaOficial) && !r.vagaConsumedFaltaId && (
                         <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-teal-100 text-teal-700">
                           vaga extra
                         </span>
