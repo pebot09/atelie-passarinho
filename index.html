@@ -211,6 +211,30 @@ function getClassDatetime(turmaId, date, turmas) {
   return dt;
 }
 
+// Returns { canCancel, reason } for whether a student can cancel their own falta
+function getCancelFaltaStatus(falta, state) {
+  const faltaData = falta.datas[0];
+  // Rule 2: falta is already linked to a student's own reposição
+  if (falta.status === 'marcada') {
+    return { canCancel: false, reason: 'Você já tem uma reposição marcada para esta falta. Cancele a reposição primeiro.' };
+  }
+  // Rule 4: class time has already passed
+  const classTime = getClassDatetime(falta.turmaId, faltaData, state.turmas);
+  if (classTime && Date.now() >= classTime.getTime()) {
+    return { canCancel: false, reason: 'O horário desta aula já passou.' };
+  }
+  // Rule 3: check if there's a vaga available (own or any other for same turma/date)
+  const vagaFalta = state.vagas.find(v => v.faltaId === falta.id);
+  if (!vagaFalta) {
+    // Own vaga was consumed by another student's reposição — check if any other vaga exists
+    const outraVaga = state.vagas.find(v => v.turmaId === falta.turmaId && v.data === faltaData);
+    if (!outraVaga) {
+      return { canCancel: false, reason: 'Sua vaga já foi ocupada por outro aluno e não há outra disponível para substituir.' };
+    }
+  }
+  return { canCancel: true, reason: null };
+}
+
 function computeVagasExtras(turmas, faltas, reposicoes, vagasBase, td, ausencias) {
   ausencias = ausencias || [];
   const now = new Date();
@@ -649,26 +673,31 @@ function reducer(state, action) {
     case 'CANCEL_FALTA': {
       const falta = state.faltas.find(f => f.id === action.id);
       if (!falta) return state;
+      // Remove the vaga linked to this falta
       let newVagas = state.vagas.filter(v => v.faltaId !== falta.id);
       let newRepos = state.reposicoes;
+      // If another student's reposição had consumed this falta's vaga, reassign it to another available vaga
       const repoVinc = state.reposicoes.find(r => r.vagaConsumedFaltaId === falta.id);
       if (repoVinc) {
         const outraVaga = newVagas.find(v =>
           v.turmaId === repoVinc.turmaReposicaoId && v.data === repoVinc.dataReposicao
         );
         if (outraVaga) {
-          newRepos = newRepos.map(r => r.id === repoVinc.id ? { ...r, vagaConsumedFaltaId: outraVaga.faltaId } : r);
+          newRepos = newRepos.map(r => r.id === repoVinc.id ? {
+            ...r,
+            vagaConsumedFaltaId: outraVaga.faltaId || null,
+            vagaConsumedAusenciaId: outraVaga.ausenciaId || null,
+            vagaExtra: !!(outraVaga.vagaExtra)
+          } : r);
           newVagas = newVagas.filter(v => v.id !== outraVaga.id);
         } else {
           newRepos = newRepos.map(r => r.id === repoVinc.id ? { ...r, vagaConsumedFaltaId: null } : r);
         }
       }
-      next = {
-        ...state,
-        faltas: state.faltas.filter(f => f.id !== falta.id),
-        vagas: newVagas,
-        reposicoes: newRepos,
-      };
+      const newFaltasCF = state.faltas.filter(f => f.id !== falta.id);
+      const td_cf = todayStr();
+      const vagasComExtrasCF = computeVagasExtras(state.turmas, newFaltasCF, newRepos, newVagas, td_cf, state.ausencias);
+      next = { ...state, faltas: newFaltasCF, vagas: vagasComExtrasCF, reposicoes: newRepos };
       const tLbl = getTurmaLabel(state.turmas, falta.turmaId);
       next.log = addLog(state.log, action.professor, `Cancelou falta de ${falta.alunoNome} (${tLbl}) — ${fmtBRFull(falta.datas[0])}`);
       break;
@@ -3298,6 +3327,9 @@ function AlunoView({ state, dispatch, acesso }) {
 
   // Cancelar reposição
   const [confirmCancel, setConfirmCancel] = useState(null);
+  // Cancelar falta (aluno)
+  const [confirmCancelFalta, setConfirmCancelFalta] = useState(null); // falta object
+  const [cancelFaltaMsg, setCancelFaltaMsg] = useState(null); // { faltaId, message }
   // Confirmar aula extra
   const [confirmAulaExtra, setConfirmAulaExtra] = useState(null); // vaga selecionada
   const [confirmEscolhaFalta, setConfirmEscolhaFalta] = useState(null); // {vaga, opcoes:[falta]}
@@ -3431,14 +3463,34 @@ function AlunoView({ state, dispatch, acesso }) {
                   ? state.reposicoes.find(r => r.id === f.reposicaoId)
                   : null;
                 const tRepo = repoVinc ? state.turmas.find(t => t.id === repoVinc.turmaReposicaoId) : null;
+                const cancelInfo = getCancelFaltaStatus(f, state);
+                const showMsg = cancelFaltaMsg?.faltaId === f.id;
                 return (
                   <div key={f.id} className="px-4 py-3">
                     <div className="flex items-center justify-between gap-2">
                       <div className="font-medium text-gray-800 text-sm">{fmtBRFull(f.datas[0])}</div>
-                      {f.status === 'marcada'
-                        ? <span className="text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5">Marcada</span>
-                        : <span className="text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">Pendente</span>
-                      }
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {f.status === 'marcada'
+                          ? <span className="text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5">Marcada</span>
+                          : <span className="text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">Pendente</span>
+                        }
+                        <button
+                          onClick={() => {
+                            if (cancelInfo.canCancel) {
+                              setCancelFaltaMsg(null);
+                              setConfirmCancelFalta(f);
+                            } else {
+                              setCancelFaltaMsg(showMsg ? null : { faltaId: f.id, message: cancelInfo.reason });
+                            }
+                          }}
+                          className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
+                            cancelInfo.canCancel
+                              ? 'text-red-400 hover:text-white hover:bg-red-500 border border-red-200 hover:border-red-500'
+                              : 'text-gray-300 border border-gray-200 cursor-default'
+                          }`}
+                          title={cancelInfo.canCancel ? 'Cancelar falta' : cancelInfo.reason}
+                        >✕</button>
+                      </div>
                     </div>
                     {f.status === 'marcada' && repoVinc
                       ? <div className="text-xs text-gray-500 mt-0.5">Reposição: {fmtBRFull(repoVinc.dataReposicao)}{tRepo ? ` (${ABREV[tRepo.diaSemana]} ${tRepo.horario})` : ''}</div>
@@ -3446,6 +3498,11 @@ function AlunoView({ state, dispatch, acesso }) {
                           {expirando ? '⚠️ ' : ''}Expira em {fmtBRFull(exp)}
                         </div>
                     }
+                    {showMsg && (
+                      <div className="mt-1.5 text-xs text-red-500 bg-red-50 border border-red-100 rounded-lg px-2.5 py-1.5 leading-snug">
+                        {cancelInfo.reason}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -3757,6 +3814,20 @@ function AlunoView({ state, dispatch, acesso }) {
             </div>
           )}
         </div>
+
+        {/* Confirm cancel falta modal */}
+        {confirmCancelFalta && (
+          <ConfirmModal
+            title="Cancelar falta?" danger
+            message={`Cancelar a falta de ${fmtBRFull(confirmCancelFalta.datas[0])}? A vaga voltará a ficar disponível.`}
+            onConfirm={() => {
+              alunoDispatch({ type: 'CANCEL_FALTA', id: confirmCancelFalta.id });
+              setConfirmCancelFalta(null);
+            }}
+            onCancel={() => setConfirmCancelFalta(null)}
+            confirmLabel="Cancelar falta"
+          />
+        )}
 
         {/* Confirm cancel modal */}
         {confirmCancel && (
