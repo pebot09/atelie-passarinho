@@ -51,6 +51,19 @@ const PROFESSOR_COLORS = {
 };
 const MAX_LOG = 150;
 
+// ==================== FERIADOS 2026 ====================
+const FERIADOS = [
+  { data: '2026-06-04', nome: 'Corpus Christi' },
+  { data: '2026-09-07', nome: 'Independência do Brasil' },
+  { data: '2026-10-12', nome: 'Nossa Senhora Aparecida' },
+  { data: '2026-11-02', nome: 'Finados' },
+];
+const FERIADOS_SET = new Set(FERIADOS.map(f => f.data));
+function getFeriadoNome(data) {
+  const f = FERIADOS.find(x => x.data === data);
+  return f ? f.nome : null;
+}
+
 // ==================== SEED DATA ====================
 const SEED = {
   _seedWarning: true,
@@ -170,7 +183,7 @@ function getNextOccurrences(diaSemana, n = 8) {
   const d = new Date();
   d.setHours(0,0,0,0);
   while (dates.length < n) {
-    if (d.getDay() === target) dates.push(dateToStr(d));
+    if (d.getDay() === target) dates.push(dateToStr(d)); // feriados included so UI can show them disabled
     d.setDate(d.getDate() + 1);
   }
   return dates;
@@ -207,6 +220,7 @@ function computeVagasExtras(turmas, faltas, reposicoes, vagasBase, td, ausencias
     if (turma.alunos.length === 0) return;
     const classDates = getClassDatesInRange(turma, td, endDateStr);
     classDates.forEach(date => {
+      if (FERIADOS_SET.has(date)) return; // No vagas on holidays
       const dayBefore = new Date(date + 'T10:00:00');
       dayBefore.setDate(dayBefore.getDate() - 1);
       if (now < dayBefore) return;
@@ -385,7 +399,8 @@ function reducer(state, action) {
 
     case 'ADD_FALTA': {
       const { alunoNome, turmaId } = action;
-      const datasComTipo = action.datasComTipo || (action.datas || []).map(d => ({ data: d, semAntecedencia: false }));
+      const datasComTipoRaw = action.datasComTipo || (action.datas || []).map(d => ({ data: d, semAntecedencia: false }));
+      const datasComTipo = datasComTipoRaw.filter(({ data }) => !FERIADOS_SET.has(data));
       const newFaltas = [];
       const newVagas = [];
       let reposicoes = state.reposicoes;
@@ -684,6 +699,7 @@ function reducer(state, action) {
         const firstDay = mesAno + '-01';
         const lastDay = dateToStr(new Date(y, m, 0));
         getClassDatesInRange(turmaAus, firstDay, lastDay).forEach(date => {
+          if (FERIADOS_SET.has(date)) return; // No vacation vagas on holidays
           newVagasFerias.push({ id: genId('vf'), turmaId, data: date, tipo: 'ferias', ausenciaId: ausId });
         });
       }
@@ -883,6 +899,7 @@ function normalizeState(s) {
       var lastDay = dateToStr(new Date(ya, ma, 0));
       getClassDatesInRange(turma, firstDay, lastDay).forEach(function(date) {
         if (date < today) return; // skip past dates
+        if (FERIADOS_SET.has(date)) return; // skip holidays
         var jaExiste = afterFaltaMig.vagas.some(function(v) { return v.ausenciaId === a.id && v.data === date; });
         if (!jaExiste) {
           newVagasMig.push({ id: genId('vf'), turmaId: a.turmaId, data: date, tipo: 'ferias', ausenciaId: a.id });
@@ -962,12 +979,13 @@ function getProximasDatas(turmaId, turmas, n, horasMin) {
   const datas = [];
   const d = new Date();
   d.setHours(0, 0, 0, 0);
-  for (let i = 0; datas.length < n && i < 365; i++) {
+  for (let i = 0; datas.length < n && i < 400; i++) {
     d.setDate(d.getDate() + 1);
     if (d.getDay() === targetDay) {
+      const ds = dateToStr(d);
       const aula = new Date(d);
       aula.setHours(horaAula, 0, 0, 0);
-      if (aula >= cutoff) datas.push(dateToStr(d));
+      if (aula >= cutoff) datas.push(ds); // feriados included so UI can show them disabled
     }
   }
   return datas;
@@ -1288,24 +1306,28 @@ function TabRegistrarFalta({ state, dispatch }) {
           <label className="block text-sm font-medium text-gray-700 mb-2">Datas da falta (próximas ocorrências)</label>
           <div className="grid grid-cols-2 gap-2">
             {occurrences.map(d => {
-              const jaRegistrado = state.faltas.some(f =>
+              const feriadoNome = getFeriadoNome(d);
+              const jaRegistrado = !feriadoNome && state.faltas.some(f =>
                 f.alunoNome === alunoNome && f.turmaId === turmaId &&
                 f.datas.includes(d) && (f.status === 'pendente' || f.status === 'marcada')
               );
+              const isDisabled = !!feriadoNome || jaRegistrado;
               return (
                 <label key={d} className={`flex items-center gap-2 p-2.5 rounded-lg border transition-colors ${
+                  feriadoNome ? 'border-gray-100 bg-gray-50 cursor-not-allowed opacity-60' :
                   jaRegistrado ? 'border-gray-100 bg-gray-50 cursor-not-allowed opacity-60' :
                   selectedDates.includes(d) ? 'border-blue-500 bg-blue-50 cursor-pointer' :
                   'border-gray-200 hover:bg-gray-50 cursor-pointer'
                 }`}>
                   <input type="checkbox"
-                    checked={jaRegistrado || selectedDates.includes(d)}
-                    disabled={jaRegistrado}
-                    onChange={() => { if (!jaRegistrado) toggleDate(d); }}
+                    checked={!feriadoNome && (jaRegistrado || selectedDates.includes(d))}
+                    disabled={isDisabled}
+                    onChange={() => { if (!isDisabled) toggleDate(d); }}
                     className="rounded" />
                   <span className="text-sm">
                     {fmtBRFull(d)} <span className="text-gray-400">({ABREV[getDiaSemanaFromDateStr(d)]})</span>
-                    {jaRegistrado && <span className="ml-1 text-xs text-orange-500 font-medium">já registrado</span>}
+                    {feriadoNome && <span className="ml-1 text-xs text-purple-500 font-medium">🎌 {feriadoNome}</span>}
+                    {!feriadoNome && jaRegistrado && <span className="ml-1 text-xs text-orange-500 font-medium">já registrado</span>}
                   </span>
                 </label>
               );
@@ -3486,9 +3508,20 @@ function AlunoView({ state, dispatch, acesso }) {
                   <label className="block text-xs font-medium text-gray-600">Quais aulas você vai faltar?</label>
                   <div className="grid grid-cols-2 gap-1.5">
                     {proximasDatas.map(d => {
+                      const feriadoNome = getFeriadoNome(d);
                       const sel = selectedDates.includes(d);
-                      const jaFalta = state.faltas.some(f => f.alunoNome === alunoNome && f.turmaId === turmaId && f.datas.includes(d));
+                      const jaFalta = !feriadoNome && state.faltas.some(f => f.alunoNome === alunoNome && f.turmaId === turmaId && f.datas.includes(d));
                       if (jaFalta) return null;
+                      if (feriadoNome) {
+                        return (
+                          <label key={d} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-100 bg-gray-50 cursor-not-allowed opacity-60">
+                            <input type="checkbox" checked={false} disabled className="accent-amber-500 w-4 h-4 shrink-0" />
+                            <span className="text-sm text-gray-500">
+                              {fmtBR(d).slice(0,5)} <span className="text-xs text-purple-500">🎌 {feriadoNome}</span>
+                            </span>
+                          </label>
+                        );
+                      }
                       return (
                         <label key={d} className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${sel ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:bg-gray-50'}`}>
                           <input type="checkbox" checked={sel} onChange={() => toggleDate(d)} className="accent-amber-500 w-4 h-4 shrink-0" />
