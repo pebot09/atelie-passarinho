@@ -1631,7 +1631,14 @@ function TabCancelarReposicao({ state, dispatch }) {
   const [success, setSuccess] = useState('');
   const td = todayStr();
 
-  const futuras = useMemo(() => state.reposicoes.filter(r => !r.realizada && r.dataReposicao >= td).sort((a,b) => a.dataReposicao.localeCompare(b.dataReposicao)), [state.reposicoes, td]);
+  const futuras = useMemo(() => state.reposicoes
+    .filter(r => !r.realizada && r.dataReposicao >= td)
+    .sort((a,b) => {
+      if (a.dataReposicao !== b.dataReposicao) return a.dataReposicao.localeCompare(b.dataReposicao);
+      const ta = state.turmas.find(t => t.id === a.turmaReposicaoId);
+      const tb = state.turmas.find(t => t.id === b.turmaReposicaoId);
+      return (ta?.horario || '').localeCompare(tb?.horario || '');
+    }), [state.reposicoes, state.turmas, td]);
   const repo = futuras.find(r => r.id === selectedId);
 
   const handleCancel = () => {
@@ -2020,7 +2027,12 @@ function generatePainelText(state) {
   // ---- REPOSIÇÕES ----
   const reposAtivas = state.reposicoes
     .filter(r => !r.realizada)
-    .sort((a,b) => a.dataReposicao.localeCompare(b.dataReposicao));
+    .sort((a,b) => {
+      if (a.dataReposicao !== b.dataReposicao) return a.dataReposicao.localeCompare(b.dataReposicao);
+      const ta = state.turmas.find(t => t.id === a.turmaReposicaoId);
+      const tb = state.turmas.find(t => t.id === b.turmaReposicaoId);
+      return (ta?.horario || '').localeCompare(tb?.horario || '');
+    });
 
   let reposText = '*REPOSIÇÕES*\n';
   if (reposAtivas.length) {
@@ -2260,7 +2272,12 @@ function PainelVisual({ state, dispatch }) {
   // --- REPOSIÇÕES ---
   const reposAtivas = state.reposicoes
     .filter(r => !r.realizada)
-    .sort((a,b) => a.dataReposicao.localeCompare(b.dataReposicao));
+    .sort((a,b) => {
+      if (a.dataReposicao !== b.dataReposicao) return a.dataReposicao.localeCompare(b.dataReposicao);
+      const ta = state.turmas.find(t => t.id === a.turmaReposicaoId);
+      const tb = state.turmas.find(t => t.id === b.turmaReposicaoId);
+      return (ta?.horario || '').localeCompare(tb?.horario || '');
+    });
 
   // --- VAGAS (com alunos vinculados) ---
   const vagasGrupos = (() => {
