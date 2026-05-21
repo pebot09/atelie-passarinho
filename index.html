@@ -342,11 +342,13 @@ function reducer(state, action) {
     }
 
     case 'ADD_ALUNO': {
-      next = { ...state, turmas: state.turmas.map(t => {
+      const newTurmasAdd = state.turmas.map(t => {
         if (t.id !== action.turmaId) return t;
         if (t.alunos.includes(action.nome)) return t;
         return {...t, alunos: [...t.alunos, action.nome]};
-      })};
+      });
+      const td_add = todayStr();
+      next = { ...state, turmas: newTurmasAdd, vagas: computeVagasExtras(newTurmasAdd, state.faltas, state.reposicoes, state.vagas, td_add) };
       if (!state.turmas.find(t => t.id === action.turmaId)?.alunos.includes(action.nome)) {
         const tLbl = getTurmaLabel(state.turmas, action.turmaId);
         next.log = addLog(state.log, action.professor, `Adicionou ${action.nome} à turma ${tLbl}`);
@@ -355,10 +357,12 @@ function reducer(state, action) {
     }
 
     case 'REMOVE_ALUNO': {
-      next = { ...state, turmas: state.turmas.map(t => {
+      const newTurmasRem = state.turmas.map(t => {
         if (t.id !== action.turmaId) return t;
         return {...t, alunos: t.alunos.filter(a => a !== action.nome)};
-      })};
+      });
+      const td_rem = todayStr();
+      next = { ...state, turmas: newTurmasRem, vagas: computeVagasExtras(newTurmasRem, state.faltas, state.reposicoes, state.vagas, td_rem) };
       {
         const tLbl = getTurmaLabel(state.turmas, action.turmaId);
         next.log = addLog(state.log, action.professor, `Removeu ${action.nome} da turma ${tLbl}`);
