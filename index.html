@@ -198,7 +198,8 @@ function getClassDatetime(turmaId, date, turmas) {
   return dt;
 }
 
-function computeVagasExtras(turmas, faltas, reposicoes, vagasBase, td) {
+function computeVagasExtras(turmas, faltas, reposicoes, vagasBase, td, ausencias) {
+  ausencias = ausencias || [];
   const now = new Date();
   const endDateStr = (() => { const e = new Date(); e.setDate(e.getDate()+60); return dateToStr(e); })();
   let vagas = [...vagasBase];
@@ -209,15 +210,22 @@ function computeVagasExtras(turmas, faltas, reposicoes, vagasBase, td) {
       const dayBefore = new Date(date + 'T10:00:00');
       dayBefore.setDate(dayBefore.getDate() - 1);
       if (now < dayBefore) return;
+      // Subtract students on vacation this month from expected attendance
+      const mesAno = date.slice(0, 7);
+      const vacCount = ausencias.filter(a =>
+        a.turmaId === turma.id && a.mesAno === mesAno && turma.alunos.includes(a.alunoNome)
+      ).length;
+      const alunosEfetivos = turma.alunos.length - vacCount;
+      if (alunosEfetivos <= 0) return;
       const faltasCount = faltas.filter(f =>
         f.turmaId === turma.id && f.datas.includes(date) &&
         (f.status === 'pendente' || f.status === 'marcada')
       ).length;
-      if (faltasCount >= turma.alunos.length) return;
+      if (faltasCount >= alunosEfetivos) return;
       const totalRepos = reposicoes.filter(r =>
         r.turmaReposicaoId === turma.id && r.dataReposicao === date && !r.realizada
       ).length;
-      const target = Math.max(0, 8 - turma.alunos.length + faltasCount - totalRepos);
+      const target = Math.max(0, 8 - alunosEfetivos + faltasCount - totalRepos);
       const existingExtras = vagas.filter(v => v.vagaExtra && v.turmaId === turma.id && v.data === date);
       const diff = target - existingExtras.length;
       if (diff > 0) {
@@ -298,6 +306,11 @@ function sortTurmas(turmas) {
 function calcOccupancy(turmaId, date, state) {
   const turma = state.turmas.find(t => t.id === turmaId);
   if (!turma) return 0;
+  const mesAno = date.slice(0, 7);
+  const vacCount = arr(state.ausencias).filter(a =>
+    a.turmaId === turmaId && a.mesAno === mesAno && turma.alunos.includes(a.alunoNome)
+  ).length;
+  const alunosEfetivos = turma.alunos.length - vacCount;
   const faltasOnDate = state.faltas.filter(f =>
     f.turmaId === turmaId && f.datas.includes(date) &&
     (f.status === 'pendente' || f.status === 'marcada')
@@ -305,7 +318,7 @@ function calcOccupancy(turmaId, date, state) {
   const repos = state.reposicoes.filter(r =>
     r.turmaReposicaoId === turmaId && r.dataReposicao === date && !r.realizada
   ).length;
-  return turma.alunos.length - faltasOnDate + repos;
+  return alunosEfetivos - faltasOnDate + repos;
 }
 
 // ==================== REDUCER ====================
@@ -348,7 +361,7 @@ function reducer(state, action) {
         return {...t, alunos: [...t.alunos, action.nome]};
       });
       const td_add = todayStr();
-      next = { ...state, turmas: newTurmasAdd, vagas: computeVagasExtras(newTurmasAdd, state.faltas, state.reposicoes, state.vagas, td_add) };
+      next = { ...state, turmas: newTurmasAdd, vagas: computeVagasExtras(newTurmasAdd, state.faltas, state.reposicoes, state.vagas, td_add, state.ausencias) };
       if (!state.turmas.find(t => t.id === action.turmaId)?.alunos.includes(action.nome)) {
         const tLbl = getTurmaLabel(state.turmas, action.turmaId);
         next.log = addLog(state.log, action.professor, `Adicionou ${action.nome} à turma ${tLbl}`);
@@ -362,7 +375,7 @@ function reducer(state, action) {
         return {...t, alunos: t.alunos.filter(a => a !== action.nome)};
       });
       const td_rem = todayStr();
-      next = { ...state, turmas: newTurmasRem, vagas: computeVagasExtras(newTurmasRem, state.faltas, state.reposicoes, state.vagas, td_rem) };
+      next = { ...state, turmas: newTurmasRem, vagas: computeVagasExtras(newTurmasRem, state.faltas, state.reposicoes, state.vagas, td_rem, state.ausencias) };
       {
         const tLbl = getTurmaLabel(state.turmas, action.turmaId);
         next.log = addLog(state.log, action.professor, `Removeu ${action.nome} da turma ${tLbl}`);
@@ -412,8 +425,31 @@ function reducer(state, action) {
       const semVagaOficial = action.semVagaOficial || false;
       const vagaConsumed = action.vagaSelId ? state.vagas.find(v => v.id === action.vagaSelId) : null;
       const vagaConsumedFaltaId = vagaConsumed?.faltaId || null;
+      const vagaConsumedAusenciaId = vagaConsumed?.ausenciaId || null;
       const isVagaExtra = !!(vagaConsumed?.vagaExtra);
       const removeVagaSel = vs => action.vagaSelId ? vs.filter(v => v.id !== action.vagaSelId) : vs;
+
+      // Handle booking with vacation credit
+      if (action.ausenciaId) {
+        next = {
+          ...state,
+          ausencias: state.ausencias.map(a => a.id === action.ausenciaId ? {...a, creditoUsado: true} : a),
+          reposicoes: [...state.reposicoes, {
+            id: repoId, alunoNome,
+            turmaOrigemId: action.turmaOrigemId,
+            faltaId: null, ausenciaId: action.ausenciaId,
+            vagaConsumedAusenciaId,
+            dataReposicao, turmaReposicaoId,
+            tipo: 'reposicao_ferias', realizada: false, semVagaOficial,
+            vagaConsumedFaltaId, vagaExtra: isVagaExtra
+          }],
+          vagas: removeVagaSel(state.vagas)
+        };
+        const tOLbl = getTurmaLabel(state.turmas, action.turmaOrigemId);
+        const tRLbl = getTurmaLabel(state.turmas, turmaReposicaoId);
+        next.log = addLog(state.log, action.professor, `Agendou reposição (férias) de ${alunoNome} (${tOLbl}) → ${tRLbl}, ${fmtBRFull(dataReposicao)}`);
+        break;
+      }
 
       if (tipo === 'aula_extra') {
         const turmaOrigem = state.turmas.find(t => t.alunos.includes(alunoNome));
@@ -492,6 +528,34 @@ function reducer(state, action) {
       const repo = state.reposicoes.find(r => r.id === action.id);
       if (!repo) return state;
 
+      // Special case: vacation-credit reposicao
+      if (repo.tipo === 'reposicao_ferias') {
+        const remainingRepos = state.reposicoes.filter(r => r.id !== repo.id);
+        let newVagas = state.vagas;
+        let newAusenciasCR = state.ausencias;
+        // Restore vacation credit
+        if (repo.ausenciaId) {
+          newAusenciasCR = newAusenciasCR.map(a => a.id === repo.ausenciaId ? {...a, creditoUsado: false} : a);
+        }
+        // Recreate the consumed vacation vaga so others can still book it
+        if (repo.vagaConsumedAusenciaId) {
+          const jaExiste = newVagas.some(v => v.ausenciaId === repo.vagaConsumedAusenciaId && v.turmaId === repo.turmaReposicaoId && v.data === repo.dataReposicao);
+          if (!jaExiste) {
+            newVagas = [...newVagas, { id: genId('vf'), turmaId: repo.turmaReposicaoId, data: repo.dataReposicao, tipo: 'ferias', ausenciaId: repo.vagaConsumedAusenciaId }];
+          }
+        } else if (repo.vagaConsumedFaltaId) {
+          // consumed a regular falta vaga
+          const jaExiste = newVagas.some(v => v.turmaId === repo.turmaReposicaoId && v.data === repo.dataReposicao && v.faltaId === repo.vagaConsumedFaltaId);
+          if (!jaExiste) {
+            newVagas = [...newVagas, { id: genId('v'), turmaId: repo.turmaReposicaoId, data: repo.dataReposicao, faltaId: repo.vagaConsumedFaltaId }];
+          }
+        }
+        next = { ...state, vagas: newVagas, reposicoes: remainingRepos, ausencias: newAusenciasCR };
+        const tLblCR = getTurmaLabel(state.turmas, repo.turmaOrigemId);
+        next.log = addLog(state.log, action.professor, `Cancelou reposição (férias) de ${repo.alunoNome} (${tLblCR}) — ${fmtBRFull(repo.dataReposicao)}`);
+        break;
+      }
+
       // Remaining reposições after removing the canceled one
       const remainingRepos = state.reposicoes.filter(r => r.id !== repo.id);
 
@@ -534,7 +598,6 @@ function reducer(state, action) {
 
     case 'CANCEL_REPOSICAO_SEM_CREDITO': {
       // Remove a reposição sem reverter a falta (menos de 24h).
-      // Se a reposição consumia uma vagaConsumedFaltaId, libera a vaga de volta (recria).
       const repo = state.reposicoes.find(r => r.id === action.id);
       if (!repo) return state;
       const remainingRepos = state.reposicoes.filter(r => r.id !== repo.id);
@@ -544,6 +607,13 @@ function reducer(state, action) {
         const jaExiste = newVagas.some(v => v.turmaId === repo.turmaReposicaoId && v.data === repo.dataReposicao && v.faltaId === repo.vagaConsumedFaltaId);
         if (!jaExiste) {
           newVagas = [...newVagas, { id: genId('v'), turmaId: repo.turmaReposicaoId, data: repo.dataReposicao, faltaId: repo.vagaConsumedFaltaId }];
+        }
+      }
+      // Se havia uma vaga de férias consumida, recria para outros poderem usar
+      if (repo.vagaConsumedAusenciaId) {
+        const jaExiste = newVagas.some(v => v.ausenciaId === repo.vagaConsumedAusenciaId && v.turmaId === repo.turmaReposicaoId && v.data === repo.dataReposicao);
+        if (!jaExiste) {
+          newVagas = [...newVagas, { id: genId('vf'), turmaId: repo.turmaReposicaoId, data: repo.dataReposicao, tipo: 'ferias', ausenciaId: repo.vagaConsumedAusenciaId }];
         }
       }
       next = { ...state, reposicoes: remainingRepos, vagas: newVagas };
@@ -591,11 +661,35 @@ function reducer(state, action) {
 
     case 'ADD_AUSENCIA': {
       const { alunoNome, turmaId, tipo, mesAno } = action;
+      // Prevent duplicate ausencia for same student+turma+month
+      if (state.ausencias.some(a => a.alunoNome === alunoNome && a.turmaId === turmaId && a.mesAno === mesAno)) {
+        next = state; break;
+      }
+      // Rule: once per calendar year (unless professor override)
+      const anoFerias = mesAno.slice(0, 4);
+      if (!action.professorOverride && state.ausencias.some(a => a.alunoNome === alunoNome && a.turmaId === turmaId && a.mesAno.slice(0, 4) === anoFerias)) {
+        next = state; break;
+      }
+      // Rule: December (12) and January (1) are school vacation — no reposição credit
+      const mesNum = parseInt(mesAno.split('-')[1]);
+      const isMesEscolar = mesNum === 12 || mesNum === 1;
       const ausId = genId('aus');
-      next = {
-        ...state,
-        ausencias: [...state.ausencias, { id: ausId, alunoNome, turmaId, tipo, mesAno, creditoReposicao:1, creditoUsado:false }]
-      };
+      const newAusencia = { id: ausId, alunoNome, turmaId, tipo, mesAno, creditoReposicao: isMesEscolar ? 0 : 1, creditoUsado: isMesEscolar };
+      const newAusencias = [...state.ausencias, newAusencia];
+      // Create one vaga per class date in the vacation month (so others can book the freed slot)
+      const turmaAus = state.turmas.find(t => t.id === turmaId);
+      let newVagasFerias = [];
+      if (turmaAus) {
+        const [y, m] = mesAno.split('-').map(Number);
+        const firstDay = mesAno + '-01';
+        const lastDay = dateToStr(new Date(y, m, 0));
+        getClassDatesInRange(turmaAus, firstDay, lastDay).forEach(date => {
+          newVagasFerias.push({ id: genId('vf'), turmaId, data: date, tipo: 'ferias', ausenciaId: ausId });
+        });
+      }
+      const td_aus = todayStr();
+      const vagasComExtras = computeVagasExtras(state.turmas, state.faltas, state.reposicoes, [...state.vagas, ...newVagasFerias], td_aus, newAusencias);
+      next = { ...state, ausencias: newAusencias, vagas: vagasComExtras };
       {
         const tLbl = getTurmaLabel(state.turmas, turmaId);
         next.log = addLog(state.log, action.professor, `Registrou férias de ${alunoNome} (${tLbl}) — ${getMesNome(mesAno).toLowerCase()}`);
@@ -610,7 +704,12 @@ function reducer(state, action) {
 
     case 'DELETE_AUSENCIA': {
       const ausDel = state.ausencias.find(a => a.id === action.id);
-      next = { ...state, ausencias: state.ausencias.filter(a => a.id !== action.id) };
+      const newAusenciasDel = state.ausencias.filter(a => a.id !== action.id);
+      // Remove vacation vagas tied to this ausencia (future ones only)
+      const vagasSemAus = state.vagas.filter(v => v.ausenciaId !== action.id);
+      const td_del = todayStr();
+      const vagasComExtrasDel = computeVagasExtras(state.turmas, state.faltas, state.reposicoes, vagasSemAus, td_del, newAusenciasDel);
+      next = { ...state, ausencias: newAusenciasDel, vagas: vagasComExtrasDel };
       if (ausDel) {
         const tLbl = getTurmaLabel(state.turmas, ausDel.turmaId);
         next.log = addLog(state.log, action.professor, `Removeu férias de ${ausDel.alunoNome} (${tLbl}) — ${getMesNome(ausDel.mesAno).toLowerCase()}`);
@@ -674,7 +773,7 @@ function reducer(state, action) {
         ...(state.estatisticas || {}),
         faltasExpiradas: [...arr((state.estatisticas || {}).faltasExpiradas), ...newExpStats]
       };
-      const vagasComExtras = computeVagasExtras(state.turmas, state.faltas, reposicoes, vagas, td);
+      const vagasComExtras = computeVagasExtras(state.turmas, state.faltas, reposicoes, vagas, td, state.ausencias);
       next = { ...state, vagas: vagasComExtras, reposicoes, faltas: activeFaltas, estatisticas };
       break;
     }
@@ -703,7 +802,7 @@ function reducer(state, action) {
         !(f.status === 'marcada' && f.reposicaoId && realizadasIdsSynced.has(f.reposicaoId))
       );
       const vagasFiltradas = inc.vagas.filter(v => v.data >= td);
-      const vagasComExtras = computeVagasExtras(inc.turmas, cleanFaltas, reposSynced, vagasFiltradas, td);
+      const vagasComExtras = computeVagasExtras(inc.turmas, cleanFaltas, reposSynced, vagasFiltradas, td, inc.ausencias);
       next = {
         ...inc,
         faltas:     cleanFaltas,
@@ -769,7 +868,32 @@ function normalizeState(s) {
     acessos:    arr(s.acessos),
     estatisticas: { faltasExpiradas: arr((s.estatisticas || {}).faltasExpiradas) },
   };
-  return migrateFaltas(base);
+  var afterFaltaMig = migrateFaltas(base);
+  // Migration: create vacation vagas for existing ausencias that don't have them yet
+  var hasAusenciaVagas = afterFaltaMig.vagas.some(function(v) { return !!v.ausenciaId; });
+  if (!hasAusenciaVagas && afterFaltaMig.ausencias.length > 0) {
+    var today = todayStr();
+    var newVagasMig = [];
+    afterFaltaMig.ausencias.forEach(function(a) {
+      var turma = afterFaltaMig.turmas.find(function(t) { return t.id === a.turmaId; });
+      if (!turma) return;
+      var ya = parseInt(a.mesAno.split('-')[0]);
+      var ma = parseInt(a.mesAno.split('-')[1]);
+      var firstDay = a.mesAno + '-01';
+      var lastDay = dateToStr(new Date(ya, ma, 0));
+      getClassDatesInRange(turma, firstDay, lastDay).forEach(function(date) {
+        if (date < today) return; // skip past dates
+        var jaExiste = afterFaltaMig.vagas.some(function(v) { return v.ausenciaId === a.id && v.data === date; });
+        if (!jaExiste) {
+          newVagasMig.push({ id: genId('vf'), turmaId: a.turmaId, data: date, tipo: 'ferias', ausenciaId: a.id });
+        }
+      });
+    });
+    if (newVagasMig.length > 0) {
+      afterFaltaMig = { ...afterFaltaMig, vagas: [...afterFaltaMig.vagas, ...newVagasMig] };
+    }
+  }
+  return afterFaltaMig;
 }
 
 function loadState() {
@@ -1546,7 +1670,8 @@ function TabAusenciaProgramada({ state, dispatch }) {
       <h3 className="font-semibold text-gray-700">Ausência Programada (Férias)</h3>
 
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
-        Aluno em férias recebe <strong>1 crédito de reposição</strong>, independente de quantas aulas perdeu. O prazo começa no último dia do mês de ausência.
+        Aluno em férias recebe <strong>1 crédito de reposição</strong> e libera vagas nas suas aulas do mês. O prazo expira 30 dias após o último dia do mês.
+        <div className="mt-1 text-blue-600 text-xs">Dezembro e janeiro (recesso) não geram crédito, mas ainda liberam vagas.</div>
       </div>
 
       <div>
@@ -1600,16 +1725,25 @@ function TabAusenciaProgramada({ state, dispatch }) {
         <div className="mt-4 border-t border-gray-200 pt-4">
           <h4 className="text-sm font-semibold text-gray-600 mb-2">Ausências registradas</h4>
           <div className="space-y-2">
-            {state.ausencias.map(a => (
-              <div key={a.id} className="flex justify-between items-center bg-gray-50 rounded-lg p-3 text-sm">
-                <div>
-                  <span className="font-medium">{a.alunoNome}</span>
-                  <span className="text-gray-400 ml-2">({getTurmaLabel(state.turmas, a.turmaId)})</span>
-                  <div className="text-gray-500">Férias: {getMesNome(a.mesAno)} — Crédito: {a.creditoUsado ? <span className="text-green-600">usado</span> : <span className="text-amber-600">disponível</span>}</div>
+            {state.ausencias.map(a => {
+              const vagasFerias = state.vagas.filter(v => v.ausenciaId === a.id);
+              const vagasFut = vagasFerias.filter(v => v.data >= todayStr());
+              return (
+              <div key={a.id} className="bg-gray-50 rounded-lg p-3 text-sm">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <span className="font-medium">{a.alunoNome}</span>
+                    <span className="text-gray-400 ml-2">({getTurmaLabel(state.turmas, a.turmaId)})</span>
+                    <div className="text-gray-500 mt-0.5">Férias: {getMesNome(a.mesAno)} — Crédito: {a.creditoUsado ? <span className="text-green-600">usado</span> : <span className="text-amber-600">disponível</span>}</div>
+                    {vagasFut.length > 0 && (
+                      <div className="text-xs text-teal-600 mt-0.5">{vagasFut.length} vaga{vagasFut.length>1?'s':''} abertas: {vagasFut.map(v => fmtBR(v.data)).join(', ')}</div>
+                    )}
+                  </div>
+                  <button onClick={() => dispatch({type:'DELETE_AUSENCIA', id: a.id})} className="text-red-400 hover:text-red-600 text-xs ml-2 shrink-0">Remover</button>
                 </div>
-                <button onClick={() => dispatch({type:'DELETE_AUSENCIA', id: a.id})} className="text-red-400 hover:text-red-600 text-xs">Remover</button>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -2203,9 +2337,11 @@ function PainelVisual({ state, dispatch }) {
       const tRepo   = state.turmas.find(x => x.id === r.turmaReposicaoId);
       const dia     = getDiaSemanaFromDateStr(r.dataReposicao);
       const isExtra = r.tipo === 'aula_extra';
+      const isFerias = r.tipo === 'reposicao_ferias';
       const faltaVinc = r.faltaId ? state.faltas.find(f => f.id === r.faltaId) : null;
       const faltaLiberou = r.vagaConsumedFaltaId ? state.faltas.find(f => f.id === r.vagaConsumedFaltaId) : null;
       const tLiberou = faltaLiberou ? state.turmas.find(x => x.id === faltaLiberou.turmaId) : null;
+      const ausVinc = isFerias && r.ausenciaId ? state.ausencias.find(a => a.id === r.ausenciaId) : null;
       title = `${r.alunoNome}`;
       body = (
         <div className="space-y-2 text-sm">
@@ -2223,6 +2359,12 @@ function PainelVisual({ state, dispatch }) {
             <div className="text-blue-600 text-xs mb-0.5">{isExtra ? 'Aula extra em' : 'Repõe em'}</div>
             <div className="font-bold text-gray-900">{EXTENSO[dia]}, {fmtBRFull(r.dataReposicao)}, {tRepo?.horario || '?'}</div>
           </div>
+          {ausVinc && (
+            <div className="bg-teal-50 border border-teal-200 rounded-lg px-3 py-2">
+              <div className="text-teal-600 text-xs mb-0.5">🏖️ Crédito de férias</div>
+              <div className="font-semibold text-gray-800">Férias de {getMesNome(ausVinc.mesAno)}</div>
+            </div>
+          )}
           {faltaVinc && (
             <div className="bg-gray-50 rounded-lg px-3 py-2">
               <div className="text-gray-400 text-xs">Falta vinculada</div>
@@ -2235,7 +2377,7 @@ function PainelVisual({ state, dispatch }) {
               <div className="font-semibold text-gray-800">{faltaLiberou.alunoNome} ({tLiberou ? `${ABREV[tLiberou.diaSemana]} ${tLiberou.horario}` : '?'})</div>
               <div className="text-gray-500 text-xs mt-0.5">Falta de {fmtBRFull(faltaLiberou.datas[0])}</div>
             </div>
-          ) : (
+          ) : !isFerias && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
               <div className="text-amber-700 text-xs font-medium">
                 {isExtra ? 'Aula extra — sem vaga vinculada' : 'Data extra — nenhuma falta liberou esta vaga'}
@@ -2243,6 +2385,9 @@ function PainelVisual({ state, dispatch }) {
             </div>
           )}
           <div className="flex items-center gap-2 flex-wrap">
+            {isFerias && (
+              <span className="bg-teal-100 text-teal-700 text-xs font-medium px-2 py-0.5 rounded-full">🏖️ Reposição de férias</span>
+            )}
             {isExtra && (
               <span className="bg-purple-100 text-purple-700 text-xs font-medium px-2 py-0.5 rounded-full">Aula extra</span>
             )}
@@ -2264,9 +2409,16 @@ function PainelVisual({ state, dispatch }) {
       const v = obj;
       const t = state.turmas.find(x => x.id === v.turmaId);
       const dia = getDiaSemanaFromDateStr(v.data);
-      const alunos = v.vagas.map(vg => {
-        const f = state.faltas.find(f => f.id === vg.faltaId);
-        return f ? f.alunoNome : null;
+      const origens = v.vagas.map(vg => {
+        if (vg.ausenciaId) {
+          const aus = state.ausencias.find(a => a.id === vg.ausenciaId);
+          return aus ? `${aus.alunoNome} (férias)` : null;
+        }
+        if (vg.faltaId) {
+          const f = state.faltas.find(f => f.id === vg.faltaId);
+          return f ? f.alunoNome : null;
+        }
+        return vg.vagaExtra ? 'vaga extra' : null;
       }).filter(Boolean);
       title = `Vagas — ${t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?'}`;
       body = (
@@ -2277,9 +2429,9 @@ function PainelVisual({ state, dispatch }) {
           </div>
           <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
             <div className="text-blue-600 text-xs mb-1">{v.count} vaga{v.count > 1 ? 's' : ''} gerada{v.count > 1 ? 's' : ''} por</div>
-            {alunos.map((a, i) => (
+            {origens.length ? origens.map((a, i) => (
               <div key={i} className="font-semibold text-gray-800">· {a}</div>
-            ))}
+            )) : <div className="text-gray-400 text-xs italic">vaga extra</div>}
           </div>
         </div>
       );
@@ -2382,6 +2534,7 @@ function PainelVisual({ state, dispatch }) {
                 const dia     = getDiaSemanaFromDateStr(r.dataReposicao);
                 const origemLbl = tOrigem ? `${ABREV[tOrigem.diaSemana]} ${tOrigem.horario}` : '?';
                 const isExtra   = r.tipo === 'aula_extra';
+                const isFerias  = r.tipo === 'reposicao_ferias';
                 const semFalta  = r.semFaltaVinculada;
                 const occupancyNum = calcOccupancy(r.turmaReposicaoId, r.dataReposicao, state);
                 return (
@@ -2402,6 +2555,11 @@ function PainelVisual({ state, dispatch }) {
                       {(r.vagaExtra || r.semVagaOficial) && (
                         <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-teal-100 text-teal-700">
                           vaga extra
+                        </span>
+                      )}
+                      {isFerias && (
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-teal-100 text-teal-700">
+                          🏖️ crédito de férias
                         </span>
                       )}
                       {(isExtra || semFalta) && (
@@ -3024,11 +3182,44 @@ function AlunoView({ state, dispatch, acesso }) {
   const alunoDispatch = (action) => dispatch({ ...action, professor: alunoNome });
 
   // Accordion state
-  const [open, setOpen] = useState({ falta: false, reposicao: false, minhas: false });
+  const [open, setOpen] = useState({ falta: false, reposicao: false, minhas: false, ferias: false });
   const toggle = (key) => setOpen(o => ({ ...o, [key]: !o[key] }));
 
   // Regras modal
   const [showRegras, setShowRegras] = useState(false);
+
+  // Férias
+  const ausenciasAtivas = useMemo(() =>
+    state.ausencias.filter(a => a.turmaId === turmaId && a.alunoNome === alunoNome),
+    [state.ausencias, alunoNome, turmaId]);
+  const ausenciaCredito = ausenciasAtivas.find(a => !a.creditoUsado && a.creditoReposicao > 0) || null;
+  const [mesFerias, setMesFerias] = useState('');
+  const [successFerias, setSuccessFerias] = useState('');
+  const [confirmFeriasRepo, setConfirmFeriasRepo] = useState(null); // vaga para usar crédito férias
+
+  // Available months for férias: current + next 5, max 1 per calendar year
+  const mesesDisponiveisFerias = useMemo(() => {
+    const meses = [];
+    const now = new Date();
+    for (let i = 0; i <= 5; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const mesAno = dateToStr(d).slice(0, 7);
+      const ano = mesAno.slice(0, 4);
+      const jaTemEsteAno = ausenciasAtivas.some(a => a.mesAno.slice(0, 4) === ano);
+      const jaTemEsteMes = ausenciasAtivas.some(a => a.mesAno === mesAno);
+      if (!jaTemEsteAno && !jaTemEsteMes) meses.push(mesAno);
+    }
+    return meses;
+  }, [ausenciasAtivas]);
+
+  const handleRegistrarFerias = () => {
+    if (!mesFerias) return;
+    alunoDispatch({ type: 'ADD_AUSENCIA', alunoNome, turmaId, tipo: 'ferias', mesAno: mesFerias });
+    setMesFerias('');
+    setSuccessFerias('Férias registradas! Uma vaga será liberada por aula faltada.');
+    setOpen(o => ({ ...o, ferias: false }));
+    setTimeout(() => setSuccessFerias(''), 5000);
+  };
 
   // Registrar falta
   const proximasDatas = useMemo(() => getProximasDatas(turmaId, state.turmas, 8, 24), [turmaId, state.turmas]);
@@ -3260,6 +3451,20 @@ function AlunoView({ state, dispatch, acesso }) {
           </div>
         )}
 
+        {/* Crédito de férias disponível */}
+        {ausenciaCredito && (
+          <div className="bg-teal-50 border border-teal-200 rounded-xl px-4 py-3 flex items-start gap-3">
+            <div className="text-xl shrink-0">🏖️</div>
+            <div className="min-w-0">
+              <div className="font-semibold text-teal-800 text-sm">Você tem 1 crédito de reposição de férias</div>
+              <div className="text-xs text-teal-700 mt-0.5">
+                Férias de {getMesNome(ausenciaCredito.mesAno)} — expira em {fmtBRFull(getAusenciaExpiry(ausenciaCredito))}
+              </div>
+              <div className="text-xs text-teal-600 mt-1">Abra "Marcar reposição" abaixo para usá-lo.</div>
+            </div>
+          </div>
+        )}
+
         {/* Registrar falta */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <button onClick={() => toggle('falta')} className="w-full px-4 py-3 flex items-center justify-between text-left">
@@ -3312,7 +3517,7 @@ function AlunoView({ state, dispatch, acesso }) {
             const h = (dt - Date.now()) / 3600000;
             return h >= 0 && h <= 2;
           });
-          const cardTitle = (hasPending || (pendingSemAnt.length > 0 && someWithin2h))
+          const cardTitle = (hasPending || (pendingSemAnt.length > 0 && someWithin2h) || !!ausenciaCredito)
             ? 'Marcar reposição' : 'Marcar aula extra';
           const cardIcon = cardTitle === 'Marcar reposição' ? '✅' : '➕';
           return (
@@ -3322,13 +3527,20 @@ function AlunoView({ state, dispatch, acesso }) {
                   <div className="text-xl">{cardIcon}</div>
                   <div>
                     <div className="font-semibold text-gray-800 text-sm">{cardTitle}</div>
-                    <div className="text-xs text-gray-500">Escolha uma vaga disponível</div>
+                    <div className="text-xs text-gray-500">
+                      {ausenciaCredito && !hasPending ? 'Usando crédito de férias' : 'Escolha uma vaga disponível'}
+                    </div>
                   </div>
                 </div>
                 <div className="text-gray-400 text-sm">{open.reposicao ? '‹' : '›'}</div>
               </button>
               {open.reposicao && (
                 <div className="border-t border-gray-100">
+                  {ausenciaCredito && !hasPending && (
+                    <div className="px-4 py-2 bg-teal-50 border-b border-teal-100 text-xs text-teal-700 font-medium">
+                      🎫 Crédito de férias disponível — escolha qualquer vaga abaixo para sua reposição
+                    </div>
+                  )}
                   {vagasFuturas.length === 0 ? (
                     <p className="px-4 py-3 text-sm text-gray-400 italic">Nenhuma vaga disponível no momento.</p>
                   ) : (
@@ -3341,39 +3553,51 @@ function AlunoView({ state, dispatch, acesso }) {
                         const dt = getClassDatetime(v.turmaId, v.data, state.turmas);
                         const horasAte = dt ? (dt - Date.now()) / 3600000 : null;
                         const within2h = horasAte !== null && horasAte >= 0 && horasAte <= 2;
-                        // Eligible faltas for this vaga
                         const allPending = [...pendingNormal, ...pendingSemAnt].sort((a,b) => a.datas[0].localeCompare(b.datas[0]));
                         const eligibleFaltas = within2h ? allPending : pendingNormal;
                         const canRepor = eligibleFaltas.length > 0;
-                        // Need choice modal: within2h, has both types, normal is older than oldest semAnt
+                        const canUseFerias = !canRepor && !!ausenciaCredito;
                         const needsChoice = within2h && pendingNormal.length > 0 && pendingSemAnt.length > 0
                           && pendingNormal[0].datas[0] < pendingSemAnt[0].datas[0];
+                        const isMyFeriasVaga = v.ausenciaId && ausenciasAtivas.some(a => a.id === v.ausenciaId);
                         const handleClick = () => {
                           if (jaOcupada) return;
-                          if (!canRepor) { setConfirmAulaExtra(v); return; }
-                          if (needsChoice) {
-                            setConfirmEscolhaFalta({ vaga: v, opcoes: [pendingNormal[0], pendingSemAnt[0]] });
-                            return;
+                          if (canRepor) {
+                            if (needsChoice) {
+                              setConfirmEscolhaFalta({ vaga: v, opcoes: [pendingNormal[0], pendingSemAnt[0]] });
+                              return;
+                            }
+                            const faltaId = eligibleFaltas[0].id;
+                            alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: v.data, turmaReposicaoId: v.turmaId, tipo: 'reposicao', semVagaOficial: false, vagaSelId: v.id, faltaId });
+                            setSuccessRepo('Reposição marcada com sucesso!');
+                            setOpen(o => ({ ...o, reposicao: false }));
+                            setTimeout(() => setSuccessRepo(''), 4000);
+                          } else if (canUseFerias) {
+                            setConfirmFeriasRepo(v);
+                          } else {
+                            setConfirmAulaExtra(v);
                           }
-                          const faltaId = eligibleFaltas[0].id;
-                          alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: v.data, turmaReposicaoId: v.turmaId, tipo: 'reposicao', semVagaOficial: false, vagaSelId: v.id, faltaId });
-                          setSuccessRepo('Reposição marcada com sucesso!');
-                          setOpen(o => ({ ...o, reposicao: false }));
-                          setTimeout(() => setSuccessRepo(''), 4000);
                         };
                         return (
-                          <div key={v.id} className="px-4 py-3 flex items-center justify-between gap-3">
+                          <div key={v.id} className={`px-4 py-3 flex items-center justify-between gap-3 ${isMyFeriasVaga && canUseFerias ? 'bg-teal-50/50' : ''}`}>
                             <div>
                               <div className="font-medium text-gray-800 text-sm">{fmtBRFull(v.data)}</div>
-                              <div className="text-xs text-gray-500">{tV ? `${ABREV[tV.diaSemana]} ${tV.horario}` : '?'}</div>
+                              <div className="text-xs text-gray-500">
+                                {tV ? `${ABREV[tV.diaSemana]} ${tV.horario}` : '?'}
+                                {isMyFeriasVaga && <span className="ml-1 text-teal-600">· vaga das suas férias</span>}
+                              </div>
                               {jaOcupada && <div className="text-xs text-red-500 mt-0.5">Você já tem reposição nesse horário</div>}
-                              {!jaOcupada && !canRepor && pendingSemAnt.length > 0 && !within2h && (
+                              {!jaOcupada && !canRepor && !canUseFerias && pendingSemAnt.length > 0 && !within2h && (
                                 <div className="text-xs text-orange-500 mt-0.5">Disponível para reposição em menos de 2h</div>
                               )}
                             </div>
                             <button onClick={handleClick} disabled={jaOcupada}
-                              className={`text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-40 shrink-0 border ${canRepor ? 'text-blue-600 border-blue-300 bg-blue-50' : 'text-green-700 border-green-300 bg-green-50'}`}>
-                              {canRepor ? 'Repor' : 'Aula extra'}
+                              className={`text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-40 shrink-0 border ${
+                                canRepor ? 'text-blue-600 border-blue-300 bg-blue-50'
+                                : canUseFerias ? 'text-teal-700 border-teal-300 bg-teal-50'
+                                : 'text-green-700 border-green-300 bg-green-50'
+                              }`}>
+                              {canRepor ? 'Repor' : canUseFerias ? 'Repor (férias)' : 'Aula extra'}
                             </button>
                           </div>
                         );
@@ -3384,6 +3608,26 @@ function AlunoView({ state, dispatch, acesso }) {
               )}
               {successRepo && <div className="px-4 pb-3"><div className="bg-green-50 text-green-700 rounded-lg px-3 py-2 text-sm font-medium">{successRepo}</div></div>}
             </div>
+          );
+        })()}
+
+        {/* Confirm usar crédito de férias */}
+        {confirmFeriasRepo && (() => {
+          const tV = state.turmas.find(t => t.id === confirmFeriasRepo.turmaId);
+          return (
+            <ConfirmModal
+              title="Usar crédito de férias?"
+              message={`Usar seu crédito de reposição de férias (${getMesNome(ausenciaCredito?.mesAno || '')}) para repor em ${fmtBRFull(confirmFeriasRepo.data)}${tV ? ` (${ABREV[tV.diaSemana]} ${tV.horario})` : ''}?`}
+              confirmLabel="Confirmar reposição"
+              onConfirm={() => {
+                alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: confirmFeriasRepo.data, turmaReposicaoId: confirmFeriasRepo.turmaId, semVagaOficial: false, vagaSelId: confirmFeriasRepo.id, ausenciaId: ausenciaCredito?.id });
+                setSuccessRepo('Reposição marcada com crédito de férias!');
+                setOpen(o => ({ ...o, reposicao: false }));
+                setConfirmFeriasRepo(null);
+                setTimeout(() => setSuccessRepo(''), 4000);
+              }}
+              onCancel={() => setConfirmFeriasRepo(null)}
+            />
           );
         })()}
 
@@ -3454,13 +3698,19 @@ function AlunoView({ state, dispatch, acesso }) {
                   {minhasRepos.map(r => {
                     const tRepo = state.turmas.find(t => t.id === r.turmaReposicaoId);
                     const faltaVinc = r.faltaId ? state.faltas.find(f => f.id === r.faltaId) : null;
+                    const ausVinc = r.ausenciaId ? state.ausencias.find(a => a.id === r.ausenciaId) : null;
                     const menos24h = isLessThan24h(r);
+                    const isFerias = r.tipo === 'reposicao_ferias';
                     return (
                       <div key={r.id} className="px-4 py-3 flex items-center justify-between gap-3">
                         <div>
                           <div className="font-medium text-gray-800 text-sm">{EXTENSO[getDiaSemanaFromDateStr(r.dataReposicao)]}, {fmtBRFull(r.dataReposicao)}</div>
-                          <div className="text-xs text-gray-500">{tRepo ? `${ABREV[tRepo.diaSemana]} ${tRepo.horario}` : '?'}{faltaVinc ? ` · Repõe falta de ${fmtBR(faltaVinc.datas[0])}` : ''}</div>
-                          {menos24h && <div className="text-xs text-orange-500 mt-0.5">⚠️ Menos de 24h — falta não volta ao crédito se cancelar</div>}
+                          <div className="text-xs text-gray-500">
+                            {tRepo ? `${ABREV[tRepo.diaSemana]} ${tRepo.horario}` : '?'}
+                            {faltaVinc ? ` · Repõe falta de ${fmtBR(faltaVinc.datas[0])}` : ''}
+                            {isFerias && ausVinc ? ` · 🏖️ Férias de ${getMesNome(ausVinc.mesAno)}` : ''}
+                          </div>
+                          {menos24h && <div className="text-xs text-orange-500 mt-0.5">⚠️ Menos de 24h — {isFerias ? 'crédito de férias não volta' : 'falta não volta ao crédito'} se cancelar</div>}
                         </div>
                         <button onClick={() => handleCancelarRepo(r)}
                           className="text-xs text-red-500 border border-red-200 px-2.5 py-1 rounded-lg font-medium shrink-0">
@@ -3480,13 +3730,114 @@ function AlunoView({ state, dispatch, acesso }) {
           <ConfirmModal
             title="Cancelar reposição?" danger
             message={confirmCancel.semCredito
-              ? `A reposição está a menos de 24h. Você pode cancelar, mas a falta não voltará ao seu crédito. Deseja cancelar mesmo assim?`
-              : `Cancelar a reposição de ${fmtBRFull(confirmCancel.repo.dataReposicao)}? A falta voltará para pendente.`}
+              ? `A reposição está a menos de 24h. Você pode cancelar, mas o crédito não será devolvido. Deseja cancelar mesmo assim?`
+              : confirmCancel.repo.tipo === 'reposicao_ferias'
+                ? `Cancelar a reposição de ${fmtBRFull(confirmCancel.repo.dataReposicao)}? Seu crédito de férias voltará a ficar disponível.`
+                : `Cancelar a reposição de ${fmtBRFull(confirmCancel.repo.dataReposicao)}? A falta voltará para pendente.`}
             onConfirm={confirmarCancelamento}
             onCancel={() => setConfirmCancel(null)}
             confirmLabel="Cancelar reposição"
           />
         )}
+
+        {/* Registrar / ver férias */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <button onClick={() => toggle('ferias')} className="w-full px-4 py-3 flex items-center justify-between text-left">
+            <div className="flex items-center gap-3">
+              <div className="text-xl">🏖️</div>
+              <div>
+                <div className="font-semibold text-gray-800 text-sm">Férias</div>
+                <div className="text-xs text-gray-500">
+                  {ausenciasAtivas.length > 0
+                    ? `${ausenciasAtivas.length} período registrado${ausenciasAtivas.length > 1 ? 's' : ''}`
+                    : 'Registre ausência programada'}
+                </div>
+              </div>
+            </div>
+            <div className="text-gray-400 text-sm">{open.ferias ? '‹' : '›'}</div>
+          </button>
+          {open.ferias && (
+            <div className="border-t border-gray-100 px-4 py-3 space-y-3">
+              {/* Existing ausencias */}
+              {ausenciasAtivas.length > 0 && (
+                <div className="space-y-2">
+                  {ausenciasAtivas.map(a => {
+                    const exp = getAusenciaExpiry(a);
+                    const expired = exp < td;
+                    const expiring = !expired && exp <= in7;
+                    const semCredito = a.creditoReposicao === 0;
+                    const mesNum = parseInt(a.mesAno.split('-')[1]);
+                    const isMesEscolar = mesNum === 12 || mesNum === 1;
+                    return (
+                      <div key={a.id} className={`rounded-lg px-3 py-2 text-sm ${semCredito ? 'bg-gray-50 border border-gray-200' : expired ? 'bg-red-50 border border-red-200' : expiring ? 'bg-amber-50 border border-amber-200' : 'bg-teal-50 border border-teal-200'}`}>
+                        <div className="font-semibold text-gray-800">Férias de {getMesNome(a.mesAno)}</div>
+                        <div className="flex items-center justify-between mt-0.5">
+                          <span className={`text-xs font-medium ${semCredito ? 'text-gray-400' : a.creditoUsado ? 'text-gray-400' : expired ? 'text-red-600' : 'text-teal-700'}`}>
+                            {semCredito
+                              ? '— Sem crédito (mês de recesso do ateliê)'
+                              : a.creditoUsado ? '✓ Crédito de reposição usado'
+                              : expired ? '⚠️ Crédito expirado'
+                              : `🎫 1 reposição disponível — expira ${fmtBR(exp)}`}
+                          </span>
+                        </div>
+                        {state.vagas.filter(v => v.ausenciaId === a.id && v.data >= td).length > 0 && (
+                          <div className="text-xs text-teal-600 mt-1">
+                            Vagas liberadas: {state.vagas.filter(v => v.ausenciaId === a.id && v.data >= td).map(v => fmtBR(v.data)).join(', ')}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {/* Register new férias */}
+              {mesesDisponiveisFerias.length > 0 ? (
+                <>
+                  <label className="block text-xs font-medium text-gray-600 mt-2">Registrar período de férias</label>
+                  <select value={mesFerias} onChange={e => setMesFerias(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white">
+                    <option value="">Escolha o mês de férias…</option>
+                    {mesesDisponiveisFerias.map(m => {
+                      const mo = parseInt(m.split('-')[1]);
+                      const isMesEscolar = mo === 12 || mo === 1;
+                      const [y, moN] = m.split('-').map(Number);
+                      return <option key={m} value={m}>{MESES_PT[moN-1]} {y}{isMesEscolar ? ' (sem crédito)' : ''}</option>;
+                    })}
+                  </select>
+                  {mesFerias && (() => {
+                    const [y, mo] = mesFerias.split('-').map(Number);
+                    const isMesEscolar = mo === 12 || mo === 1;
+                    const firstDay = mesFerias + '-01';
+                    const lastDay = dateToStr(new Date(y, mo, 0));
+                    const classDates = turma ? getClassDatesInRange(turma, firstDay, lastDay) : [];
+                    return classDates.length > 0 ? (
+                      <div className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
+                        Aulas afetadas ({classDates.length}): {classDates.map(d => fmtBR(d)).join(', ')}
+                        <br /><span className={`font-medium ${isMesEscolar ? 'text-gray-400' : 'text-teal-600'}`}>
+                          {isMesEscolar
+                            ? 'Vagas serão liberadas, mas dezembro e janeiro não geram crédito de reposição.'
+                            : 'Vagas serão liberadas para outros alunos. Você recebe 1 crédito de reposição.'}
+                        </span>
+                      </div>
+                    ) : null;
+                  })()}
+                  <button onClick={handleRegistrarFerias} disabled={!mesFerias}
+                    className="w-full py-2 bg-teal-500 text-white rounded-lg text-sm font-semibold disabled:opacity-40">
+                    Confirmar férias
+                  </button>
+                </>
+              ) : ausenciasAtivas.length > 0 ? (
+                <p className="text-xs text-gray-400 italic">Você já registrou férias para este ano.</p>
+              ) : null}
+              {/* Discrete rules note */}
+              <div className="pt-2 border-t border-gray-100 text-xs text-gray-400 space-y-0.5">
+                <div>• Férias podem ser registradas uma vez por ano</div>
+                <div>• Dezembro e janeiro são recesso do ateliê — não geram crédito de reposição</div>
+              </div>
+            </div>
+          )}
+          {successFerias && <div className="px-4 pb-3"><div className="bg-green-50 text-green-700 rounded-lg px-3 py-2 text-sm font-medium">{successFerias}</div></div>}
+        </div>
 
         {/* Rodapé */}
         <div className="text-center text-xs text-gray-400 py-4">
