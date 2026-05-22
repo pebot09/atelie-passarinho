@@ -985,6 +985,22 @@ function normalizeState(s) {
   if (vagasRecriadas.length > 0) {
     afterFaltaMig = { ...afterFaltaMig, vagas: [...afterFaltaMig.vagas, ...vagasRecriadas] };
   }
+  // Migration: retroactively link semVagaOficial reposições to available falta/ausencia vagas
+  // (happens when professor booked a reposição manually without a vaga slot being selected,
+  //  but there were or now are falta vagas available for that turma/date)
+  var vagasDisponiveis = [...afterFaltaMig.vagas];
+  var reposComLink = afterFaltaMig.reposicoes.map(function(r) {
+    if (!r.semVagaOficial || r.tipo === 'aula_extra') return r;
+    if (r.vagaConsumedFaltaId || r.vagaConsumedAusenciaId) return r;
+    var idx = vagasDisponiveis.findIndex(function(v) {
+      return v.turmaId === r.turmaReposicaoId && v.data === r.dataReposicao && (v.faltaId || v.ausenciaId) && !v.vagaExtra;
+    });
+    if (idx < 0) return r;
+    var vaga = vagasDisponiveis[idx];
+    vagasDisponiveis.splice(idx, 1);
+    return { ...r, vagaConsumedFaltaId: vaga.faltaId || null, vagaConsumedAusenciaId: vaga.ausenciaId || null, semVagaOficial: false, vagaExtra: false };
+  });
+  afterFaltaMig = { ...afterFaltaMig, reposicoes: reposComLink, vagas: vagasDisponiveis };
   // Always recompute vagasExtras at the end so counts are correct after any migration
   var tdNorm = todayStr();
   var vagasNormFiltradas = afterFaltaMig.vagas.filter(function(v) { return v.data >= tdNorm; });
