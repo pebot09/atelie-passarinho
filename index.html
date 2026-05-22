@@ -466,11 +466,16 @@ function reducer(state, action) {
       const { alunoNome, dataReposicao, turmaReposicaoId, tipo } = action;
       const repoId = genId('r');
       const semVagaOficial = action.semVagaOficial || false;
-      const vagaConsumed = action.vagaSelId ? state.vagas.find(v => v.id === action.vagaSelId) : null;
+      const vagaConsumedRaw = action.vagaSelId ? state.vagas.find(v => v.id === action.vagaSelId) : null;
+      // If the selected vaga is a vagaExtra but a falta/ausencia vaga is available for the same slot,
+      // prefer consuming the falta vaga so the extra slot stays free
+      const vagaConsumed = (vagaConsumedRaw?.vagaExtra)
+        ? (state.vagas.find(v => v.turmaId === turmaReposicaoId && v.data === dataReposicao && (v.faltaId || v.ausenciaId) && !v.vagaExtra) || vagaConsumedRaw)
+        : vagaConsumedRaw;
       const vagaConsumedFaltaId = vagaConsumed?.faltaId || null;
       const vagaConsumedAusenciaId = vagaConsumed?.ausenciaId || null;
       const isVagaExtra = !!(vagaConsumed?.vagaExtra);
-      const removeVagaSel = vs => action.vagaSelId ? vs.filter(v => v.id !== action.vagaSelId) : vs;
+      const removeVagaSel = vs => vagaConsumed ? vs.filter(v => v.id !== vagaConsumed.id) : vs;
 
       // Handle booking with vacation credit
       if (action.ausenciaId) {
