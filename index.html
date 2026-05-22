@@ -627,6 +627,19 @@ function reducer(state, action) {
         }
       });
 
+      // Recreate the slot vaga that this reposição had consumed (another student's falta vaga)
+      if (repo.vagaConsumedFaltaId) {
+        const jaExiste = newVagas.some(v => v.turmaId === repo.turmaReposicaoId && v.data === repo.dataReposicao && v.faltaId === repo.vagaConsumedFaltaId);
+        if (!jaExiste) {
+          newVagas = [...newVagas, { id: genId('v'), turmaId: repo.turmaReposicaoId, data: repo.dataReposicao, faltaId: repo.vagaConsumedFaltaId }];
+        }
+      }
+      if (repo.vagaConsumedAusenciaId) {
+        const jaExiste = newVagas.some(v => v.ausenciaId === repo.vagaConsumedAusenciaId && v.turmaId === repo.turmaReposicaoId && v.data === repo.dataReposicao);
+        if (!jaExiste) {
+          newVagas = [...newVagas, { id: genId('vf'), turmaId: repo.turmaReposicaoId, data: repo.dataReposicao, tipo: 'ferias', ausenciaId: repo.vagaConsumedAusenciaId }];
+        }
+      }
       next = { ...state, faltas: newFaltas, vagas: newVagas, reposicoes: newReposicoes };
       {
         const tLbl = getTurmaLabel(state.turmas, repo.turmaOrigemId);
@@ -949,6 +962,23 @@ function normalizeState(s) {
       return r;
     })
   };
+  // Migration: recreate vagas for pendente faltas that lost their vaga due to CANCEL_REPOSICAO bug
+  // (safe: only recreates if no vaga exists AND no reposição is consuming it)
+  var consumedFaltaIds = new Set(afterFaltaMig.reposicoes.map(function(r) { return r.vagaConsumedFaltaId; }).filter(Boolean));
+  var vagaFaltaIds = new Set(afterFaltaMig.vagas.map(function(v) { return v.faltaId; }).filter(Boolean));
+  var vagasRecriadas = [];
+  afterFaltaMig.faltas.forEach(function(f) {
+    if (f.status !== 'pendente') return;
+    if (vagaFaltaIds.has(f.id)) return; // vaga already exists
+    if (consumedFaltaIds.has(f.id)) return; // vaga is consumed by a reposição
+    // Falta pendente with no vaga and not consumed — recreate it
+    f.datas.forEach(function(d) {
+      vagasRecriadas.push({ id: genId('v'), turmaId: f.turmaId, data: d, faltaId: f.id });
+    });
+  });
+  if (vagasRecriadas.length > 0) {
+    afterFaltaMig = { ...afterFaltaMig, vagas: [...afterFaltaMig.vagas, ...vagasRecriadas] };
+  }
   return afterFaltaMig;
 }
 
