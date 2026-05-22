@@ -979,6 +979,10 @@ function normalizeState(s) {
   if (vagasRecriadas.length > 0) {
     afterFaltaMig = { ...afterFaltaMig, vagas: [...afterFaltaMig.vagas, ...vagasRecriadas] };
   }
+  // Always recompute vagasExtras at the end so counts are correct after any migration
+  var tdNorm = todayStr();
+  var vagasNormFiltradas = afterFaltaMig.vagas.filter(function(v) { return v.data >= tdNorm; });
+  afterFaltaMig = { ...afterFaltaMig, vagas: computeVagasExtras(afterFaltaMig.turmas, afterFaltaMig.faltas, afterFaltaMig.reposicoes, vagasNormFiltradas, tdNorm, afterFaltaMig.ausencias) };
   return afterFaltaMig;
 }
 
