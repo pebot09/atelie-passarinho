@@ -990,7 +990,10 @@ function normalizeState(s) {
   //  but there were or now are falta vagas available for that turma/date)
   var vagasDisponiveis = [...afterFaltaMig.vagas];
   var reposComLink = afterFaltaMig.reposicoes.map(function(r) {
-    if (!r.semVagaOficial || r.tipo === 'aula_extra') return r;
+    if (r.tipo === 'aula_extra') return r;
+    // Only process reposições not yet linked to a falta/ausencia vaga,
+    // either booked without any slot (semVagaOficial) or consuming a vagaExtra instead
+    if (!r.semVagaOficial && !r.vagaExtra) return r;
     if (r.vagaConsumedFaltaId || r.vagaConsumedAusenciaId) return r;
     var idx = vagasDisponiveis.findIndex(function(v) {
       return v.turmaId === r.turmaReposicaoId && v.data === r.dataReposicao && (v.faltaId || v.ausenciaId) && !v.vagaExtra;
