@@ -3541,25 +3541,64 @@ function AlunoView({ state, dispatch, acesso }) {
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center" onClick={() => setShowRegras(false)}>
           <div className="bg-white rounded-t-2xl w-full max-w-md p-6 pb-8 shadow-xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-base font-bold text-gray-900">Regras de reposição</h2>
+              <h2 className="text-base font-bold text-gray-900">Como funciona</h2>
               <button onClick={() => setShowRegras(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
             </div>
-            <ul className="space-y-3">
+            <div className="space-y-4 overflow-y-auto max-h-[70vh] pr-1">
               {[
-                { icon: '✅', text: 'Avise a falta com pelo menos 22h de antecedência — você pode repor em qualquer turma com vaga disponível.' },
-                { icon: '⏱️', text: 'Avisou entre 2h e 22h antes da aula? Você ainda tem direito a reposição, mas só pode marcá-la quando a aula de reposição começa em menos de 2h.' },
-                { icon: '❌', text: 'Falta avisada com menos de 2h não gera direito a reposição.' },
-                { icon: '📅', text: 'Você tem 30 dias para repor — a vaga expira 30 dias após a data da falta. Após isso, o crédito é perdido.' },
-                { icon: '🔄', text: 'A reposição pode ser em qualquer turma disponível — escolha entre as vagas abertas na semana.' },
-                { icon: '⚠️', text: 'Cancelamento com menos de 24h não devolve o crédito — se cancelar uma reposição em cima da hora, a falta é consumida mesmo assim.' },
-                { icon: '🪑', text: 'Vagas extras abrem às 10h do dia anterior — se uma turma tiver espaço, essa vaga fica disponível na véspera da aula.' },
-              ].map((r, i) => (
-                <li key={i} className="flex items-start gap-3">
-                  <span className="text-base mt-0.5 shrink-0">{r.icon}</span>
-                  <span className="text-sm text-gray-700 leading-snug">{r.text}</span>
-                </li>
+                {
+                  titulo: 'Avisar falta',
+                  itens: [
+                    { icon: '✅', text: 'Com mais de 22h de antecedência: falta comum — você pode repor em qualquer turma com vaga.' },
+                    { icon: '⏱️', text: 'Entre 2h e 22h antes da aula: falta sem antecedência — você tem direito a reposição, mas só pode marcá-la quando a aula de reposição estiver a menos de 2h de começar.' },
+                    { icon: '⛔', text: 'Com menos de 2h (ou após a aula): não é possível registrar falta. A data aparece bloqueada na tela.' },
+                    { icon: '🎌', text: 'Feriados não geram falta nem vaga de reposição.' },
+                  ]
+                },
+                {
+                  titulo: 'Cancelar falta',
+                  itens: [
+                    { icon: '✕', text: 'Você pode cancelar uma falta enquanto o horário da aula não chegou — desde que não haja reposição marcada para ela.' },
+                    { icon: '🔒', text: 'Não é possível cancelar se a vaga já foi ocupada por outra pessoa e não há substituta disponível.' },
+                  ]
+                },
+                {
+                  titulo: 'Marcar reposição',
+                  itens: [
+                    { icon: '📅', text: 'Você tem 30 dias para repor a partir da data da falta. Após isso, o crédito expira.' },
+                    { icon: '🔄', text: 'A reposição pode ser em qualquer turma — escolha entre as vagas disponíveis.' },
+                    { icon: '🪑', text: 'Vagas extras abrem às 10h do dia anterior quando uma turma tem espaço sobrando.' },
+                  ]
+                },
+                {
+                  titulo: 'Cancelar reposição',
+                  itens: [
+                    { icon: '↩️', text: 'Cancelou com mais de 24h de antecedência: a falta volta ao crédito e você pode remarcar.' },
+                    { icon: '⚠️', text: 'Cancelou com menos de 24h: o crédito não volta — a falta é consumida mesmo assim.' },
+                  ]
+                },
+                {
+                  titulo: 'Férias',
+                  itens: [
+                    { icon: '🌴', text: 'Férias precisam ser registradas pela professora com antecedência.' },
+                    { icon: '🎫', text: 'Cada aula dentro do período de férias gera um crédito de reposição, válido por 30 dias após o último dia do mês de férias.' },
+                    { icon: '🔄', text: 'Use o crédito de férias para marcar uma reposição em qualquer turma com vaga disponível.' },
+                  ]
+                },
+              ].map((sec, si) => (
+                <div key={si}>
+                  <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1.5">{sec.titulo}</div>
+                  <ul className="space-y-2">
+                    {sec.itens.map((r, i) => (
+                      <li key={i} className="flex items-start gap-2.5">
+                        <span className="text-sm mt-0.5 shrink-0">{r.icon}</span>
+                        <span className="text-sm text-gray-700 leading-snug">{r.text}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               ))}
-            </ul>
+            </div>
           </div>
         </div>
       )}
