@@ -263,7 +263,11 @@ function computeVagasExtras(turmas, faltas, reposicoes, vagasBase, td, ausencias
       const totalRepos = reposicoes.filter(r =>
         r.turmaReposicaoId === turma.id && r.dataReposicao === date && !r.realizada
       ).length;
-      const target = Math.max(0, 8 - alunosEfetivos + faltasCount - totalRepos);
+      // Count existing falta/férias vagas — they already fill open seats, so subtract from target
+      const existingFaltaVagas = vagas.filter(v =>
+        v.turmaId === turma.id && v.data === date && (v.faltaId || v.ausenciaId) && !v.vagaExtra
+      ).length;
+      const target = Math.max(0, 8 - alunosEfetivos + faltasCount - totalRepos - existingFaltaVagas);
       const existingExtras = vagas.filter(v => v.vagaExtra && v.turmaId === turma.id && v.data === date);
       const diff = target - existingExtras.length;
       if (diff > 0) {
@@ -487,10 +491,7 @@ function reducer(state, action) {
         const tOLbl = getTurmaLabel(state.turmas, action.turmaOrigemId);
         const tRLbl = getTurmaLabel(state.turmas, turmaReposicaoId);
         next.log = addLog(state.log, action.professor, `Agendou reposição (férias) de ${alunoNome} (${tOLbl}) → ${tRLbl}, ${fmtBRFull(dataReposicao)}`);
-        break;
-      }
-
-      if (tipo === 'aula_extra') {
+      } else if (tipo === 'aula_extra') {
         const turmaOrigem = state.turmas.find(t => t.alunos.includes(alunoNome));
         next = { ...state,
           reposicoes: [...state.reposicoes, {
@@ -546,6 +547,11 @@ function reducer(state, action) {
           const tRLbl = getTurmaLabel(state.turmas, turmaReposicaoId);
           next.log = addLog(state.log, action.professor, `Agendou reposição de ${alunoNome} (${tOLbl}) → ${tRLbl}, ${fmtBRFull(dataReposicao)}`);
         }
+      }
+      // Recompute vagasExtras so a booking (especially semVagaOficial) immediately recalculates open slots
+      if (next) {
+        const td_ar = todayStr();
+        next = { ...next, vagas: computeVagasExtras(next.turmas, next.faltas, next.reposicoes, next.vagas, td_ar, next.ausencias) };
       }
       break;
     }
