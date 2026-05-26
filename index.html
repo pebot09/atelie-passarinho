@@ -2483,6 +2483,7 @@ function PainelVisual({ state, dispatch }) {
       const faltaVinc = r.faltaId ? state.faltas.find(f => f.id === r.faltaId) : null;
       const faltaLiberou = r.vagaConsumedFaltaId ? state.faltas.find(f => f.id === r.vagaConsumedFaltaId) : null;
       const tLiberou = faltaLiberou ? state.turmas.find(x => x.id === faltaLiberou.turmaId) : null;
+      const ausLiberou = r.vagaConsumedAusenciaId ? state.ausencias.find(a => a.id === r.vagaConsumedAusenciaId) : null;
       const ausVinc = isFerias && r.ausenciaId ? state.ausencias.find(a => a.id === r.ausenciaId) : null;
       title = `${r.alunoNome}`;
       body = (
@@ -2518,6 +2519,11 @@ function PainelVisual({ state, dispatch }) {
               <div className="text-green-600 text-xs mb-0.5">Vaga liberada por</div>
               <div className="font-semibold text-gray-800">{faltaLiberou.alunoNome} ({tLiberou ? `${ABREV[tLiberou.diaSemana]} ${tLiberou.horario}` : '?'})</div>
               <div className="text-gray-500 text-xs mt-0.5">Falta de {fmtBRFull(faltaLiberou.datas[0])}</div>
+            </div>
+          ) : ausLiberou ? (
+            <div className="bg-teal-50 border border-teal-200 rounded-lg px-3 py-2">
+              <div className="text-teal-600 text-xs mb-0.5">🏖️ Vaga liberada por férias</div>
+              <div className="font-semibold text-gray-800">{ausLiberou.alunoNome} ({getMesNome(ausLiberou.mesAno)})</div>
             </div>
           ) : !isFerias && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
