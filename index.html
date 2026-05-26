@@ -2479,11 +2479,27 @@ function PainelVisual({ state, dispatch }) {
     const d = new Date(iso);
     return d.toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
   };
+  const findLogForFalta = (f) => {
+    if (!state.log?.length) return null;
+    const tLbl = getTurmaLabel(state.turmas, f.turmaId);
+    const dateStr = fmtBR(f.datas[0]);
+    return [...state.log]
+      .sort((a, b) => a.ts.localeCompare(b.ts))
+      .find(e => e.descricao && e.descricao.includes(f.alunoNome) && e.descricao.toLowerCase().includes('falta') && e.descricao.includes(tLbl) && e.descricao.includes(dateStr)) || null;
+  };
+  const findLogForRepo = (r) => {
+    if (!state.log?.length) return null;
+    const dateStr = fmtBRFull(r.dataReposicao);
+    return [...state.log]
+      .sort((a, b) => a.ts.localeCompare(b.ts))
+      .find(e => e.descricao && e.descricao.includes(r.alunoNome) && e.descricao.includes(dateStr)) || null;
+  };
   const CriadoPorNote = ({ criadoPor, criadoEm }) => {
+    if (!criadoPor && !criadoEm) return null;
     const txt = [criadoPor ? `marcado por ${criadoPor}` : null, criadoEm ? fmtCriadoEm(criadoEm) : null].filter(Boolean).join(' · ');
     return (
       <div className="text-xs text-gray-400 text-right mt-1 pt-2 border-t border-gray-100">
-        {txt || 'registro anterior'}
+        {txt}
       </div>
     );
   };
@@ -2512,7 +2528,7 @@ function PainelVisual({ state, dispatch }) {
                 <div className="text-gray-500 mt-0.5">Expira em: {fmtBRFull(exp)}
                   {expiring && <span className="ml-1 text-amber-600 font-medium">⚠️ em breve</span>}
                 </div>
-                <CriadoPorNote criadoPor={f.criadoPor} criadoEm={f.criadoEm} />
+                {(() => { const log = f.criadoPor ? null : findLogForFalta(f); const cp = f.criadoPor || log?.professor; const ce = f.criadoEm || log?.ts; return <CriadoPorNote criadoPor={cp} criadoEm={ce} />; })()}
               </div>
             );
           })}
@@ -2620,7 +2636,7 @@ function PainelVisual({ state, dispatch }) {
               >{r.pago ? '✓ PAGO' : 'PAGO'}</button>
             )}
           </div>
-          <CriadoPorNote criadoPor={r.criadoPor} criadoEm={r.criadoEm} />
+          {(() => { const log = r.criadoPor ? null : findLogForRepo(r); const cp = r.criadoPor || log?.professor; const ce = r.criadoEm || log?.ts; return <CriadoPorNote criadoPor={cp} criadoEm={ce} />; })()}
         </div>
       );
     }
