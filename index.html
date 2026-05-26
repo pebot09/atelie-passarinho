@@ -1858,8 +1858,12 @@ function TabAusenciaProgramada({ state, dispatch }) {
           <h4 className="text-sm font-semibold text-gray-600 mb-2">Ausências registradas</h4>
           <div className="space-y-2">
             {state.ausencias.map(a => {
-              const vagasFerias = state.vagas.filter(v => v.ausenciaId === a.id);
-              const vagasFut = vagasFerias.filter(v => v.data >= todayStr());
+              const vagasAbertas = state.vagas.filter(v => v.ausenciaId === a.id);
+              const vagasConsumidas = state.reposicoes.filter(r => r.vagaConsumedAusenciaId === a.id);
+              const todasDatas = [
+                ...vagasAbertas.map(v => ({ data: v.data, consumida: false, por: null })),
+                ...vagasConsumidas.map(r => ({ data: r.dataReposicao, consumida: true, por: r.alunoNome })),
+              ].sort((a, b) => a.data.localeCompare(b.data));
               return (
               <div key={a.id} className="bg-gray-50 rounded-lg p-3 text-sm">
                 <div className="flex justify-between items-start">
@@ -1867,8 +1871,19 @@ function TabAusenciaProgramada({ state, dispatch }) {
                     <span className="font-medium">{a.alunoNome}</span>
                     <span className="text-gray-400 ml-2">({getTurmaLabel(state.turmas, a.turmaId)})</span>
                     <div className="text-gray-500 mt-0.5">Férias: {getMesNome(a.mesAno)} — Crédito: {a.creditoUsado ? <span className="text-green-600">usado</span> : <span className="text-amber-600">disponível</span>}</div>
-                    {vagasFut.length > 0 && (
-                      <div className="text-xs text-teal-600 mt-0.5">{vagasFut.length} vaga{vagasFut.length>1?'s':''} abertas: {vagasFut.map(v => fmtBR(v.data)).join(', ')}</div>
+                    {todasDatas.length > 0 && (
+                      <div className="text-xs text-teal-600 mt-0.5">
+                        Vagas liberadas:{' '}
+                        {todasDatas.map((v, i) => (
+                          <span key={i}>
+                            {i > 0 && ', '}
+                            {v.consumida
+                              ? <span className="text-gray-400 line-through" title={`Ocupada por ${v.por}`}>{fmtBR(v.data)}</span>
+                              : <span>{fmtBR(v.data)}</span>
+                            }
+                          </span>
+                        ))}
+                      </div>
                     )}
                   </div>
                   <button onClick={() => dispatch({type:'DELETE_AUSENCIA', id: a.id})} className="text-red-400 hover:text-red-600 text-xs ml-2 shrink-0">Remover</button>
