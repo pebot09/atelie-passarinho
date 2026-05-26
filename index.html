@@ -2480,10 +2480,10 @@ function PainelVisual({ state, dispatch }) {
     return d.toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
   };
   const CriadoPorNote = ({ criadoPor, criadoEm }) => {
-    if (!criadoPor && !criadoEm) return null;
+    const txt = [criadoPor ? `marcado por ${criadoPor}` : null, criadoEm ? fmtCriadoEm(criadoEm) : null].filter(Boolean).join(' · ');
     return (
       <div className="text-xs text-gray-400 text-right mt-1 pt-2 border-t border-gray-100">
-        {criadoPor ? `marcado por ${criadoPor}` : ''}{criadoPor && criadoEm ? ' · ' : ''}{criadoEm ? fmtCriadoEm(criadoEm) : ''}
+        {txt || 'registro anterior'}
       </div>
     );
   };
