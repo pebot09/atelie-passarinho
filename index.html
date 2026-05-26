@@ -1009,6 +1009,32 @@ function normalizeState(s) {
     return { ...r, vagaConsumedFaltaId: vaga.faltaId || null, vagaConsumedAusenciaId: vaga.ausenciaId || null, semVagaOficial: false, vagaExtra: false };
   });
   afterFaltaMig = { ...afterFaltaMig, reposicoes: reposComLink, vagas: vagasDisponiveis };
+
+  // Migration: retroactively link regular reposições that consumed an ausencia vaga
+  // without vagaConsumedAusenciaId being set (old bookings before this field existed).
+  // Strategy: for each unlinked regular reposição, find ausencias for the same turma+month,
+  // then check which ausencia is missing its vaga for that date in the array.
+  var reposComAusLink = afterFaltaMig.reposicoes.map(function(r) {
+    if (r.vagaConsumedFaltaId || r.vagaConsumedAusenciaId) return r;
+    if (r.vagaExtra || r.semVagaOficial) return r;
+    if (r.tipo !== 'reposicao') return r;
+    var mesRepo = r.dataReposicao ? r.dataReposicao.substring(0, 7) : null;
+    if (!mesRepo) return r;
+    var candidatos = afterFaltaMig.ausencias.filter(function(a) {
+      return a.turmaId === r.turmaReposicaoId && a.mesAno === mesRepo;
+    });
+    if (candidatos.length === 0) return r;
+    // Find ausencias whose vaga for this date is gone from the array
+    var matched = candidatos.filter(function(a) {
+      return !afterFaltaMig.vagas.find(function(v) {
+        return v.ausenciaId === a.id && v.data === r.dataReposicao;
+      });
+    });
+    if (matched.length !== 1) return r; // ambiguous (0 or 2+) — skip
+    return { ...r, vagaConsumedAusenciaId: matched[0].id };
+  });
+  afterFaltaMig = { ...afterFaltaMig, reposicoes: reposComAusLink };
+
   // Always recompute vagasExtras at the end so counts are correct after any migration
   var tdNorm = todayStr();
   var vagasNormFiltradas = afterFaltaMig.vagas.filter(function(v) { return v.data >= tdNorm; });
