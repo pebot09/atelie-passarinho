@@ -439,7 +439,7 @@ function reducer(state, action) {
         );
         if (exists) return;
         const faltaId = genId('f');
-        newFaltas.push({ id: faltaId, alunoNome, turmaId, datas: [data], status: 'pendente', semAntecedencia: !!semAntecedencia });
+        newFaltas.push({ id: faltaId, alunoNome, turmaId, datas: [data], status: 'pendente', semAntecedencia: !!semAntecedencia, criadoPor: action.professor || null, criadoEm: new Date().toISOString() });
         const repoOrfao = reposicoes.find(r =>
           r.turmaReposicaoId === turmaId && r.dataReposicao === data &&
           !r.realizada && !r.vagaConsumedFaltaId
@@ -489,7 +489,8 @@ function reducer(state, action) {
             vagaConsumedAusenciaId,
             dataReposicao, turmaReposicaoId,
             tipo: 'reposicao_ferias', realizada: false, semVagaOficial,
-            vagaConsumedFaltaId, vagaExtra: isVagaExtra
+            vagaConsumedFaltaId, vagaExtra: isVagaExtra,
+            criadoPor: action.professor || null, criadoEm: new Date().toISOString()
           }],
           vagas: removeVagaSel(state.vagas)
         };
@@ -504,7 +505,8 @@ function reducer(state, action) {
             turmaOrigemId: turmaOrigem?.id || null,
             faltaId: null, dataReposicao, turmaReposicaoId,
             tipo: 'aula_extra', realizada: false, semVagaOficial, pago: false,
-            vagaConsumedFaltaId, vagaExtra: isVagaExtra
+            vagaConsumedFaltaId, vagaExtra: isVagaExtra,
+            criadoPor: action.professor || null, criadoEm: new Date().toISOString()
           }],
           vagas: removeVagaSel(state.vagas)
         };
@@ -526,7 +528,8 @@ function reducer(state, action) {
               id: repoId, alunoNome,
               turmaOrigemId: oldest.turmaId, faltaId: oldest.id,
               dataReposicao, turmaReposicaoId, tipo: 'reposicao', realizada: false, semVagaOficial,
-              vagaConsumedFaltaId, vagaExtra: isVagaExtra
+              vagaConsumedFaltaId, vagaExtra: isVagaExtra,
+              criadoPor: action.professor || null, criadoEm: new Date().toISOString()
             }],
             vagas: removeVagaSel(state.vagas)
           };
@@ -544,7 +547,8 @@ function reducer(state, action) {
               tipo: 'reposicao', realizada: false, semVagaOficial,
               vagaConsumedFaltaId, vagaExtra: isVagaExtra,
               semFaltaVinculada: true,
-              observacao: 'Reposição sem falta vinculada — verificar'
+              observacao: 'Reposição sem falta vinculada — verificar',
+              criadoPor: action.professor || null, criadoEm: new Date().toISOString()
             }],
             vagas: removeVagaSel(state.vagas)
           };
@@ -2470,6 +2474,20 @@ function PainelVisual({ state, dispatch }) {
   const obsColors = { red:'bg-red-50 text-red-700 border-red-200', amber:'bg-amber-50 text-amber-700 border-amber-200', blue:'bg-blue-50 text-blue-700 border-blue-200', teal:'bg-teal-50 text-teal-700 border-teal-200', orange:'bg-orange-50 text-orange-700 border-orange-200' };
   const obsIcons  = { red:'🔴', amber:'⚠️', blue:'ℹ️', teal:'✦', orange:'⏱️' };
 
+  const fmtCriadoEm = (iso) => {
+    if (!iso) return null;
+    const d = new Date(iso);
+    return d.toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+  };
+  const CriadoPorNote = ({ criadoPor, criadoEm }) => {
+    if (!criadoPor && !criadoEm) return null;
+    return (
+      <div className="text-xs text-gray-400 text-right mt-1 pt-2 border-t border-gray-100">
+        {criadoPor ? `marcado por ${criadoPor}` : ''}{criadoPor && criadoEm ? ' · ' : ''}{criadoEm ? fmtCriadoEm(criadoEm) : ''}
+      </div>
+    );
+  };
+
   // ---- MODAL DE DETALHES ----
   const DetModal = () => {
     if (!det) return null;
@@ -2494,6 +2512,7 @@ function PainelVisual({ state, dispatch }) {
                 <div className="text-gray-500 mt-0.5">Expira em: {fmtBRFull(exp)}
                   {expiring && <span className="ml-1 text-amber-600 font-medium">⚠️ em breve</span>}
                 </div>
+                <CriadoPorNote criadoPor={f.criadoPor} criadoEm={f.criadoEm} />
               </div>
             );
           })}
@@ -2601,6 +2620,7 @@ function PainelVisual({ state, dispatch }) {
               >{r.pago ? '✓ PAGO' : 'PAGO'}</button>
             )}
           </div>
+          <CriadoPorNote criadoPor={r.criadoPor} criadoEm={r.criadoEm} />
         </div>
       );
     }
