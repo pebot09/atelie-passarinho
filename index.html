@@ -1024,13 +1024,19 @@ function normalizeState(s) {
       return a.turmaId === r.turmaReposicaoId && a.mesAno === mesRepo;
     });
     if (candidatos.length === 0) return r;
-    // Find ausencias whose vaga for this date is gone from the array
+    // Find ausencias whose vaga for this date is gone from the array,
+    // and not already claimed by another reposição with vagaConsumedAusenciaId set
     var matched = candidatos.filter(function(a) {
-      return !afterFaltaMig.vagas.find(function(v) {
+      var vagaMissing = !afterFaltaMig.vagas.find(function(v) {
         return v.ausenciaId === a.id && v.data === r.dataReposicao;
       });
+      if (!vagaMissing) return false;
+      var alreadyClaimed = afterFaltaMig.reposicoes.some(function(other) {
+        return other.id !== r.id && other.vagaConsumedAusenciaId === a.id && other.dataReposicao === r.dataReposicao;
+      });
+      return !alreadyClaimed;
     });
-    if (matched.length !== 1) return r; // ambiguous (0 or 2+) — skip
+    if (matched.length !== 1) return r; // still ambiguous — skip
     return { ...r, vagaConsumedAusenciaId: matched[0].id };
   });
   afterFaltaMig = { ...afterFaltaMig, reposicoes: reposComAusLink };
