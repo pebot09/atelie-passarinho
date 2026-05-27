@@ -1073,6 +1073,10 @@ function normalizeState(s) {
     }
     return a;
   }) };
+  // Migration: remove vagas that fall on recesso dates (e.g. João 18/07)
+  afterFaltaMig = { ...afterFaltaMig, vagas: afterFaltaMig.vagas.filter(function(v) {
+    return !isRecesso(v.data);
+  }) };
   // Prune log to last 90 days
   afterFaltaMig = { ...afterFaltaMig, log: pruneLog(afterFaltaMig.log) };
   // Always recompute vagasExtras at the end so counts are correct after any migration
