@@ -1061,14 +1061,19 @@ function loadState() {
 }
 
 function fetchFromFirebase() {
-  return fetch(DB_URL + '/state.json').then(function(r) { return r.json(); });
+  return fetch(DB_URL + '/state.json').then(function(r) { return r.json(); }).then(function(d) {
+    if (d && typeof d === 'object') { var { _auth: _a, ...clean } = d; return clean; }
+    return d;
+  });
 }
+
+const DB_WRITE_SECRET = '109';
 
 function saveToFirebase(payload) {
   return fetch(DB_URL + '/state.json', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
+    body: JSON.stringify({ ...payload, _auth: DB_WRITE_SECRET })
   });
 }
 
@@ -3270,7 +3275,8 @@ function App() {
         var data = parsed.data;
         if (!data || typeof data !== 'object') return;
         if (data._updatedAt && data._updatedAt <= lastOwnSave.current + 3000) return;
-        baseDispatch({ type: 'SYNC_FROM_FIREBASE', data: normalizeState(data) });
+        var { _auth: _a, ...cleanData } = data;
+        baseDispatch({ type: 'SYNC_FROM_FIREBASE', data: normalizeState(cleanData) });
       } catch(err) {}
     });
     es.onerror = function() { setSyncStatus('erro'); };
