@@ -3858,6 +3858,14 @@ function AlunoView({ state, dispatch, acesso }) {
                       const feriadoNome = getFeriadoNome(d);
                       const jaFalta = !feriadoNome && state.faltas.some(f => f.alunoNome === alunoNome && f.turmaId === turmaId && f.datas.includes(d));
                       if (jaFalta) return null;
+                      const mesData = d.slice(0, 7);
+                      const eFerias = ausenciasAtivas.some(a => a.mesAno === mesData);
+                      if (eFerias) return (
+                        <label key={d} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-teal-100 bg-teal-50/50 cursor-not-allowed opacity-70">
+                          <input type="checkbox" checked={false} disabled className="w-4 h-4 shrink-0" />
+                          <span className="text-sm text-teal-700">{fmtBR(d).slice(0,5)} <span className="text-xs">🏖️ férias</span></span>
+                        </label>
+                      );
                       const dateStatus = feriadoNome ? 'feriado' : getFaltaDateStatus(d);
                       const sel = selectedDates.includes(d);
                       if (dateStatus === 'feriado') return (
