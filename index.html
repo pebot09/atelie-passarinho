@@ -1941,26 +1941,30 @@ function TabAusenciaProgramada({ state, dispatch }) {
               const lastDay = dateToStr(new Date(ayy, amo, 0));
               const expectedDates = turmaAus ? getClassDatesInRange(turmaAus, firstDay, lastDay) : [];
               const todasDatas = expectedDates.map(date => {
+                if (isRecesso(date)) return { data: date, consumida: false, por: null, recesso: true };
                 const vagaAberta = state.vagas.find(v => v.ausenciaId === a.id && v.data === date);
                 if (vagaAberta) return { data: date, consumida: false, por: null };
                 const repoConsumiu = state.reposicoes.find(r => r.vagaConsumedAusenciaId === a.id && r.dataReposicao === date);
                 return { data: date, consumida: true, por: repoConsumiu?.alunoNome || null };
               });
+              const semCredito = a.creditoReposicao === 0;
               return (
               <div key={a.id} className="bg-gray-50 rounded-lg p-3 text-sm">
                 <div className="flex justify-between items-start">
                   <div>
                     <span className="font-medium">{a.alunoNome}</span>
                     <span className="text-gray-400 ml-2">({getTurmaLabel(state.turmas, a.turmaId)})</span>
-                    <div className="text-gray-500 mt-0.5">Férias: {getMesNome(a.mesAno)} — Crédito: {a.creditoUsado ? <span className="text-green-600">usado</span> : <span className="text-amber-600">disponível</span>}</div>
+                    <div className="text-gray-500 mt-0.5">Férias: {getMesNome(a.mesAno)} — Crédito: {semCredito ? <span className="text-red-500">indisponível</span> : a.creditoUsado ? <span className="text-green-600">usado</span> : <span className="text-amber-600">disponível</span>}</div>
                     {todasDatas.length > 0 && (
                       <div className="text-xs text-teal-600 mt-0.5">
                         Vagas liberadas:{' '}
                         {todasDatas.map((v, i) => (
                           <span key={i}>
                             {i > 0 && ', '}
-                            {v.consumida
-                              ? <span className="text-gray-400 line-through" title={`Ocupada por ${v.por}`}>{fmtBR(v.data)}</span>
+                            {v.recesso
+                              ? <span className="text-gray-400" title="Recesso do ateliê">🏠 {fmtBR(v.data).slice(0,5)}</span>
+                              : v.consumida
+                              ? <span className="text-gray-400 line-through" title={v.por ? `Ocupada por ${v.por}` : ''}>{fmtBR(v.data)}</span>
                               : <span>{fmtBR(v.data)}</span>
                             }
                           </span>
@@ -4233,6 +4237,7 @@ function AlunoView({ state, dispatch, acesso }) {
                           const lastDay = dateToStr(new Date(ayy, amo, 0));
                           const expectedDates = turmaAus ? getClassDatesInRange(turmaAus, firstDay, lastDay) : [];
                           const todasDatas = expectedDates.map(date => {
+                            if (isRecesso(date)) return { data: date, consumida: false, por: null, recesso: true };
                             const vagaAberta = state.vagas.find(v => v.ausenciaId === a.id && v.data === date);
                             if (vagaAberta) return { data: date, consumida: false, por: null };
                             const repoConsumiu = state.reposicoes.find(r => r.vagaConsumedAusenciaId === a.id && r.dataReposicao === date);
@@ -4245,8 +4250,10 @@ function AlunoView({ state, dispatch, acesso }) {
                               {todasDatas.map((v, i) => (
                                 <span key={i}>
                                   {i > 0 && ', '}
-                                  {v.consumida
-                                    ? <span className="text-gray-400 line-through" title={`Ocupada por ${v.por}`}>{fmtBR(v.data)}</span>
+                                  {v.recesso
+                                    ? <span className="text-gray-400" title="Recesso do ateliê">🏠 {fmtBR(v.data).slice(0,5)}</span>
+                                    : v.consumida
+                                    ? <span className="text-gray-400 line-through" title={v.por ? `Ocupada por ${v.por}` : ''}>{fmtBR(v.data)}</span>
                                     : <span>{fmtBR(v.data)}</span>
                                   }
                                 </span>
