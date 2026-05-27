@@ -748,9 +748,9 @@ function reducer(state, action) {
       if (!action.professorOverride && state.ausencias.some(a => a.alunoNome === alunoNome && a.turmaId === turmaId && a.mesAno.slice(0, 4) === anoFerias)) {
         next = state; break;
       }
-      // Rule: December (12) and January (1) are school vacation — no reposição credit
+      // Rule: December (12), January (1) and July (7) are recesso — no reposição credit
       const mesNum = parseInt(mesAno.split('-')[1]);
-      const isMesEscolar = mesNum === 12 || mesNum === 1;
+      const isMesEscolar = mesNum === 12 || mesNum === 1 || mesNum === 7;
       const ausId = genId('aus');
       const newAusencia = { id: ausId, alunoNome, turmaId, tipo, mesAno, creditoReposicao: isMesEscolar ? 0 : 1, creditoUsado: isMesEscolar };
       const newAusencias = [...state.ausencias, newAusencia];
@@ -1051,6 +1051,14 @@ function normalizeState(s) {
   });
   afterFaltaMig = { ...afterFaltaMig, reposicoes: reposComAusLink };
 
+  // Migration: ensure ausencias in recesso months (7, 12, 1) have no credit
+  afterFaltaMig = { ...afterFaltaMig, ausencias: afterFaltaMig.ausencias.map(function(a) {
+    var mo = parseInt(a.mesAno.split('-')[1]);
+    if (mo === 12 || mo === 1 || mo === 7) {
+      return { ...a, creditoReposicao: 0, creditoUsado: false };
+    }
+    return a;
+  }) };
   // Prune log to last 90 days
   afterFaltaMig = { ...afterFaltaMig, log: pruneLog(afterFaltaMig.log) };
   // Always recompute vagasExtras at the end so counts are correct after any migration
@@ -1852,7 +1860,7 @@ function TabAusenciaProgramada({ state, dispatch }) {
 
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
         Aluno em férias recebe <strong>1 crédito de reposição</strong> e libera vagas nas suas aulas do mês. O prazo expira 30 dias após o último dia do mês.
-        <div className="mt-1 text-blue-600 text-xs">Dezembro e janeiro (recesso) não geram crédito, mas ainda liberam vagas.</div>
+        <div className="mt-1 text-blue-600 text-xs">Julho, dezembro e janeiro (recesso) não geram crédito, mas ainda liberam vagas.</div>
       </div>
 
       <div>
@@ -4178,7 +4186,7 @@ function AlunoView({ state, dispatch, acesso }) {
                     const expiring = !expired && exp <= in7;
                     const semCredito = a.creditoReposicao === 0;
                     const mesNum = parseInt(a.mesAno.split('-')[1]);
-                    const isMesEscolar = mesNum === 12 || mesNum === 1;
+                    const isMesEscolar = mesNum === 12 || mesNum === 1 || mesNum === 7;
                     return (
                       <div key={a.id} className={`rounded-lg px-3 py-2 text-sm ${semCredito ? 'bg-gray-50 border border-gray-200' : expired ? 'bg-red-50 border border-red-200' : expiring ? 'bg-amber-50 border border-amber-200' : 'bg-teal-50 border border-teal-200'}`}>
                         <div className="font-semibold text-gray-800">Férias de {getMesNome(a.mesAno)}</div>
@@ -4233,14 +4241,14 @@ function AlunoView({ state, dispatch, acesso }) {
                     <option value="">Escolha o mês de férias…</option>
                     {mesesDisponiveisFerias.map(m => {
                       const mo = parseInt(m.split('-')[1]);
-                      const isMesEscolar = mo === 12 || mo === 1;
+                      const isMesEscolar = mo === 12 || mo === 1 || mo === 7;
                       const [y, moN] = m.split('-').map(Number);
                       return <option key={m} value={m}>{MESES_PT[moN-1]} {y}{isMesEscolar ? ' (sem crédito)' : ''}</option>;
                     })}
                   </select>
                   {mesFerias && (() => {
                     const [y, mo] = mesFerias.split('-').map(Number);
-                    const isMesEscolar = mo === 12 || mo === 1;
+                    const isMesEscolar = mo === 12 || mo === 1 || mo === 7;
                     const firstDay = mesFerias + '-01';
                     const lastDay = dateToStr(new Date(y, mo, 0));
                     const classDates = turma ? getClassDatesInRange(turma, firstDay, lastDay) : [];
@@ -4249,7 +4257,7 @@ function AlunoView({ state, dispatch, acesso }) {
                         Aulas afetadas ({classDates.length}): {classDates.map(d => fmtBR(d)).join(', ')}
                         <br /><span className={`font-medium ${isMesEscolar ? 'text-gray-400' : 'text-teal-600'}`}>
                           {isMesEscolar
-                            ? 'Vagas serão liberadas, mas dezembro e janeiro não geram crédito de reposição.'
+                            ? 'Vagas serão liberadas, mas julho, dezembro e janeiro não geram crédito de reposição.'
                             : 'Vagas serão liberadas para outros alunos. Você recebe 1 crédito de reposição.'}
                         </span>
                       </div>
@@ -4266,7 +4274,7 @@ function AlunoView({ state, dispatch, acesso }) {
               {/* Discrete rules note */}
               <div className="pt-2 border-t border-gray-100 text-xs text-gray-400 space-y-0.5">
                 <div>• Férias podem ser registradas uma vez por ano</div>
-                <div>• Dezembro e janeiro são recesso do ateliê — não geram crédito de reposição</div>
+                <div>• Julho, dezembro e janeiro são recesso do ateliê — não geram crédito de reposição</div>
               </div>
             </div>
           )}
