@@ -449,6 +449,38 @@ function reducer(state, action) {
       break;
     }
 
+    case 'RENAME_ALUNO': {
+      const { turmaId: renTurmaId, oldNome, newNome: renNome } = action;
+      if (!renNome || renNome === oldNome) { next = state; break; }
+      const newTurmasRen = state.turmas.map(t => {
+        if (t.id !== renTurmaId) return t;
+        return { ...t, alunos: t.alunos.map(a => a === oldNome ? renNome : a) };
+      });
+      const newFaltasRen = state.faltas.map(f =>
+        f.turmaId === renTurmaId && f.alunoNome === oldNome ? { ...f, alunoNome: renNome } : f
+      );
+      const newReposRen = state.reposicoes.map(r =>
+        r.turmaOrigemId === renTurmaId && r.alunoNome === oldNome ? { ...r, alunoNome: renNome } : r
+      );
+      const newAusenciasRen = state.ausencias.map(a =>
+        a.turmaId === renTurmaId && a.alunoNome === oldNome ? { ...a, alunoNome: renNome } : a
+      );
+      const newAcessosRen = (state.acessos || []).map(a =>
+        a.turmaId === renTurmaId && a.alunoNome === oldNome ? { ...a, alunoNome: renNome } : a
+      );
+      const tLblRen = getTurmaLabel(state.turmas, renTurmaId);
+      next = {
+        ...state,
+        turmas: newTurmasRen,
+        faltas: newFaltasRen,
+        reposicoes: newReposRen,
+        ausencias: newAusenciasRen,
+        acessos: newAcessosRen,
+        log: addLog(state.log, action.professor, `Renomeou ${oldNome} → ${renNome} (${tLblRen})`),
+      };
+      break;
+    }
+
     case 'ADD_FALTA': {
       const { alunoNome, turmaId } = action;
       const datasComTipoRaw = action.datasComTipo || (action.datas || []).map(d => ({ data: d, semAntecedencia: false }));
@@ -1269,6 +1301,8 @@ function SectionTurmas({ state, dispatch }) {
   const [showNewTurma, setShowNewTurma] = useState(false);
   const [editObs, setEditObs] = useState({});
   const [showGerarLink, setShowGerarLink] = useState(false);
+  const [renamingAluno, setRenamingAluno] = useState(null); // { turmaId, nome }
+  const [renameValue, setRenameValue] = useState('');
 
   const sorted = useMemo(() => sortTurmas(state.turmas), [state.turmas]);
 
@@ -1334,18 +1368,41 @@ function SectionTurmas({ state, dispatch }) {
 
                 <div className="space-y-1 mb-3">
                   {turma.alunos.length === 0 && <p className="text-gray-400 text-sm italic">Nenhum aluno cadastrado</p>}
-                  {[...turma.alunos].sort((a,b) => a.localeCompare(b,'pt')).map(nome => (
-                    <div key={nome} className="flex justify-between items-center py-1.5 px-2 rounded-lg hover:bg-gray-50">
-                      <span className="text-sm text-gray-700">{nome}</span>
-                      <button onClick={() => {
-                        if (hasPendencies(turma.id, nome)) {
-                          setConfirm({type:'removeAlunoPendencias', turma, nome});
-                        } else {
-                          setConfirm({type:'removeAluno', turma, nome});
-                        }
-                      }} className="text-red-400 hover:text-red-600 text-xs px-2">Remover</button>
-                    </div>
-                  ))}
+                  {[...turma.alunos].sort((a,b) => a.localeCompare(b,'pt')).map(nome => {
+                    const isRenaming = renamingAluno?.turmaId === turma.id && renamingAluno?.nome === nome;
+                    const commitRename = () => {
+                      const n = renameValue.trim();
+                      if (n && n !== nome) dispatch({ type: 'RENAME_ALUNO', turmaId: turma.id, oldNome: nome, newNome: n });
+                      setRenamingAluno(null);
+                    };
+                    return (
+                      <div key={nome} className="flex justify-between items-center py-1.5 px-2 rounded-lg hover:bg-gray-50">
+                        {isRenaming ? (
+                          <input
+                            className="flex-1 border border-blue-400 rounded-lg px-2 py-0.5 text-sm mr-2 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                            value={renameValue}
+                            onChange={e => setRenameValue(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenamingAluno(null); }}
+                            onBlur={commitRename}
+                            autoFocus
+                          />
+                        ) : (
+                          <span
+                            className="text-sm text-gray-700 cursor-pointer hover:text-blue-600 hover:underline"
+                            onClick={() => { setRenamingAluno({ turmaId: turma.id, nome }); setRenameValue(nome); }}
+                            title="Clique para renomear"
+                          >{nome}</span>
+                        )}
+                        <button onClick={() => {
+                          if (hasPendencies(turma.id, nome)) {
+                            setConfirm({type:'removeAlunoPendencias', turma, nome});
+                          } else {
+                            setConfirm({type:'removeAluno', turma, nome});
+                          }
+                        }} className="text-red-400 hover:text-red-600 text-xs px-2 shrink-0">Remover</button>
+                      </div>
+                    );
+                  })}
                 </div>
 
                 {addingAluno === turma.id ? (
