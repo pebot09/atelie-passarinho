@@ -3294,12 +3294,86 @@ function ProfessorModal({ onSelect }) {
   );
 }
 
+// ==================== RESUMO DE HOJE ====================
+function ResumoHoje({ state }) {
+  const td = todayStr();
+  const hoje = parseDate(td);
+  const diaNome = ['domingo','segunda','terça','quarta','quinta','sexta','sábado'][hoje.getDay()];
+  const mesHoje = td.slice(0, 7);
+
+  const turmasHoje = sortTurmas(state.turmas).filter(t =>
+    t.alunos.length > 0 && t.diaSemana === diaNome && !FERIADOS_SET.has(td) && !isRecesso(td)
+  );
+
+  return (
+    <div className="mt-2 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden fade-in">
+      {turmasHoje.length === 0 ? (
+        <div className="px-6 py-8 text-center text-gray-400 text-sm">Sem aulas hoje.</div>
+      ) : (
+        <div className="divide-y divide-gray-100">
+          {turmasHoje.map(turma => {
+            const faltasHoje = state.faltas.filter(f =>
+              f.turmaId === turma.id && f.datas.includes(td) &&
+              (f.status === 'pendente' || f.status === 'marcada')
+            );
+            const faltandoNomes = faltasHoje.map(f => f.alunoNome);
+
+            const reposHoje = state.reposicoes.filter(r =>
+              r.turmaReposicaoId === turma.id && r.dataReposicao === td && !r.realizada
+            );
+
+            const ausentesFerias = state.ausencias
+              .filter(a => a.turmaId === turma.id && a.mesAno === mesHoje)
+              .map(a => a.alunoNome);
+
+            const presentes = turma.alunos.filter(a =>
+              !faltandoNomes.includes(a) && !ausentesFerias.includes(a)
+            );
+
+            return (
+              <div key={turma.id} className="px-4 py-3 space-y-0.5">
+                <div className="font-semibold text-gray-800 text-sm mb-1">
+                  {ABREV[turma.diaSemana]} {turma.horario}
+                </div>
+                {presentes.length > 0 && (
+                  <div className="text-sm text-gray-600">
+                    <span className="text-gray-400 text-xs">Presentes  </span>
+                    {presentes.join(', ')}
+                  </div>
+                )}
+                {faltandoNomes.length > 0 && (
+                  <div className="text-sm text-red-600">
+                    <span className="text-red-400 text-xs">Faltam  </span>
+                    {faltandoNomes.join(', ')}
+                  </div>
+                )}
+                {reposHoje.length > 0 && (
+                  <div className="text-sm text-blue-600">
+                    <span className="text-blue-400 text-xs">Repondo  </span>
+                    {reposHoje.map(r => {
+                      const tOrig = state.turmas.find(t => t.id === r.turmaOrigemId);
+                      return tOrig
+                        ? `${r.alunoNome} (${ABREV[tOrig.diaSemana]} ${tOrig.horario})`
+                        : r.alunoNome;
+                    }).join(', ')}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ==================== APP ====================
 function App() {
   const [state, baseDispatch] = useReducer(reducer, null, loadState);
   const [pinOk, setPinOk]         = useState(() => localStorage.getItem(PIN_KEY) === '1');
   const [professor, setProfessor] = useState(() => localStorage.getItem(PROFESSOR_KEY) || '');
   const [section, setSection]     = useState(2);
+  const [showResumo, setShowResumo] = useState(false);
   const [seedDismissed, setSeedDismissed] = useState(false);
   const [syncStatus, setSyncStatus] = useState('conectando');
   const lastOwnSave = useRef(0);
@@ -3471,6 +3545,17 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* Resumo de Hoje */}
+      <div className="max-w-4xl mx-auto px-4 pt-4">
+        <button
+          onClick={() => setShowResumo(r => !r)}
+          className="w-full bg-white rounded-xl shadow-sm border border-gray-200 px-6 py-5 text-center font-bold text-gray-800 text-base tracking-widest hover:bg-gray-50 active:bg-gray-100 transition-colors"
+        >
+          {showResumo ? '▲' : '▼'} RESUMO DE HOJE
+        </button>
+        {showResumo && <ResumoHoje state={state} />}
+      </div>
 
       {/* Content */}
       <div className="pb-8">
