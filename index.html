@@ -1038,6 +1038,30 @@ function normalizeState(s) {
   });
   afterFaltaMig = { ...afterFaltaMig, reposicoes: reposComLink, vagas: vagasDisponiveis };
 
+  // Migration: fix duplicate vagaConsumedFaltaId (race condition where two bookings consumed same slot)
+  // First reposição keeps its claim; duplicates get reassigned to another available falta vaga.
+  var seenClaimedFaltaIds = new Set();
+  var vagasParaDedup = [...afterFaltaMig.vagas];
+  var reposDedup = afterFaltaMig.reposicoes.map(function(r) {
+    if (!r.vagaConsumedFaltaId) return r;
+    if (!seenClaimedFaltaIds.has(r.vagaConsumedFaltaId)) {
+      seenClaimedFaltaIds.add(r.vagaConsumedFaltaId);
+      return r;
+    }
+    // Duplicate: find another falta vaga for the same slot
+    var idx = vagasParaDedup.findIndex(function(v) {
+      return v.turmaId === r.turmaReposicaoId && v.data === r.dataReposicao && v.faltaId && !v.vagaExtra && !seenClaimedFaltaIds.has(v.faltaId);
+    });
+    if (idx >= 0) {
+      var vaga = vagasParaDedup[idx];
+      vagasParaDedup.splice(idx, 1);
+      seenClaimedFaltaIds.add(vaga.faltaId);
+      return { ...r, vagaConsumedFaltaId: vaga.faltaId, vagaExtra: false, semVagaOficial: false };
+    }
+    return { ...r, vagaConsumedFaltaId: null, vagaExtra: true };
+  });
+  afterFaltaMig = { ...afterFaltaMig, reposicoes: reposDedup, vagas: vagasParaDedup };
+
   // Migration: retroactively link regular reposições that consumed an ausencia vaga
   // without vagaConsumedAusenciaId being set (old bookings before this field existed).
   // Strategy: for each unlinked regular reposição, find ausencias for the same turma+month,
