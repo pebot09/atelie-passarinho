@@ -2344,6 +2344,7 @@ function generatePainelText(state) {
 // ==================== SECTION 3: PAINEL ====================
 function SectionPainel({ state, dispatch }) {
   const [tab, setTab] = useState(0);
+  const [showResumo, setShowResumo] = useState(false);
   const tabs = ['Lista atual', 'Histórico', 'Importação', 'Registro'];
   const td = todayStr();
 
@@ -2395,6 +2396,14 @@ function SectionPainel({ state, dispatch }) {
           {tab === 3 && <PainelRegistro state={state} />}
         </div>
       </div>
+
+      <button
+        onClick={() => setShowResumo(r => !r)}
+        className="w-full bg-white rounded-xl shadow-sm border border-gray-200 px-6 py-5 text-center font-bold text-gray-800 text-base tracking-widest hover:bg-gray-50 active:bg-gray-100 transition-colors"
+      >
+        {showResumo ? '▲' : '▼'} RESUMO DE HOJE
+      </button>
+      {showResumo && <ResumoHoje state={state} />}
     </div>
   );
 }
@@ -3373,7 +3382,6 @@ function App() {
   const [pinOk, setPinOk]         = useState(() => localStorage.getItem(PIN_KEY) === '1');
   const [professor, setProfessor] = useState(() => localStorage.getItem(PROFESSOR_KEY) || '');
   const [section, setSection]     = useState(2);
-  const [showResumo, setShowResumo] = useState(false);
   const [seedDismissed, setSeedDismissed] = useState(false);
   const [syncStatus, setSyncStatus] = useState('conectando');
   const lastOwnSave = useRef(0);
@@ -3545,17 +3553,6 @@ function App() {
           </div>
         </div>
       )}
-
-      {/* Resumo de Hoje */}
-      <div className="max-w-4xl mx-auto px-4 pt-4">
-        <button
-          onClick={() => setShowResumo(r => !r)}
-          className="w-full bg-white rounded-xl shadow-sm border border-gray-200 px-6 py-5 text-center font-bold text-gray-800 text-base tracking-widest hover:bg-gray-50 active:bg-gray-100 transition-colors"
-        >
-          {showResumo ? '▲' : '▼'} RESUMO DE HOJE
-        </button>
-        {showResumo && <ResumoHoje state={state} />}
-      </div>
 
       {/* Content */}
       <div className="pb-8">
