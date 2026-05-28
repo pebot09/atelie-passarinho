@@ -858,9 +858,9 @@ function reducer(state, action) {
       // Move expired pendente faltas to statistics
       const expiredFaltas = state.faltas.filter(f => f.status === 'pendente' && getFaltaExpiry(f) < td);
       let activeFaltas = state.faltas.filter(f => !(f.status === 'pendente' && getFaltaExpiry(f) < td));
-      // Remove faltas marcadas cuja reposição já foi realizada
+      // Remove faltas marcadas cuja reposição já foi realizada E cujas datas de falta já passaram
       activeFaltas = activeFaltas.filter(f =>
-        !(f.status === 'marcada' && f.reposicaoId && realizadasIds.has(f.reposicaoId))
+        !(f.status === 'marcada' && f.reposicaoId && realizadasIds.has(f.reposicaoId) && f.datas.every(d => d < td))
       );
       const newExpStats = expiredFaltas.map(f => ({
         alunoNome: f.alunoNome, turmaId: f.turmaId,
@@ -896,7 +896,7 @@ function reducer(state, action) {
       const reposSynced = inc.reposicoes.map(r => r.dataReposicao < td ? {...r, realizada: true} : r);
       const realizadasIdsSynced = new Set(reposSynced.filter(r => r.realizada).map(r => r.id));
       const cleanFaltas = activeFaltas.filter(f =>
-        !(f.status === 'marcada' && f.reposicaoId && realizadasIdsSynced.has(f.reposicaoId))
+        !(f.status === 'marcada' && f.reposicaoId && realizadasIdsSynced.has(f.reposicaoId) && f.datas.every(d => d < td))
       );
       const vagasFiltradas = inc.vagas.filter(v => v.data >= td);
       const vagasComExtras = computeVagasExtras(inc.turmas, cleanFaltas, reposSynced, vagasFiltradas, td, inc.ausencias);
@@ -3792,7 +3792,9 @@ function AlunoView({ state, dispatch, acesso }) {
                         {f.semAntecedencia && <span className="text-xs font-medium px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700">sem antecedência</span>}
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
-                        {f.status === 'marcada'
+                        {f.status === 'marcada' && repoVinc?.realizada
+                          ? <span className="text-xs font-medium text-green-600 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">Reposta</span>
+                          : f.status === 'marcada'
                           ? <span className="text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5">Marcada</span>
                           : <span className="text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">Pendente</span>
                         }
