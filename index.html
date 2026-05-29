@@ -396,6 +396,10 @@ function reducer(state, action) {
       next = {...state, _seedWarning: false};
       break;
 
+    case 'DELETE_LOG_ENTRY':
+      next = { ...state, log: arr(state.log).filter(e => e.id !== action.id) };
+      break;
+
     case 'ADD_TURMA': {
       const { diaSemana, horario, observacao } = action;
       const id = `${diaSemana.slice(0,3).replace('ç','c').replace('á','a')}-${horario}`;
@@ -2450,7 +2454,7 @@ function SectionPainel({ state, dispatch }) {
           {tab === 0 && <PainelLista state={state} dispatch={dispatch} />}
           {tab === 1 && <PainelHistorico state={state} dispatch={dispatch} />}
           {tab === 2 && <PainelImportacao state={state} dispatch={dispatch} />}
-          {tab === 3 && <PainelRegistro state={state} />}
+          {tab === 3 && <PainelRegistro state={state} dispatch={dispatch} />}
         </div>
       </div>
 
@@ -4495,33 +4499,57 @@ function AlunoView({ state, dispatch, acesso }) {
 }
 
 // ==================== PAINEL: REGISTRO ====================
-function PainelRegistro({ state }) {
+function PainelRegistro({ state, dispatch }) {
   const log = arr(state.log);
+  const [editing, setEditing] = useState(false);
+
+  const professor = localStorage.getItem(PROFESSOR_KEY) || '';
+  const isDesktop = window.matchMedia('(pointer: fine)').matches;
+  const canEdit = professor === 'Pedro' && isDesktop;
 
   if (log.length === 0) {
     return <p className="text-gray-400 text-sm text-center py-8">Nenhuma ação registrada ainda.</p>;
   }
 
   return (
-    <div className="space-y-2">
-      {log.map(entry => {
-        const c = PROFESSOR_COLORS[entry.professor] || { bg:'bg-gray-100', text:'text-gray-600', dot:'bg-gray-400' };
-        const dt = new Date(entry.ts);
-        const dataHora = dt.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' }) +
-                         ' ' + dt.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
-        return (
-          <div key={entry.id} className="flex items-start gap-3 py-2.5 border-b border-gray-100 last:border-0">
-            <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap mt-0.5 ${c.bg} ${c.text}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`}></span>
-              {entry.professor}
-            </span>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm text-gray-800">{entry.descricao}</p>
-              <p className="text-xs text-gray-400 mt-0.5">{dataHora}</p>
+    <div>
+      {canEdit && (
+        <div className="flex justify-end mb-3">
+          <button
+            onClick={() => setEditing(e => !e)}
+            className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${editing ? 'bg-red-50 border-red-300 text-red-600 hover:bg-red-100' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+          >
+            {editing ? '✓ Concluir' : '✏️ Editar'}
+          </button>
+        </div>
+      )}
+      <div className="space-y-2">
+        {log.map(entry => {
+          const c = PROFESSOR_COLORS[entry.professor] || { bg:'bg-gray-100', text:'text-gray-600', dot:'bg-gray-400' };
+          const dt = new Date(entry.ts);
+          const dataHora = dt.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' }) +
+                           ' ' + dt.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
+          return (
+            <div key={entry.id} className="flex items-start gap-3 py-2.5 border-b border-gray-100 last:border-0">
+              {editing && (
+                <button
+                  onClick={() => dispatch({ type: 'DELETE_LOG_ENTRY', id: entry.id })}
+                  className="text-red-400 hover:text-white hover:bg-red-500 border border-red-200 hover:border-red-500 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0 mt-0.5 transition-colors"
+                  title="Apagar este registro"
+                >✕</button>
+              )}
+              <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap mt-0.5 ${c.bg} ${c.text}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`}></span>
+                {entry.professor}
+              </span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-gray-800">{entry.descricao}</p>
+                <p className="text-xs text-gray-400 mt-0.5">{dataHora}</p>
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
