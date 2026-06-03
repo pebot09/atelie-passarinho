@@ -1129,6 +1129,32 @@ function normalizeState(s) {
   });
   afterFaltaMig = { ...afterFaltaMig, reposicoes: reposComAusLink };
 
+  // Migration: recreate faltas for orphaned falta vagas (faltaId not found in faltas array)
+  // Happens when a falta was cleaned prematurely before the fix that keeps it until its date passes.
+  // We reconstruct it from the reposição that references that faltaId.
+  var faltaIdsExistentes = new Set(afterFaltaMig.faltas.map(function(f) { return f.id; }));
+  var tdRecreate = todayStr();
+  var faltasRecreadas = [];
+  afterFaltaMig.vagas.forEach(function(v) {
+    if (!v.faltaId) return;
+    if (faltaIdsExistentes.has(v.faltaId)) return;
+    if (v.data < tdRecreate) return; // date already passed — no point recreating
+    var repo = afterFaltaMig.reposicoes.find(function(r) { return r.faltaId === v.faltaId; });
+    if (!repo) return;
+    faltaIdsExistentes.add(v.faltaId); // prevent duplicates if multiple vagas share same faltaId
+    faltasRecreadas.push({
+      id: v.faltaId,
+      alunoNome: repo.alunoNome,
+      turmaId: repo.turmaOrigemId,
+      datas: [v.data],
+      status: 'marcada',
+      reposicaoId: repo.id
+    });
+  });
+  if (faltasRecreadas.length > 0) {
+    afterFaltaMig = { ...afterFaltaMig, faltas: [...afterFaltaMig.faltas, ...faltasRecreadas] };
+  }
+
   // Migration: ensure ausencias in recesso months (7, 12, 1) have no credit
   afterFaltaMig = { ...afterFaltaMig, ausencias: afterFaltaMig.ausencias.map(function(a) {
     var mo = parseInt(a.mesAno.split('-')[1]);
