@@ -951,7 +951,7 @@ function reducer(state, action) {
   }
 
   // Persist locally as cache
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch(e) {}
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch(e) { console.error('[atelie] falha ao salvar localStorage:', e); }
   return next;
 }
 
@@ -1180,15 +1180,21 @@ function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return normalizeState(JSON.parse(raw));
-  } catch(e) {}
+  } catch(e) { console.error('[atelie] falha ao ler localStorage:', e); }
   return SEED;
 }
 
 function fetchFromFirebase() {
-  return fetch(DB_URL + '/state.json').then(function(r) { return r.json(); }).then(function(d) {
-    if (d && typeof d === 'object') { var { _auth: _a, ...clean } = d; return clean; }
-    return d;
-  });
+  var controller = new AbortController();
+  var timer = setTimeout(function() { controller.abort(); }, 30000);
+  return fetch(DB_URL + '/state.json', { signal: controller.signal })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      clearTimeout(timer);
+      if (d && typeof d === 'object') { var { _auth: _a, ...clean } = d; return clean; }
+      return d;
+    })
+    .catch(function(e) { clearTimeout(timer); throw e; });
 }
 
 const DB_WRITE_SECRET = '109';
@@ -3514,7 +3520,7 @@ function App() {
         if (data._updatedAt && data._updatedAt <= lastOwnSave.current + 3000) return;
         var { _auth: _a, ...cleanData } = data;
         baseDispatch({ type: 'SYNC_FROM_FIREBASE', data: normalizeState(cleanData) });
-      } catch(err) {}
+      } catch(err) { console.error('[atelie] erro ao processar evento SSE:', err); }
     });
     es.onerror = function() { setSyncStatus('erro'); };
     es.onopen  = function() { setSyncStatus('ok'); };
