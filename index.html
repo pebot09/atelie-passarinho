@@ -1454,7 +1454,7 @@ function SectionTurmas({ state, dispatch }) {
                         </div>
                         {hOpen && (
                           <div className="px-3 pb-2 pt-1 border-t border-gray-100 fade-in">
-                            <HistoricoAlunoContent alunoNome={nome} state={state} />
+                            <HistoricoAlunoContent alunoNome={nome} turmaId={turma.id} state={state} />
                           </div>
                         )}
                       </div>
@@ -3420,24 +3420,28 @@ function ProfessorModal({ onSelect }) {
 }
 
 // ==================== HISTÓRICO PESSOAL DO ALUNO ====================
-function HistoricoAlunoContent({ alunoNome, state }) {
-  const td = todayStr();
+function nomeExatoMatch(texto, nome) {
+  const escaped = nome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('(^|[\\s(,/—])' + escaped + '($|[\\s),/—])', 'i').test(texto);
+}
 
-  const nomeExato = (texto, nome) => {
-    const escaped = nome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp('(^|[\\s(,/—])' + escaped + '($|[\\s),/—])', 'i').test(texto);
-  };
+function HistoricoAlunoContent({ alunoNome, turmaId, state }) {
+  const td = todayStr();
+  const turmaLabel = turmaId ? getTurmaLabel(state.turmas, turmaId) : null;
 
   const logEntries = arr(state.log)
     .filter(e => {
       const atuouComoAluno = !PROFESSORES.includes(alunoNome) && e.professor === alunoNome;
-      const mencionado = nomeExato(e.descricao, alunoNome);
-      return atuouComoAluno || mencionado;
+      if (atuouComoAluno) return true;
+      if (!nomeExatoMatch(e.descricao, alunoNome)) return false;
+      // Se temos turmaId, só incluir se a descrição menciona a turma deste aluno
+      if (turmaLabel) return e.descricao.includes(turmaLabel);
+      return true;
     })
     .map(e => ({ ts: e.ts, texto: e.descricao, tipo: 'log', autor: e.professor }));
 
   const faltaEvents = state.faltas
-    .filter(f => f.alunoNome === alunoNome)
+    .filter(f => f.alunoNome === alunoNome && (!turmaId || f.turmaId === turmaId))
     .flatMap(f => f.datas.filter(d => d < td).map(d => ({
       ts: d + 'T23:59:00',
       texto: `Faltou — ${getTurmaLabel(state.turmas, f.turmaId)} em ${fmtBRFull(d)}`,
@@ -3446,7 +3450,7 @@ function HistoricoAlunoContent({ alunoNome, state }) {
     })));
 
   const repoEvents = state.reposicoes
-    .filter(r => r.alunoNome === alunoNome && r.realizada)
+    .filter(r => r.alunoNome === alunoNome && r.realizada && (!turmaId || r.turmaOrigemId === turmaId))
     .map(r => ({
       ts: r.dataReposicao + 'T23:58:00',
       texto: `Repôs — ${getTurmaLabel(state.turmas, r.turmaReposicaoId)} em ${fmtBRFull(r.dataReposicao)}`,
@@ -3486,12 +3490,11 @@ function HistoricoAlunoContent({ alunoNome, state }) {
   );
 }
 
-function HistoricoAlunoModal({ alunoNome, state, onClose }) {
-  const turmas = state.turmas.filter(t => t.alunos.includes(alunoNome));
-  const turmaLabel = turmas.length > 0 ? turmas.map(t => getTurmaLabel(state.turmas, t.id)).join(', ') : '';
+function HistoricoAlunoModal({ alunoNome, turmaId, state, onClose }) {
+  const label = turmaId ? getTurmaLabel(state.turmas, turmaId) : null;
   return (
-    <Modal title={`Histórico — ${alunoNome}${turmaLabel ? ` (${turmaLabel})` : ''}`} onClose={onClose}>
-      <HistoricoAlunoContent alunoNome={alunoNome} state={state} />
+    <Modal title={`Histórico — ${alunoNome}${label ? ` (${label})` : ''}`} onClose={onClose}>
+      <HistoricoAlunoContent alunoNome={alunoNome} turmaId={turmaId} state={state} />
     </Modal>
   );
 }
@@ -4736,7 +4739,15 @@ function AlunoView({ state, dispatch, acesso }) {
 function PainelRegistro({ state, dispatch }) {
   const log = arr(state.log);
   const [editing, setEditing] = useState(false);
-  const [historicoModal, setHistoricoModal] = useState(null); // alunoNome
+  const [historicoModal, setHistoricoModal] = useState(null); // { nome, turmaId }
+
+  const abrirHistorico = (nome, descricao) => {
+    // Tenta inferir turmaId pelo label da turma mencionado na descrição
+    const turmasDoAluno = state.turmas.filter(t => t.alunos.includes(nome));
+    const turmaEncontrada = turmasDoAluno.find(t => descricao.includes(getTurmaLabel(state.turmas, t.id)));
+    const turmaId = turmaEncontrada?.id || (turmasDoAluno.length === 1 ? turmasDoAluno[0].id : null);
+    setHistoricoModal({ nome, turmaId });
+  };
 
   const allAlunoNames = useMemo(() =>
     [...new Set(state.turmas.flatMap(t => t.alunos))].sort((a,b) => b.length - a.length), // longest first to avoid partial matches
@@ -4756,7 +4767,7 @@ function PainelRegistro({ state, dispatch }) {
         while ((match = regex.exec(part)) !== null) {
           const start = match.index + match[1].length;
           if (start > last) newParts.push(part.slice(last, start));
-          newParts.push(<span key={nome+start} onClick={() => setHistoricoModal(nome)} className="text-blue-600 hover:underline cursor-pointer font-medium">{match[2]}</span>);
+          newParts.push(<span key={nome+start} onClick={() => abrirHistorico(nome, descricao)} className="text-blue-600 hover:underline cursor-pointer font-medium">{match[2]}</span>);
           last = start + nome.length;
           regex.lastIndex = last;
         }
@@ -4777,7 +4788,7 @@ function PainelRegistro({ state, dispatch }) {
 
   return (
     <div>
-      {historicoModal && <HistoricoAlunoModal alunoNome={historicoModal} state={state} onClose={() => setHistoricoModal(null)} />}
+      {historicoModal && <HistoricoAlunoModal alunoNome={historicoModal.nome} turmaId={historicoModal.turmaId} state={state} onClose={() => setHistoricoModal(null)} />}
       {canEdit && (
         <div className="flex justify-end mb-3">
           <button
