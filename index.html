@@ -3424,7 +3424,11 @@ function HistoricoAlunoContent({ alunoNome, state }) {
   const td = todayStr();
 
   const logEntries = arr(state.log)
-    .filter(e => e.professor === alunoNome || e.descricao.includes(alunoNome))
+    .filter(e => {
+      const atuouComoAluno = !PROFESSORES.includes(alunoNome) && e.professor === alunoNome;
+      const mencionado = e.descricao.includes(alunoNome);
+      return atuouComoAluno || mencionado;
+    })
     .map(e => ({ ts: e.ts, texto: e.descricao, tipo: 'log', autor: e.professor }));
 
   const faltaEvents = state.faltas
