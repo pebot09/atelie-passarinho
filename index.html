@@ -1550,9 +1550,23 @@ function TabRegistrarFalta({ state, dispatch }) {
   const [success, setSuccess] = useState('');
   const [tiposModal, setTiposModal] = useState(null); // [{data, semAntecedencia}] for dates <24h
 
+  const professor = localStorage.getItem(PROFESSOR_KEY) || '';
+  const isProfessor = PROFESSORES.includes(professor);
+
   const sorted = useMemo(() => sortTurmas(state.turmas), [state.turmas]);
   const turma = state.turmas.find(t => t.id === turmaId);
-  const occurrences = useMemo(() => turma ? getNextOccurrences(turma.diaSemana, 8) : [], [turma]);
+
+  const occurrences = useMemo(() => {
+    if (!turma) return [];
+    const td = todayStr();
+    const futureDates = getNextOccurrences(turma.diaSemana, 8);
+    if (!isProfessor) return futureDates;
+    // Past dates within the 30-day validity window (expiry = date + 30 days >= today)
+    const from30ago = (() => { const d = new Date(); d.setDate(d.getDate() - 30); return dateToStr(d); })();
+    const yesterday = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return dateToStr(d); })();
+    const pastDates = getClassDatesInRange(turma, from30ago, yesterday);
+    return [...pastDates, ...futureDates]; // chronological order
+  }, [turma, isProfessor]);
 
   const toggleDate = d => setSelectedDates(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]);
 
@@ -1567,7 +1581,10 @@ function TabRegistrarFalta({ state, dispatch }) {
 
   const handleSubmit = () => {
     if (!turmaId || !alunoNome || !selectedDates.length) return;
+    const td = todayStr();
+    // Past dates are always semAntecedencia; future dates within 24h show modal
     const menosde24h = selectedDates.filter(d => {
+      if (d < td) return false; // retroativas não precisam de modal
       const dt = getClassDatetime(turmaId, d, state.turmas);
       if (!dt) return false;
       const horas = (dt - Date.now()) / 3600000;
@@ -1577,7 +1594,7 @@ function TabRegistrarFalta({ state, dispatch }) {
       setTiposModal(menosde24h.map(d => ({ data: d, semAntecedencia: true })));
       return;
     }
-    doSubmit(selectedDates.map(d => ({ data: d, semAntecedencia: false })));
+    doSubmit(selectedDates.map(d => ({ data: d, semAntecedencia: d < td })));
   };
 
   return (
@@ -1605,9 +1622,11 @@ function TabRegistrarFalta({ state, dispatch }) {
 
       {turma && alunoNome && (
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Datas da falta (próximas ocorrências)</label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Datas da falta</label>
           <div className="grid grid-cols-2 gap-2">
             {occurrences.map(d => {
+              const td = todayStr();
+              const isRetroativa = d < td;
               const feriadoNome = getFeriadoNome(d);
               const recessoNome = !feriadoNome ? getRecessoNome(d) : null;
               const jaRegistrado = !feriadoNome && !recessoNome && state.faltas.some(f =>
@@ -1632,6 +1651,7 @@ function TabRegistrarFalta({ state, dispatch }) {
                     {feriadoNome && <span className="ml-1 text-xs text-purple-500 font-medium">🎌 {feriadoNome}</span>}
                     {recessoNome && <span className="ml-1 text-xs text-amber-600 font-medium">🏠 {recessoNome}</span>}
                     {!feriadoNome && !recessoNome && jaRegistrado && <span className="ml-1 text-xs text-orange-500 font-medium">já registrado</span>}
+                    {!feriadoNome && !recessoNome && !jaRegistrado && isRetroativa && <span className="ml-1 text-xs text-purple-500 font-medium">retroativa</span>}
                   </span>
                 </label>
               );
