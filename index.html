@@ -1582,19 +1582,19 @@ function TabRegistrarFalta({ state, dispatch }) {
   const handleSubmit = () => {
     if (!turmaId || !alunoNome || !selectedDates.length) return;
     const td = todayStr();
-    // Past dates are always semAntecedencia; future dates within 24h show modal
-    const menosde24h = selectedDates.filter(d => {
-      if (d < td) return false; // retroativas não precisam de modal
+    // Retroativas e <24h vão para o modal de classificação
+    const precisamModal = selectedDates.filter(d => {
+      if (d < td) return true; // retroativa — perguntar
       const dt = getClassDatetime(turmaId, d, state.turmas);
       if (!dt) return false;
       const horas = (dt - Date.now()) / 3600000;
       return horas >= 0 && horas < 24;
     });
-    if (menosde24h.length > 0) {
-      setTiposModal(menosde24h.map(d => ({ data: d, semAntecedencia: true })));
+    if (precisamModal.length > 0) {
+      setTiposModal(precisamModal.map(d => ({ data: d, semAntecedencia: true })));
       return;
     }
-    doSubmit(selectedDates.map(d => ({ data: d, semAntecedencia: d < td })));
+    doSubmit(selectedDates.map(d => ({ data: d, semAntecedencia: false })));
   };
 
   return (
@@ -1662,11 +1662,17 @@ function TabRegistrarFalta({ state, dispatch }) {
 
       {tiposModal && (
         <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 space-y-3">
-          <div className="font-semibold text-orange-800 text-sm">⚠️ Falta registrada com menos de 24h de antecedência</div>
-          <div className="text-xs text-orange-700">Classifique cada data:</div>
-          {tiposModal.map((item, i) => (
+          <div className="font-semibold text-orange-800 text-sm">⚠️ Classifique as faltas</div>
+          <div className="text-xs text-orange-700">Escolha o tipo de cada falta registrada:</div>
+          {tiposModal.map((item, i) => {
+            const td = todayStr();
+            const isRetro = item.data < td;
+            return (
             <div key={item.data} className="flex items-center justify-between gap-3">
-              <span className="text-sm font-medium text-gray-800">{fmtBRFull(item.data)}</span>
+              <span className="text-sm font-medium text-gray-800">
+                {fmtBRFull(item.data)}
+                {isRetro && <span className="ml-1.5 text-xs text-purple-500 font-medium">retroativa</span>}
+              </span>
               <div className="flex gap-2">
                 <button
                   onClick={() => setTiposModal(prev => prev.map((x, j) => j === i ? { ...x, semAntecedencia: false } : x))}
@@ -1680,7 +1686,7 @@ function TabRegistrarFalta({ state, dispatch }) {
                 </button>
               </div>
             </div>
-          ))}
+          ); })}
           <div className="flex gap-2 pt-1">
             <button onClick={() => setTiposModal(null)} className="flex-1 py-2 border border-gray-300 rounded-lg text-sm text-gray-600">Cancelar</button>
             <button onClick={() => {
