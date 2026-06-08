@@ -485,6 +485,41 @@ function reducer(state, action) {
       break;
     }
 
+    case 'CHANGE_TURMA_ALUNO': {
+      const { oldTurmaId, newTurmaId, alunoNome: ctaNome } = action;
+      if (!newTurmaId || oldTurmaId === newTurmaId) { next = state; break; }
+      const newTurmasCT = state.turmas.map(t => {
+        if (t.id === oldTurmaId) return { ...t, alunos: t.alunos.filter(a => a !== ctaNome) };
+        if (t.id === newTurmaId) return { ...t, alunos: t.alunos.includes(ctaNome) ? t.alunos : [...t.alunos, ctaNome] };
+        return t;
+      });
+      const newFaltasCT = state.faltas.map(f =>
+        f.turmaId === oldTurmaId && f.alunoNome === ctaNome ? { ...f, turmaId: newTurmaId } : f
+      );
+      const newReposCT = state.reposicoes.map(r =>
+        r.turmaOrigemId === oldTurmaId && r.alunoNome === ctaNome && !r.realizada ? { ...r, turmaOrigemId: newTurmaId } : r
+      );
+      const newAusenciasCT = state.ausencias.map(a =>
+        a.turmaId === oldTurmaId && a.alunoNome === ctaNome ? { ...a, turmaId: newTurmaId } : a
+      );
+      const newAcessosCT = (state.acessos || []).map(a =>
+        a.turmaId === oldTurmaId && a.alunoNome === ctaNome ? { ...a, turmaId: newTurmaId } : a
+      );
+      const faltaIdsCT = new Set(state.faltas.filter(f => f.turmaId === oldTurmaId && f.alunoNome === ctaNome).map(f => f.id));
+      const newVagasCT = state.vagas.map(v => v.faltaId && faltaIdsCT.has(v.faltaId) ? { ...v, turmaId: newTurmaId } : v);
+      const tdCT = todayStr();
+      const oldLblCT = getTurmaLabel(state.turmas, oldTurmaId);
+      const newLblCT = getTurmaLabel(state.turmas, newTurmaId);
+      next = {
+        ...state,
+        turmas: newTurmasCT, faltas: newFaltasCT, reposicoes: newReposCT,
+        ausencias: newAusenciasCT, acessos: newAcessosCT,
+        vagas: computeVagasExtras(newTurmasCT, newFaltasCT, newReposCT, newVagasCT, tdCT, newAusenciasCT),
+        log: addLog(state.log, action.professor, `Moveu ${ctaNome} de ${oldLblCT} para ${newLblCT}`),
+      };
+      break;
+    }
+
     case 'ADD_FALTA': {
       const { alunoNome, turmaId } = action;
       const datasComTipoRaw = action.datasComTipo || (action.datas || []).map(d => ({ data: d, semAntecedencia: false }));
@@ -1337,21 +1372,17 @@ function SectionTurmas({ state, dispatch }) {
   const [showNewTurma, setShowNewTurma] = useState(false);
   const [editObs, setEditObs] = useState({});
   const [showGerarLink, setShowGerarLink] = useState(false);
-  const [renamingAluno, setRenamingAluno] = useState(null); // { turmaId, nome }
-  const [renameValue, setRenameValue] = useState('');
+  const [gerenciandoTurma, setGerenciandoTurma] = useState(null); // turma obj
+  const [historicoAberto, setHistoricoAberto] = useState({}); // { 'turmaId|nome': bool }
 
   const sorted = useMemo(() => sortTurmas(state.turmas), [state.turmas]);
 
-  const hasPendencies = (turmaId, alunoNome) => {
-    return state.faltas.some(f => f.turmaId === turmaId && f.alunoNome === alunoNome && f.status === 'pendente') ||
-           state.reposicoes.some(r => r.turmaOrigemId === turmaId && r.alunoNome === alunoNome && !r.realizada);
-  };
-
-  const horarios = ['07h','08h','09h','10h','11h','12h','13h','14h','15h','16h','17h','18h','19h','20h','21h'];
+  const horarios =['07h','08h','09h','10h','11h','12h','13h','14h','15h','16h','17h','18h','19h','20h','21h'];
 
   return (
     <div className="max-w-4xl mx-auto p-4 space-y-3">
       {showGerarLink && <GerarLinkModal state={state} dispatch={dispatch} onClose={() => setShowGerarLink(false)} />}
+      {gerenciandoTurma && <GerenciarAlunoModal turma={gerenciandoTurma} state={state} dispatch={dispatch} onClose={() => setGerenciandoTurma(null)} />}
       <div className="flex justify-between items-center mb-2">
         <h2 className="text-xl font-bold text-gray-800">Turmas</h2>
         <div className="flex gap-2">
@@ -1382,6 +1413,10 @@ function SectionTurmas({ state, dispatch }) {
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                <button onClick={e => { e.stopPropagation(); setGerenciandoTurma(turma); }}
+                  className="text-xs font-medium px-2.5 py-1 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors">
+                  Gerenciar
+                </button>
                 <button onClick={e => { e.stopPropagation(); setConfirm({type:'deleteTurma', turma}); }} className="text-red-400 hover:text-red-600 text-sm px-2">Excluir</button>
                 <span className="text-gray-400 text-lg">{exp ? '▲' : '▼'}</span>
               </div>
@@ -1405,37 +1440,23 @@ function SectionTurmas({ state, dispatch }) {
                 <div className="space-y-1 mb-3">
                   {turma.alunos.length === 0 && <p className="text-gray-400 text-sm italic">Nenhum aluno cadastrado</p>}
                   {[...turma.alunos].sort((a,b) => a.localeCompare(b,'pt')).map(nome => {
-                    const isRenaming = renamingAluno?.turmaId === turma.id && renamingAluno?.nome === nome;
-                    const commitRename = () => {
-                      const n = renameValue.trim();
-                      if (n && n !== nome) dispatch({ type: 'RENAME_ALUNO', turmaId: turma.id, oldNome: nome, newNome: n });
-                      setRenamingAluno(null);
-                    };
+                    const hKey = turma.id + '|' + nome;
+                    const hOpen = !!historicoAberto[hKey];
                     return (
-                      <div key={nome} className="flex justify-between items-center py-1.5 px-2 rounded-lg hover:bg-gray-50">
-                        {isRenaming ? (
-                          <input
-                            className="flex-1 border border-blue-400 rounded-lg px-2 py-0.5 text-sm mr-2 focus:outline-none focus:ring-2 focus:ring-blue-300"
-                            value={renameValue}
-                            onChange={e => setRenameValue(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenamingAluno(null); }}
-                            onBlur={commitRename}
-                            autoFocus
-                          />
-                        ) : (
-                          <span
-                            className="text-sm text-gray-700 cursor-pointer hover:text-blue-600 hover:underline"
-                            onClick={() => { setRenamingAluno({ turmaId: turma.id, nome }); setRenameValue(nome); }}
-                            title="Clique para renomear"
-                          >{nome}</span>
+                      <div key={nome} className="rounded-lg hover:bg-gray-50">
+                        <div className="flex justify-between items-center py-1.5 px-2">
+                          <span className="text-sm text-gray-700">{nome}</span>
+                          <button
+                            onClick={() => setHistoricoAberto(h => ({ ...h, [hKey]: !h[hKey] }))}
+                            className={`text-xs px-2 py-0.5 rounded-full border transition-colors shrink-0 ${hOpen ? 'bg-gray-200 border-gray-300 text-gray-700' : 'border-gray-200 text-gray-400 hover:text-gray-600 hover:border-gray-300'}`}
+                            title="Ver histórico"
+                          >📋</button>
+                        </div>
+                        {hOpen && (
+                          <div className="px-3 pb-2 pt-1 border-t border-gray-100 fade-in">
+                            <HistoricoAlunoContent alunoNome={nome} state={state} />
+                          </div>
                         )}
-                        <button onClick={() => {
-                          if (hasPendencies(turma.id, nome)) {
-                            setConfirm({type:'removeAlunoPendencias', turma, nome});
-                          } else {
-                            setConfirm({type:'removeAluno', turma, nome});
-                          }
-                        }} className="text-red-400 hover:text-red-600 text-xs px-2 shrink-0">Remover</button>
                       </div>
                     );
                   })}
@@ -1515,24 +1536,6 @@ function SectionTurmas({ state, dispatch }) {
           onConfirm={() => { dispatch({type:'DELETE_TURMA', id: confirm.turma.id}); setConfirm(null); }}
           onCancel={() => setConfirm(null)}
           confirmLabel="Excluir"
-        />
-      )}
-      {confirm?.type === 'removeAluno' && (
-        <ConfirmModal
-          title="Remover aluno?" danger
-          message={`Remover ${confirm.nome} da turma ${ABREV[confirm.turma.diaSemana]} ${confirm.turma.horario}?`}
-          onConfirm={() => { dispatch({type:'REMOVE_ALUNO', turmaId: confirm.turma.id, nome: confirm.nome}); setConfirm(null); }}
-          onCancel={() => setConfirm(null)}
-          confirmLabel="Remover"
-        />
-      )}
-      {confirm?.type === 'removeAlunoPendencias' && (
-        <ConfirmModal
-          title="Aluno com pendências" danger
-          message={`${confirm.nome} possui faltas ou reposições pendentes. Remover mesmo assim?`}
-          onConfirm={() => { dispatch({type:'REMOVE_ALUNO', turmaId: confirm.turma.id, nome: confirm.nome}); setConfirm(null); }}
-          onCancel={() => setConfirm(null)}
-          confirmLabel="Remover mesmo assim"
         />
       )}
     </div>
@@ -3396,6 +3399,163 @@ function ProfessorModal({ onSelect }) {
   );
 }
 
+// ==================== HISTÓRICO PESSOAL DO ALUNO ====================
+function HistoricoAlunoContent({ alunoNome, state }) {
+  const td = todayStr();
+
+  const logEntries = arr(state.log)
+    .filter(e => e.professor === alunoNome || e.descricao.includes(alunoNome))
+    .map(e => ({ ts: e.ts, texto: e.descricao, tipo: 'log' }));
+
+  const faltaEvents = state.faltas
+    .filter(f => f.alunoNome === alunoNome)
+    .flatMap(f => f.datas.filter(d => d < td).map(d => ({
+      ts: d + 'T23:59:00',
+      texto: `Faltou — ${getTurmaLabel(state.turmas, f.turmaId)} em ${fmtBRFull(d)}`,
+      tipo: 'falta'
+    })));
+
+  const repoEvents = state.reposicoes
+    .filter(r => r.alunoNome === alunoNome && r.realizada)
+    .map(r => ({
+      ts: r.dataReposicao + 'T23:58:00',
+      texto: `Repôs — ${getTurmaLabel(state.turmas, r.turmaReposicaoId)} em ${fmtBRFull(r.dataReposicao)}`,
+      tipo: 'repo'
+    }));
+
+  const all = [...logEntries, ...faltaEvents, ...repoEvents]
+    .sort((a, b) => b.ts.localeCompare(a.ts));
+
+  if (all.length === 0) return <p className="text-xs text-gray-400 py-2 italic">Sem histórico registrado.</p>;
+
+  return (
+    <div className="space-y-1">
+      {all.map((e, i) => {
+        const dt = new Date(e.ts);
+        const dataHora = dt.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' }) +
+          (e.tipo === 'log' ? ' ' + dt.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' }) : '');
+        return (
+          <div key={i} className="flex items-start gap-2 text-xs py-0.5">
+            <span className={`shrink-0 mt-0.5 ${e.tipo === 'falta' ? 'text-red-400' : e.tipo === 'repo' ? 'text-blue-400' : 'text-gray-400'}`}>
+              {e.tipo === 'falta' ? '✗' : e.tipo === 'repo' ? '↩' : '•'}
+            </span>
+            <span className="text-gray-700 flex-1">{e.texto}</span>
+            <span className="text-gray-300 shrink-0">{dataHora}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function HistoricoAlunoModal({ alunoNome, state, onClose }) {
+  const turmas = state.turmas.filter(t => t.alunos.includes(alunoNome));
+  const turmaLabel = turmas.length > 0 ? turmas.map(t => getTurmaLabel(state.turmas, t.id)).join(', ') : '';
+  return (
+    <Modal title={`Histórico — ${alunoNome}${turmaLabel ? ` (${turmaLabel})` : ''}`} onClose={onClose}>
+      <HistoricoAlunoContent alunoNome={alunoNome} state={state} />
+    </Modal>
+  );
+}
+
+// ==================== GERENCIAR ALUNO MODAL ====================
+function GerenciarAlunoModal({ turma, state, dispatch, onClose }) {
+  const td = todayStr();
+  const [renames, setRenames] = useState({});
+  const [confirmRemove, setConfirmRemove] = useState(null);
+  const otherTurmas = useMemo(() => sortTurmas(state.turmas).filter(t => t.id !== turma.id), [state.turmas, turma.id]);
+
+  const canChangeTurma = (nome) => {
+    const hasFutureFalta = state.faltas.some(f =>
+      f.turmaId === turma.id && f.alunoNome === nome && f.datas.some(d => d >= td)
+    );
+    if (hasFutureFalta) return { can: false, reason: 'tem faltas futuras marcadas' };
+    const hasFutureAusencia = state.ausencias.some(a =>
+      a.turmaId === turma.id && a.alunoNome === nome && a.mesAno >= td.slice(0, 7)
+    );
+    if (hasFutureAusencia) return { can: false, reason: 'tem férias futuras marcadas' };
+    return { can: true };
+  };
+
+  const hasPendencies = (nome) =>
+    state.faltas.some(f => f.turmaId === turma.id && f.alunoNome === nome && f.status === 'pendente') ||
+    state.reposicoes.some(r => r.turmaOrigemId === turma.id && r.alunoNome === nome && !r.realizada);
+
+  const handleRename = (oldNome) => {
+    const n = (renames[oldNome] ?? oldNome).trim();
+    if (n && n !== oldNome) dispatch({ type: 'RENAME_ALUNO', turmaId: turma.id, oldNome, newNome: n });
+  };
+
+  const sorted = useMemo(() => [...turma.alunos].sort((a,b) => a.localeCompare(b,'pt')), [turma.alunos]);
+
+  return (
+    <Modal title={`Gerenciar alunos — ${ABREV[turma.diaSemana]} ${turma.horario}`} onClose={onClose}>
+      {confirmRemove && (
+        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm space-y-2">
+          <p className="text-red-700 font-medium">Remover <strong>{confirmRemove}</strong> da turma?</p>
+          {hasPendencies(confirmRemove) && <p className="text-red-500 text-xs">⚠️ Este aluno tem faltas ou reposições pendentes.</p>}
+          <div className="flex gap-2">
+            <button onClick={() => { dispatch({ type:'REMOVE_ALUNO', turmaId: turma.id, nome: confirmRemove }); onClose(); }}
+              className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs hover:bg-red-700">Confirmar</button>
+            <button onClick={() => setConfirmRemove(null)} className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs">Cancelar</button>
+          </div>
+        </div>
+      )}
+      <div className="space-y-2">
+        {sorted.map(nome => {
+          const changeable = canChangeTurma(nome);
+          const renameVal = renames[nome] !== undefined ? renames[nome] : nome;
+          return (
+            <div key={nome} className="border border-gray-100 rounded-xl p-3 bg-gray-50 space-y-2">
+              {/* Nome / Rename */}
+              <div className="flex gap-2 items-center">
+                <input
+                  className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white"
+                  value={renameVal}
+                  onChange={e => setRenames(r => ({ ...r, [nome]: e.target.value }))}
+                  onKeyDown={e => { if (e.key === 'Enter') { handleRename(nome); onClose(); } }}
+                />
+                {renameVal.trim() !== nome && renameVal.trim() !== '' && (
+                  <button onClick={() => { handleRename(nome); onClose(); }}
+                    className="text-xs px-2.5 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shrink-0">
+                    Salvar
+                  </button>
+                )}
+              </div>
+              {/* Trocar turma */}
+              <div className="flex items-center gap-2">
+                <select
+                  disabled={!changeable.can}
+                  value=""
+                  onChange={e => {
+                    if (e.target.value) {
+                      dispatch({ type:'CHANGE_TURMA_ALUNO', oldTurmaId: turma.id, newTurmaId: e.target.value, alunoNome: nome });
+                      onClose();
+                    }
+                  }}
+                  className={`flex-1 border rounded-lg px-2 py-1.5 text-sm ${!changeable.can ? 'opacity-50 bg-gray-100 cursor-not-allowed' : 'border-gray-300 bg-white'}`}
+                >
+                  <option value="">Mover para outra turma…</option>
+                  {otherTurmas.map(t => <option key={t.id} value={t.id}>{getTurmaLabel(state.turmas, t.id)}</option>)}
+                </select>
+                {!changeable.can && (
+                  <span className="text-xs text-amber-600 shrink-0" title={changeable.reason}>⚠️ {changeable.reason}</span>
+                )}
+              </div>
+              {/* Remover */}
+              <button onClick={() => setConfirmRemove(nome)}
+                className="text-xs text-red-400 hover:text-red-600 transition-colors">
+                Remover aluno
+              </button>
+            </div>
+          );
+        })}
+        {sorted.length === 0 && <p className="text-sm text-gray-400 text-center py-4">Nenhum aluno nesta turma.</p>}
+      </div>
+    </Modal>
+  );
+}
+
 // ==================== RESUMO DE HOJE ====================
 function ResumoHoje({ state }) {
   const td = todayStr();
@@ -3763,6 +3923,7 @@ function AlunoView({ state, dispatch, acesso }) {
     return state.vagas
       .filter(v => {
         if (v.data < td) return false;
+        if (v.turmaId === turmaId) return false; // nunca mostrar a própria turma
         const dt = getClassDatetime(v.turmaId, v.data, state.turmas);
         if (dt && dt.getTime() <= now) return false; // remove quando a aula começa
         return true;
@@ -4537,6 +4698,29 @@ function AlunoView({ state, dispatch, acesso }) {
 function PainelRegistro({ state, dispatch }) {
   const log = arr(state.log);
   const [editing, setEditing] = useState(false);
+  const [historicoModal, setHistoricoModal] = useState(null); // alunoNome
+
+  const allAlunoNames = useMemo(() =>
+    [...new Set(state.turmas.flatMap(t => t.alunos))].sort((a,b) => b.length - a.length), // longest first to avoid partial matches
+    [state.turmas]
+  );
+
+  const renderDesc = (descricao) => {
+    let parts = [descricao];
+    for (const nome of allAlunoNames) {
+      const newParts = [];
+      for (const part of parts) {
+        if (typeof part !== 'string') { newParts.push(part); continue; }
+        const idx = part.indexOf(nome);
+        if (idx === -1) { newParts.push(part); continue; }
+        if (idx > 0) newParts.push(part.slice(0, idx));
+        newParts.push(<span key={nome+idx} onClick={() => setHistoricoModal(nome)} className="text-blue-600 hover:underline cursor-pointer font-medium">{nome}</span>);
+        newParts.push(part.slice(idx + nome.length));
+      }
+      parts = newParts;
+    }
+    return parts;
+  };
 
   const professor = localStorage.getItem(PROFESSOR_KEY) || '';
   const isDesktop = window.matchMedia('(pointer: fine)').matches;
@@ -4548,6 +4732,7 @@ function PainelRegistro({ state, dispatch }) {
 
   return (
     <div>
+      {historicoModal && <HistoricoAlunoModal alunoNome={historicoModal} state={state} onClose={() => setHistoricoModal(null)} />}
       {canEdit && (
         <div className="flex justify-end mb-3">
           <button
@@ -4578,7 +4763,7 @@ function PainelRegistro({ state, dispatch }) {
                 {entry.professor}
               </span>
               <div className="flex-1 min-w-0">
-                <p className="text-sm text-gray-800">{entry.descricao}</p>
+                <p className="text-sm text-gray-800">{renderDesc(entry.descricao)}</p>
                 <p className="text-xs text-gray-400 mt-0.5">{dataHora}</p>
               </div>
             </div>
