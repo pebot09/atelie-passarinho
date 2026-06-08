@@ -3423,10 +3423,15 @@ function ProfessorModal({ onSelect }) {
 function HistoricoAlunoContent({ alunoNome, state }) {
   const td = todayStr();
 
+  const nomeExato = (texto, nome) => {
+    const escaped = nome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp('(^|[\\s(,/—])' + escaped + '($|[\\s),/—])', 'i').test(texto);
+  };
+
   const logEntries = arr(state.log)
     .filter(e => {
       const atuouComoAluno = !PROFESSORES.includes(alunoNome) && e.professor === alunoNome;
-      const mencionado = e.descricao.includes(alunoNome);
+      const mencionado = nomeExato(e.descricao, alunoNome);
       return atuouComoAluno || mencionado;
     })
     .map(e => ({ ts: e.ts, texto: e.descricao, tipo: 'log', autor: e.professor }));
@@ -4741,14 +4746,21 @@ function PainelRegistro({ state, dispatch }) {
   const renderDesc = (descricao) => {
     let parts = [descricao];
     for (const nome of allAlunoNames) {
+      const escaped = nome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp('(^|[\\s(,/—])(' + escaped + ')($|[\\s),/—])', 'gi');
       const newParts = [];
       for (const part of parts) {
         if (typeof part !== 'string') { newParts.push(part); continue; }
-        const idx = part.indexOf(nome);
-        if (idx === -1) { newParts.push(part); continue; }
-        if (idx > 0) newParts.push(part.slice(0, idx));
-        newParts.push(<span key={nome+idx} onClick={() => setHistoricoModal(nome)} className="text-blue-600 hover:underline cursor-pointer font-medium">{nome}</span>);
-        newParts.push(part.slice(idx + nome.length));
+        let last = 0, match;
+        regex.lastIndex = 0;
+        while ((match = regex.exec(part)) !== null) {
+          const start = match.index + match[1].length;
+          if (start > last) newParts.push(part.slice(last, start));
+          newParts.push(<span key={nome+start} onClick={() => setHistoricoModal(nome)} className="text-blue-600 hover:underline cursor-pointer font-medium">{match[2]}</span>);
+          last = start + nome.length;
+          regex.lastIndex = last;
+        }
+        if (last < part.length) newParts.push(part.slice(last));
       }
       parts = newParts;
     }
