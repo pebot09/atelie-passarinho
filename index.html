@@ -3425,14 +3425,15 @@ function HistoricoAlunoContent({ alunoNome, state }) {
 
   const logEntries = arr(state.log)
     .filter(e => e.professor === alunoNome || e.descricao.includes(alunoNome))
-    .map(e => ({ ts: e.ts, texto: e.descricao, tipo: 'log' }));
+    .map(e => ({ ts: e.ts, texto: e.descricao, tipo: 'log', autor: e.professor }));
 
   const faltaEvents = state.faltas
     .filter(f => f.alunoNome === alunoNome)
     .flatMap(f => f.datas.filter(d => d < td).map(d => ({
       ts: d + 'T23:59:00',
       texto: `Faltou — ${getTurmaLabel(state.turmas, f.turmaId)} em ${fmtBRFull(d)}`,
-      tipo: 'falta'
+      tipo: 'falta',
+      autor: f.criadoPor || null
     })));
 
   const repoEvents = state.reposicoes
@@ -3440,7 +3441,8 @@ function HistoricoAlunoContent({ alunoNome, state }) {
     .map(r => ({
       ts: r.dataReposicao + 'T23:58:00',
       texto: `Repôs — ${getTurmaLabel(state.turmas, r.turmaReposicaoId)} em ${fmtBRFull(r.dataReposicao)}`,
-      tipo: 'repo'
+      tipo: 'repo',
+      autor: r.criadoPor || null
     }));
 
   const all = [...logEntries, ...faltaEvents, ...repoEvents]
@@ -3454,12 +3456,19 @@ function HistoricoAlunoContent({ alunoNome, state }) {
         const dt = new Date(e.ts);
         const dataHora = dt.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' }) +
           (e.tipo === 'log' ? ' ' + dt.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' }) : '');
+        const autorColors = e.autor ? (PROFESSOR_COLORS[e.autor] || { bg:'bg-gray-100', text:'text-gray-600', dot:'bg-gray-400' }) : null;
         return (
-          <div key={i} className="flex items-start gap-2 text-xs py-0.5">
+          <div key={i} className="flex items-start gap-2 text-xs py-1 border-b border-gray-50 last:border-0">
             <span className={`shrink-0 mt-0.5 ${e.tipo === 'falta' ? 'text-red-400' : e.tipo === 'repo' ? 'text-blue-400' : 'text-gray-400'}`}>
               {e.tipo === 'falta' ? '✗' : e.tipo === 'repo' ? '↩' : '•'}
             </span>
             <span className="text-gray-700 flex-1">{e.texto}</span>
+            {e.autor && (
+              <span className={`inline-flex items-center gap-1 font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap shrink-0 ${autorColors.bg} ${autorColors.text}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${autorColors.dot}`}></span>
+                {e.autor}
+              </span>
+            )}
             <span className="text-gray-300 shrink-0">{dataHora}</span>
           </div>
         );
