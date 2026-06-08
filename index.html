@@ -4754,29 +4754,7 @@ function PainelRegistro({ state, dispatch }) {
     [state.turmas]
   );
 
-  const renderDesc = (descricao) => {
-    let parts = [descricao];
-    for (const nome of allAlunoNames) {
-      const escaped = nome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = new RegExp('(^|[\\s(,/—])(' + escaped + ')($|[\\s),/—])', 'gi');
-      const newParts = [];
-      for (const part of parts) {
-        if (typeof part !== 'string') { newParts.push(part); continue; }
-        let last = 0, match;
-        regex.lastIndex = 0;
-        while ((match = regex.exec(part)) !== null) {
-          const start = match.index + match[1].length;
-          if (start > last) newParts.push(part.slice(last, start));
-          newParts.push(<span key={nome+start} onClick={() => abrirHistorico(nome, descricao)} className="text-blue-600 hover:underline cursor-pointer font-medium">{match[2]}</span>);
-          last = start + nome.length;
-          regex.lastIndex = last;
-        }
-        if (last < part.length) newParts.push(part.slice(last));
-      }
-      parts = newParts;
-    }
-    return parts;
-  };
+  const renderDesc = (descricao) => descricao;
 
   const professor = localStorage.getItem(PROFESSOR_KEY) || '';
   const isDesktop = window.matchMedia('(pointer: fine)').matches;
@@ -4814,10 +4792,17 @@ function PainelRegistro({ state, dispatch }) {
                   title="Apagar este registro"
                 >✕</button>
               )}
-              <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap mt-0.5 ${c.bg} ${c.text}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`}></span>
-                {entry.professor}
-              </span>
+              {allAlunoNames.includes(entry.professor)
+                ? <button onClick={() => abrirHistorico(entry.professor, entry.descricao)}
+                    className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap mt-0.5 ${c.bg} ${c.text}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`}></span>
+                    {entry.professor}
+                  </button>
+                : <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap mt-0.5 ${c.bg} ${c.text}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`}></span>
+                    {entry.professor}
+                  </span>
+              }
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-gray-800">{renderDesc(entry.descricao)}</p>
                 <p className="text-xs text-gray-400 mt-0.5">{dataHora}</p>
