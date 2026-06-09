@@ -1411,8 +1411,7 @@ function HistoricoAlunoContent({ alunoNome, turmaId, state }) {
   const logEntries = arr(state.log)
     .filter(e => {
       const atuouComoAluno = !PROFESSORES.includes(alunoNome) && e.professor === alunoNome;
-      if (atuouComoAluno) return true;
-      if (!nomeExatoMatch(e.descricao, alunoNome)) return false;
+      if (!atuouComoAluno && !nomeExatoMatch(e.descricao, alunoNome)) return false;
       if (turmaLabel) return e.descricao.includes(turmaLabel);
       return true;
     })
