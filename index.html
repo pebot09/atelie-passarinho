@@ -1398,6 +1398,72 @@ function GerarLinkModal({ state, dispatch, onClose }) {
   );
 }
 
+// ==================== HISTÓRICO DO ALUNO (inline na seção Turmas) ====================
+function HistoricoAlunoContent({ alunoNome, turmaId, state }) {
+  const td = todayStr();
+  const faltas = state.faltas
+    .filter(f => f.alunoNome === alunoNome && f.turmaId === turmaId)
+    .sort((a, b) => b.datas[0].localeCompare(a.datas[0]));
+  const reposicoes = state.reposicoes
+    .filter(r => r.alunoNome === alunoNome && r.turmaOrigemId === turmaId)
+    .sort((a, b) => b.dataReposicao.localeCompare(a.dataReposicao));
+
+  if (faltas.length === 0 && reposicoes.length === 0) {
+    return <p className="text-xs text-gray-400 italic py-1">Nenhum registro encontrado.</p>;
+  }
+
+  return (
+    <div className="space-y-2 text-xs">
+      {faltas.length > 0 && (
+        <div>
+          <div className="font-semibold text-gray-500 uppercase tracking-wide mb-1">Faltas</div>
+          <div className="space-y-1">
+            {faltas.map(f => {
+              const repo = f.reposicaoId ? state.reposicoes.find(r => r.id === f.reposicaoId) : null;
+              const tRepo = repo ? state.turmas.find(t => t.id === repo.turmaReposicaoId) : null;
+              const exp = getFaltaExpiry(f);
+              return (
+                <div key={f.id} className="flex items-start justify-between gap-2">
+                  <span className="text-gray-700">{fmtBRFull(f.datas[0])}{f.semAntecedencia ? ' ⏱️' : ''}</span>
+                  {f.status === 'marcada' && repo?.realizada
+                    ? <span className="text-green-600 font-medium shrink-0">✓ Reposta {fmtBR(repo.dataReposicao).slice(0,5)}{tRepo ? ` (${ABREV[tRepo.diaSemana]} ${tRepo.horario})` : ''}</span>
+                    : f.status === 'marcada'
+                    ? <span className="text-blue-600 shrink-0">📅 {fmtBR(repo?.dataReposicao || '').slice(0,5)}</span>
+                    : exp < td
+                    ? <span className="text-red-400 shrink-0">Expirada</span>
+                    : <span className="text-amber-600 shrink-0">Pendente</span>
+                  }
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {reposicoes.length > 0 && (
+        <div>
+          <div className="font-semibold text-gray-500 uppercase tracking-wide mb-1">Reposições</div>
+          <div className="space-y-1">
+            {reposicoes.map(r => {
+              const tRepo = state.turmas.find(t => t.id === r.turmaReposicaoId);
+              return (
+                <div key={r.id} className="flex items-start justify-between gap-2">
+                  <span className="text-gray-700">{fmtBRFull(r.dataReposicao)}{tRepo ? ` (${ABREV[tRepo.diaSemana]} ${tRepo.horario})` : ''}</span>
+                  {r.realizada
+                    ? <span className="text-green-600 font-medium shrink-0">✓ Realizada</span>
+                    : r.dataReposicao < td
+                    ? <span className="text-gray-400 shrink-0">Não realizada</span>
+                    : <span className="text-blue-600 shrink-0">Agendada</span>
+                  }
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ==================== SECTION 1: TURMAS ====================
 function SectionTurmas({ state, dispatch }) {
   const [expandedId, setExpandedId] = useState(null);
