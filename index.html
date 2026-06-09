@@ -4417,20 +4417,22 @@ function AlunoView({ state, dispatch, acesso }) {
     setConfirmCancel(null);
   };
 
-  // Alertas — só faltas expirando em ≤7 dias e reposições próximas
+  // Alertas — faltas expirando em ≤7 dias, faltas expiradas há ≤20 dias, reposições próximas
   const in7 = (() => { const d = new Date(); d.setDate(d.getDate()+7); return dateToStr(d); })();
+  const ago20 = (() => { const d = new Date(); d.setDate(d.getDate()-20); return dateToStr(d); })();
   const alertas = [];
   state.faltas.filter(f => f.alunoNome === alunoNome && f.turmaId === turmaId && f.status === 'pendente').forEach(f => {
     const exp = getFaltaExpiry(f);
     if (exp >= td && exp <= in7) alertas.push({ level:'red', text:`Falta de ${fmtBR(f.datas[0])} expira em ${fmtBRFull(exp)} — marque uma reposição!` });
+    if (exp < td && exp >= ago20) alertas.push({ level:'expired', text:`Falta de ${fmtBR(f.datas[0])} expirou em ${fmtBRFull(exp)}.` });
   });
   minhasRepos.filter(r => { const d = new Date(r.dataReposicao + 'T00:00:00'); return (d - Date.now()) <= 7*24*3600*1000; }).forEach(r => {
     const tRepo = state.turmas.find(t => t.id === r.turmaReposicaoId);
     alertas.push({ level:'blue', text:`Reposição em ${fmtBRFull(r.dataReposicao)} às ${tRepo?.horario || '?'}` });
   });
 
-  const alertColors = { red:'bg-red-50 border-red-200 text-red-700', blue:'bg-blue-50 border-blue-200 text-blue-700' };
-  const alertIcons  = { red:'⚠️', blue:'📅' };
+  const alertColors = { red:'bg-red-50 border-red-200 text-red-700', blue:'bg-blue-50 border-blue-200 text-blue-700', expired:'bg-gray-50 border-gray-200 text-gray-500' };
+  const alertIcons  = { red:'⚠️', blue:'📅', expired:'💨' };
 
   // Minhas faltas — todas as pendentes e marcadas, ordenadas por data
   const minhasFaltas = state.faltas
