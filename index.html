@@ -4150,6 +4150,10 @@ function AlunoView({ state, dispatch, acesso }) {
     state.ausencias.filter(a => a.turmaId === turmaId && a.alunoNome === alunoNome),
     [state.ausencias, alunoNome, turmaId]);
   const ausenciaCredito = ausenciasAtivas.find(a => !a.creditoUsado && a.creditoReposicao > 0) || null;
+  const creditosExtras = useMemo(() =>
+    arr(state.creditos).filter(c => c.alunoNome === alunoNome && !c.usado && c.dataExpiracao >= td),
+    [state.creditos, alunoNome, td]);
+  const [confirmCreditoRepo, setConfirmCreditoRepo] = useState(null);
   const [mesFerias, setMesFerias] = useState('');
   const [successFerias, setSuccessFerias] = useState('');
   const [confirmFeriasRepo, setConfirmFeriasRepo] = useState(null); // vaga para usar crédito férias
@@ -4181,7 +4185,7 @@ function AlunoView({ state, dispatch, acesso }) {
   // Registrar falta — inclui hoje (data some só no dia seguinte)
   const proximasDatas = useMemo(() => {
     const turma = state.turmas.find(t => t.id === turmaId);
-    if (!turma) return [];
+    if (!turma || turma.id === TURMA_EXTRA_ID || !turma.diaSemana) return [];
     const DIAS = { segunda:1, terça:2, quarta:3, quinta:4, sexta:5, sábado:6, domingo:0 };
     const targetDay = DIAS[turma.diaSemana];
     const horaAula = parseInt((turma.horario || '09h').replace('h',''), 10);
@@ -4352,7 +4356,7 @@ function AlunoView({ state, dispatch, acesso }) {
           <button onClick={() => setShowRegras(true)} className="text-xs text-amber-700 border border-amber-300 bg-amber-50 px-2.5 py-1 rounded-lg font-medium hover:bg-amber-100 transition-colors">Regras</button>
           <div className="text-right">
             <div className="text-xs text-gray-400">Sua turma</div>
-            <div className="text-sm font-semibold text-gray-700">{turma ? `${EXTENSO[turma.diaSemana]} ${turma.horario}` : '?'}</div>
+            <div className="text-sm font-semibold text-gray-700">{turma ? (turma.id === TURMA_EXTRA_ID ? 'Turma Extra' : `${EXTENSO[turma.diaSemana]} ${turma.horario}`) : '?'}</div>
           </div>
         </div>
       </div>
@@ -4543,6 +4547,18 @@ function AlunoView({ state, dispatch, acesso }) {
           </div>
         )}
 
+        {/* Crédito extra disponível */}
+        {creditosExtras.length > 0 && (
+          <div className="bg-purple-50 border border-purple-200 rounded-xl px-4 py-3 flex items-start gap-3">
+            <div className="text-xl shrink-0">🎟️</div>
+            <div className="min-w-0">
+              <div className="font-semibold text-purple-800 text-sm">Você tem {creditosExtras.length} crédito{creditosExtras.length > 1 ? 's' : ''} de reposição extra</div>
+              <div className="text-xs text-purple-700 mt-0.5">Expira em {fmtBRFull(creditosExtras[0].dataExpiracao)}</div>
+              <div className="text-xs text-purple-600 mt-1">Abra "Marcar reposição" abaixo para usá-lo.</div>
+            </div>
+          </div>
+        )}
+
         {/* Registrar falta */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <button onClick={() => toggle('falta')} className="w-full px-4 py-3 flex items-center justify-between text-left">
@@ -4630,7 +4646,7 @@ function AlunoView({ state, dispatch, acesso }) {
             const h = (dt - Date.now()) / 3600000;
             return h >= 0 && h <= 2;
           });
-          const cardTitle = (hasPending || (pendingSemAnt.length > 0 && someWithin2h) || !!ausenciaCredito)
+          const cardTitle = (hasPending || (pendingSemAnt.length > 0 && someWithin2h) || !!ausenciaCredito || creditosExtras.length > 0)
             ? 'Marcar reposição' : 'Marcar aula extra';
           const cardIcon = cardTitle === 'Marcar reposição' ? '✅' : '➕';
           return (
@@ -4641,7 +4657,7 @@ function AlunoView({ state, dispatch, acesso }) {
                   <div>
                     <div className="font-semibold text-gray-800 text-sm">{cardTitle}</div>
                     <div className="text-xs text-gray-500">
-                      {ausenciaCredito && !hasPending ? 'Usando crédito de férias' : 'Escolha uma vaga disponível'}
+                      {ausenciaCredito && !hasPending ? 'Usando crédito de férias' : creditosExtras.length > 0 && !hasPending && !ausenciaCredito ? 'Usando crédito extra' : 'Escolha uma vaga disponível'}
                     </div>
                   </div>
                 </div>
@@ -4652,6 +4668,11 @@ function AlunoView({ state, dispatch, acesso }) {
                   {ausenciaCredito && !hasPending && (
                     <div className="px-4 py-2 bg-teal-50 border-b border-teal-100 text-xs text-teal-700 font-medium">
                       🎫 Crédito de férias disponível — escolha qualquer vaga abaixo para sua reposição
+                    </div>
+                  )}
+                  {creditosExtras.length > 0 && !hasPending && !ausenciaCredito && (
+                    <div className="px-4 py-2 bg-purple-50 border-b border-purple-100 text-xs text-purple-700 font-medium">
+                      🎟️ Crédito extra disponível — escolha qualquer vaga abaixo para sua reposição
                     </div>
                   )}
                   {vagasFuturas.length === 0 ? (
@@ -4670,6 +4691,7 @@ function AlunoView({ state, dispatch, acesso }) {
                         const eligibleFaltas = within2h ? allPending : pendingNormal;
                         const canRepor = eligibleFaltas.length > 0;
                         const canUseFerias = !canRepor && !!ausenciaCredito;
+                        const canUseCredito = !canRepor && !canUseFerias && creditosExtras.length > 0;
                         const needsChoice = within2h && pendingNormal.length > 0 && pendingSemAnt.length > 0
                           && pendingNormal[0].datas[0] < pendingSemAnt[0].datas[0];
                         const isMyFeriasVaga = v.ausenciaId && ausenciasAtivas.some(a => a.id === v.ausenciaId);
@@ -4687,12 +4709,14 @@ function AlunoView({ state, dispatch, acesso }) {
                             setTimeout(() => setSuccessRepo(''), 4000);
                           } else if (canUseFerias) {
                             setConfirmFeriasRepo(v);
+                          } else if (canUseCredito) {
+                            setConfirmCreditoRepo(v);
                           } else {
                             setConfirmAulaExtra(v);
                           }
                         };
                         return (
-                          <div key={v.id} className={`px-4 py-3 flex items-center justify-between gap-3 ${isMyFeriasVaga && canUseFerias ? 'bg-teal-50/50' : ''}`}>
+                          <div key={v.id} className={`px-4 py-3 flex items-center justify-between gap-3 ${isMyFeriasVaga && canUseFerias ? 'bg-teal-50/50' : canUseCredito ? 'bg-purple-50/30' : ''}`}>
                             <div>
                               <div className="font-medium text-gray-800 text-sm">{fmtBR(v.data).slice(0,5)}</div>
                               <div className="text-xs text-gray-500">
@@ -4708,9 +4732,10 @@ function AlunoView({ state, dispatch, acesso }) {
                               className={`text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-40 shrink-0 border ${
                                 canRepor ? 'text-blue-600 border-blue-300 bg-blue-50'
                                 : canUseFerias ? 'text-teal-700 border-teal-300 bg-teal-50'
+                                : canUseCredito ? 'text-purple-700 border-purple-300 bg-purple-50'
                                 : 'text-green-700 border-green-300 bg-green-50'
                               }`}>
-                              {canRepor ? 'Repor' : canUseFerias ? 'Repor (férias)' : 'Aula extra'}
+                              {canRepor ? 'Repor' : canUseFerias ? 'Repor (férias)' : canUseCredito ? 'Repor (crédito)' : 'Aula extra'}
                             </button>
                           </div>
                         );
@@ -4740,6 +4765,27 @@ function AlunoView({ state, dispatch, acesso }) {
                 setTimeout(() => setSuccessRepo(''), 4000);
               }}
               onCancel={() => setConfirmFeriasRepo(null)}
+            />
+          );
+        })()}
+
+        {/* Confirm usar crédito extra */}
+        {confirmCreditoRepo && (() => {
+          const tV = state.turmas.find(t => t.id === confirmCreditoRepo.turmaId);
+          const credito = creditosExtras[0];
+          return (
+            <ConfirmModal
+              title="Usar crédito extra?"
+              message={`Usar seu crédito de reposição extra (expira em ${fmtBRFull(credito?.dataExpiracao || '')}) para repor em ${fmtBRFull(confirmCreditoRepo.data)}${tV ? ` (${ABREV[tV.diaSemana]} ${tV.horario})` : ''}?`}
+              confirmLabel="Confirmar reposição"
+              onConfirm={() => {
+                alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: confirmCreditoRepo.data, turmaReposicaoId: confirmCreditoRepo.turmaId, semVagaOficial: false, vagaSelId: confirmCreditoRepo.id, creditoId: credito?.id, tipo: 'reposicao_credito' });
+                setSuccessRepo('Reposição marcada com crédito extra!');
+                setOpen(o => ({ ...o, reposicao: false }));
+                setConfirmCreditoRepo(null);
+                setTimeout(() => setSuccessRepo(''), 4000);
+              }}
+              onCancel={() => setConfirmCreditoRepo(null)}
             />
           );
         })()}
