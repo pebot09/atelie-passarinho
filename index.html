@@ -4534,7 +4534,7 @@ function AlunoView({ state, dispatch, acesso }) {
         )}
 
         {/* Crédito de férias disponível */}
-        {ausenciaCredito && (
+        {ausenciaCredito && (!turma || turma.id !== TURMA_EXTRA_ID) && (
           <div className="bg-teal-50 border border-teal-200 rounded-xl px-4 py-3 flex items-start gap-3">
             <div className="text-xl shrink-0">🏖️</div>
             <div className="min-w-0">
@@ -4560,7 +4560,7 @@ function AlunoView({ state, dispatch, acesso }) {
         )}
 
         {/* Registrar falta */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        {!turma || turma.id !== TURMA_EXTRA_ID ? <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <button onClick={() => toggle('falta')} className="w-full px-4 py-3 flex items-center justify-between text-left">
             <div className="flex items-center gap-3">
               <div className="text-xl">🙋</div>
@@ -4636,7 +4636,7 @@ function AlunoView({ state, dispatch, acesso }) {
             </div>
           )}
           {successFalta && <div className="px-4 pb-3"><div className="bg-green-50 text-green-700 rounded-lg px-3 py-2 text-sm font-medium">{successFalta}</div></div>}
-        </div>
+        </div> : null}
 
         {/* Marcar reposição / aula extra */}
         {(() => {
@@ -4914,7 +4914,7 @@ function AlunoView({ state, dispatch, acesso }) {
         )}
 
         {/* Registrar / ver férias */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        {!turma || turma.id !== TURMA_EXTRA_ID ? <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <button onClick={() => toggle('ferias')} className="w-full px-4 py-3 flex items-center justify-between text-left">
             <div className="flex items-center gap-3">
               <div className="text-xl">🏖️</div>
@@ -5036,7 +5036,7 @@ function AlunoView({ state, dispatch, acesso }) {
             </div>
           )}
           {successFerias && <div className="px-4 pb-3"><div className="bg-green-50 text-green-700 rounded-lg px-3 py-2 text-sm font-medium">{successFerias}</div></div>}
-        </div>
+        </div> : null}
 
         {/* Rodapé */}
         <div className="text-center text-xs text-gray-400 py-4">
