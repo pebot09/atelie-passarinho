@@ -1257,7 +1257,7 @@ function Modal({ title, children, onClose, danger }) {
           <h3 className={`font-semibold text-lg ${danger ? 'text-red-700' : 'text-gray-800'}`}>{title}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
         </div>
-        <div className="p-4">{children}</div>
+        <div className="p-4 overflow-y-auto max-h-[70vh]">{children}</div>
       </div>
     </div>
   );
@@ -3508,6 +3508,7 @@ function HistoricoAlunoModal({ alunoNome, turmaId, state, onClose }) {
 // ==================== GERENCIAR ALUNO MODAL ====================
 function GerenciarAlunoModal({ turma, state, dispatch, onClose }) {
   const td = todayStr();
+  const [expanded, setExpanded] = useState(null);
   const [renames, setRenames] = useState({});
   const [confirmRemove, setConfirmRemove] = useState(null);
   const otherTurmas = useMemo(() => sortTurmas(state.turmas).filter(t => t.id !== turma.id), [state.turmas, turma.id]);
@@ -3548,52 +3549,68 @@ function GerenciarAlunoModal({ turma, state, dispatch, onClose }) {
           </div>
         </div>
       )}
-      <div className="space-y-2">
+      <div className="space-y-1">
         {sorted.map(nome => {
+          const isOpen = expanded === nome;
           const changeable = canChangeTurma(nome);
           const renameVal = renames[nome] !== undefined ? renames[nome] : nome;
           return (
-            <div key={nome} className="border border-gray-100 rounded-xl p-3 bg-gray-50 space-y-2">
-              {/* Nome / Rename */}
-              <div className="flex gap-2 items-center">
-                <input
-                  className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white"
-                  value={renameVal}
-                  onChange={e => setRenames(r => ({ ...r, [nome]: e.target.value }))}
-                  onKeyDown={e => { if (e.key === 'Enter') { handleRename(nome); onClose(); } }}
-                />
-                {renameVal.trim() !== nome && renameVal.trim() !== '' && (
-                  <button onClick={() => { handleRename(nome); onClose(); }}
-                    className="text-xs px-2.5 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shrink-0">
-                    Salvar
-                  </button>
-                )}
-              </div>
-              {/* Trocar turma */}
-              <div className="flex items-center gap-2">
-                <select
-                  disabled={!changeable.can}
-                  value=""
-                  onChange={e => {
-                    if (e.target.value) {
-                      dispatch({ type:'CHANGE_TURMA_ALUNO', oldTurmaId: turma.id, newTurmaId: e.target.value, alunoNome: nome });
-                      onClose();
-                    }
-                  }}
-                  className={`flex-1 border rounded-lg px-2 py-1.5 text-sm ${!changeable.can ? 'opacity-50 bg-gray-100 cursor-not-allowed' : 'border-gray-300 bg-white'}`}
-                >
-                  <option value="">Mover para outra turma…</option>
-                  {otherTurmas.map(t => <option key={t.id} value={t.id}>{getTurmaLabel(state.turmas, t.id)}</option>)}
-                </select>
-                {!changeable.can && (
-                  <span className="text-xs text-amber-600 shrink-0" title={changeable.reason}>⚠️ {changeable.reason}</span>
-                )}
-              </div>
-              {/* Remover */}
-              <button onClick={() => setConfirmRemove(nome)}
-                className="text-xs text-red-400 hover:text-red-600 transition-colors">
-                Remover aluno
+            <div key={nome} className="border border-gray-200 rounded-xl overflow-hidden">
+              {/* Header — clica para abrir/fechar */}
+              <button
+                onClick={() => setExpanded(isOpen ? null : nome)}
+                className="w-full flex items-center justify-between px-3 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+              >
+                <span className="text-sm font-medium text-gray-800">{nome}</span>
+                <span className="text-gray-400 text-xs ml-2">{isOpen ? '▲' : '▼'}</span>
               </button>
+
+              {/* Opções — só aparecem quando aberto */}
+              {isOpen && (
+                <div className="px-3 pb-3 pt-2 bg-white space-y-2 border-t border-gray-100">
+                  {/* Renomear */}
+                  <div className="flex gap-2 items-center">
+                    <input
+                      className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
+                      value={renameVal}
+                      onChange={e => setRenames(r => ({ ...r, [nome]: e.target.value }))}
+                      onKeyDown={e => { if (e.key === 'Enter') { handleRename(nome); onClose(); } }}
+                      placeholder="Renomear…"
+                    />
+                    {renameVal.trim() !== nome && renameVal.trim() !== '' && (
+                      <button onClick={() => { handleRename(nome); onClose(); }}
+                        className="text-xs px-2.5 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shrink-0">
+                        Salvar
+                      </button>
+                    )}
+                  </div>
+                  {/* Trocar turma */}
+                  <div>
+                    <select
+                      disabled={!changeable.can}
+                      value=""
+                      onChange={e => {
+                        if (e.target.value) {
+                          dispatch({ type:'CHANGE_TURMA_ALUNO', oldTurmaId: turma.id, newTurmaId: e.target.value, alunoNome: nome });
+                          onClose();
+                        }
+                      }}
+                      className={`w-full border rounded-lg px-2 py-1.5 text-sm ${!changeable.can ? 'opacity-50 bg-gray-100 cursor-not-allowed' : 'border-gray-300 bg-white'}`}
+                    >
+                      <option value="">Mover para outra turma…</option>
+                      {otherTurmas.map(t => <option key={t.id} value={t.id}>{getTurmaLabel(state.turmas, t.id)}</option>)}
+                    </select>
+                    {!changeable.can && (
+                      <p className="text-xs text-amber-600 mt-1">⚠️ {changeable.reason}</p>
+                    )}
+                  </div>
+                  {/* Remover */}
+                  <button onClick={() => { setExpanded(null); setConfirmRemove(nome); }}
+                    className="text-xs text-red-400 hover:text-red-600 transition-colors">
+                    Remover aluno
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
