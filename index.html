@@ -1461,7 +1461,7 @@ function SectionTurmas({ state, dispatch }) {
                   className="text-xs font-medium px-2.5 py-1 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors">
                   Gerenciar
                 </button>
-                <button onClick={e => { e.stopPropagation(); setConfirm({type:'deleteTurma', turma}); }} className="text-red-400 hover:text-red-600 text-sm px-2">Excluir</button>
+                <button onClick={e => { e.stopPropagation(); setConfirm(turma.alunos.length > 0 ? {type:'deleteTurmaComAlunos', turma} : {type:'deleteTurma', turma}); }} className="text-red-400 hover:text-red-600 text-sm px-2">Excluir</button>
                 <span className="text-gray-400 text-lg">{exp ? '▲' : '▼'}</span>
               </div>
             </div>
@@ -1579,7 +1579,7 @@ function SectionTurmas({ state, dispatch }) {
                             onClick={() => { setRenamingAluno({ turmaId: TURMA_EXTRA_ID, nome }); setRenameValue(nome); }}
                           >{nome}</span>
                         )}
-                        <button onClick={() => dispatch({type:'REMOVE_ALUNO', turmaId: TURMA_EXTRA_ID, nome})}
+                        <button onClick={() => setConfirm({type:'removeAluno', nome, turma: turmaExtra})}
                           className="text-red-400 hover:text-red-600 text-xs px-2 shrink-0">Remover</button>
                       </div>
                     );
@@ -1661,10 +1661,19 @@ function SectionTurmas({ state, dispatch }) {
           confirmLabel="Excluir"
         />
       )}
+      {confirm?.type === 'deleteTurmaComAlunos' && (
+        <ConfirmModal
+          title="Turma não está vazia"
+          message={`A turma ${ABREV[confirm.turma.diaSemana]} ${confirm.turma.horario} ainda tem ${confirm.turma.alunos.length} aluno${confirm.turma.alunos.length > 1 ? 's' : ''}. Remova todos os alunos antes de excluir a turma.`}
+          confirmLabel="Entendi"
+          onConfirm={() => setConfirm(null)}
+          onCancel={() => setConfirm(null)}
+        />
+      )}
       {confirm?.type === 'removeAluno' && (
         <ConfirmModal
           title="Remover aluno?" danger
-          message={`Remover ${confirm.nome} da turma ${ABREV[confirm.turma.diaSemana]} ${confirm.turma.horario}?`}
+          message={`Remover ${confirm.nome} da turma ${confirm.turma.id === TURMA_EXTRA_ID ? 'Extra' : `${ABREV[confirm.turma.diaSemana]} ${confirm.turma.horario}`}?`}
           onConfirm={() => { dispatch({type:'REMOVE_ALUNO', turmaId: confirm.turma.id, nome: confirm.nome}); setConfirm(null); }}
           onCancel={() => setConfirm(null)}
           confirmLabel="Remover"
