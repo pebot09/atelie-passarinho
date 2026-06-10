@@ -2506,9 +2506,10 @@ function GerenciarAlunoModal({ turma, state, dispatch, onClose }) {
   const [expanded, setExpanded] = useState(null);
   const [renames, setRenames] = useState({});
   const [confirmRemove, setConfirmRemove] = useState(null);
-  const otherTurmas = useMemo(() => sortTurmas(state.turmas).filter(t => t.id !== turma.id && t.id !== TURMA_EXTRA_ID), [state.turmas, turma.id]);
+  const otherTurmas = useMemo(() => sortTurmas(state.turmas).filter(t => t.id !== turma.id), [state.turmas, turma.id]);
 
-  const canChangeTurma = (nome) => {
+  const canChangeTurma = (nome, destinoId) => {
+    if (destinoId === TURMA_EXTRA_ID) return { can: true };
     const hasFutureFalta = state.faltas.some(f =>
       f.turmaId === turma.id && f.alunoNome === nome && f.datas.some(d => d >= td)
     );
@@ -2547,7 +2548,7 @@ function GerenciarAlunoModal({ turma, state, dispatch, onClose }) {
       <div className="space-y-1">
         {sorted.map(nome => {
           const isOpen = expanded === nome;
-          const changeable = canChangeTurma(nome);
+          const changeableDefault = canChangeTurma(nome, null);
           const renameVal = renames[nome] !== undefined ? renames[nome] : nome;
           return (
             <div key={nome} className="border border-gray-200 rounded-xl overflow-hidden">
@@ -2577,21 +2578,24 @@ function GerenciarAlunoModal({ turma, state, dispatch, onClose }) {
                   </div>
                   <div>
                     <select
-                      disabled={!changeable.can}
                       value=""
                       onChange={e => {
-                        if (e.target.value) {
-                          dispatch({ type:'CHANGE_TURMA_ALUNO', oldTurmaId: turma.id, newTurmaId: e.target.value, alunoNome: nome });
-                          onClose();
-                        }
+                        if (!e.target.value) return;
+                        const check = canChangeTurma(nome, e.target.value);
+                        if (!check.can) return;
+                        dispatch({ type:'CHANGE_TURMA_ALUNO', oldTurmaId: turma.id, newTurmaId: e.target.value, alunoNome: nome });
+                        onClose();
                       }}
-                      className={`w-full border rounded-lg px-2 py-1.5 text-sm ${!changeable.can ? 'opacity-50 bg-gray-100 cursor-not-allowed' : 'border-gray-300 bg-white'}`}
+                      className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white"
                     >
                       <option value="">Mover para outra turma…</option>
-                      {otherTurmas.map(t => <option key={t.id} value={t.id}>{getTurmaLabel(state.turmas, t.id)}</option>)}
+                      {otherTurmas.map(t => {
+                        const check = canChangeTurma(nome, t.id);
+                        return <option key={t.id} value={t.id} disabled={!check.can}>{getTurmaLabel(state.turmas, t.id)}{!check.can ? ` (${check.reason})` : ''}</option>;
+                      })}
                     </select>
-                    {!changeable.can && (
-                      <p className="text-xs text-amber-600 mt-1">⚠️ {changeable.reason}</p>
+                    {!changeableDefault.can && (
+                      <p className="text-xs text-amber-600 mt-1">⚠️ {changeableDefault.reason} — só Turma Extra disponível</p>
                     )}
                   </div>
                   <button onClick={() => { setExpanded(null); setConfirmRemove(nome); }}
