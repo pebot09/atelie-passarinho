@@ -4288,8 +4288,8 @@ function AlunoView({ state, dispatch, acesso }) {
   const [showRegras, setShowRegras] = useState(false);
 
   // Notificações de vagas
-  const acesso = state.acessos.find(a => a.alunoNome === alunoNome && a.turmaId === turmaId);
-  const watchlist = acesso?.watchlist || [];
+  const acessoObj = state.acessos.find(a => a.alunoNome === alunoNome && a.turmaId === turmaId);
+  const watchlist = acessoObj?.watchlist || [];
   const hasPendingFaltas = state.faltas.some(f => f.alunoNome === alunoNome && f.turmaId === turmaId && f.status === 'pendente');
   const notifAtiva = watchlist.length > 0 && hasPendingFaltas;
   const [showNotifModal, setShowNotifModal] = useState(false);
