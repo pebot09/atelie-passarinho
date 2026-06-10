@@ -5215,7 +5215,7 @@ function PainelRegistro({ state, dispatch }) {
                   </span>
               }
               <div className="flex-1 min-w-0">
-                <p className="text-sm text-gray-800">{entry.descricao}</p>
+                <p className="text-sm text-gray-800">{entry.descricao.replace(/\b(\d{2})\/(\d{2})\/20\d{2}\b/g, '$1/$2')}</p>
                 <p className="text-xs text-gray-400 mt-0.5">{dataHora}</p>
               </div>
             </div>
