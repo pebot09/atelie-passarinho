@@ -712,7 +712,8 @@ function reducer(state, action) {
         }
         next = { ...state, vagas: newVagas, reposicoes: remainingRepos, ausencias: newAusenciasCR };
         const tLblCR = getTurmaLabel(state.turmas, repo.turmaOrigemId);
-        next.log = addLog(state.log, action.professor, `Cancelou reposição (férias) de ${repo.alunoNome} (${tLblCR}) — ${fmtBRFull(repo.dataReposicao)}`);
+        const tRepoCR = getTurmaLabel(state.turmas, repo.turmaReposicaoId);
+        next.log = addLog(state.log, action.professor, `Cancelou reposição (férias) de ${repo.alunoNome} (${tLblCR}) → ${tRepoCR} ${fmtBRFull(repo.dataReposicao)}`);
         break;
       }
 
@@ -730,7 +731,8 @@ function reducer(state, action) {
         }
         next = { ...state, vagas: newVagas, reposicoes: remainingRepos, creditos: newCreditos };
         const tLblCred = getTurmaLabel(state.turmas, repo.turmaOrigemId);
-        next.log = addLog(state.log, action.professor, `Cancelou reposição (crédito extra) de ${repo.alunoNome} (${tLblCred}) — ${fmtBRFull(repo.dataReposicao)}`);
+        const tRepoCred = getTurmaLabel(state.turmas, repo.turmaReposicaoId);
+        next.log = addLog(state.log, action.professor, `Cancelou reposição (crédito extra) de ${repo.alunoNome} (${tLblCred}) → ${tRepoCred} ${fmtBRFull(repo.dataReposicao)}`);
         break;
       }
 
@@ -782,7 +784,8 @@ function reducer(state, action) {
       next = { ...state, faltas: newFaltas, vagas: newVagas, reposicoes: newReposicoes };
       {
         const tLbl = getTurmaLabel(state.turmas, repo.turmaOrigemId);
-        next.log = addLog(state.log, action.professor, `Cancelou reposição de ${repo.alunoNome} (${tLbl}) — ${fmtBRFull(repo.dataReposicao)}`);
+        const tRepo = getTurmaLabel(state.turmas, repo.turmaReposicaoId);
+        next.log = addLog(state.log, action.professor, `Cancelou reposição de ${repo.alunoNome} (${tLbl}) → ${tRepo} ${fmtBRFull(repo.dataReposicao)}`);
       }
       break;
     }
@@ -809,7 +812,8 @@ function reducer(state, action) {
       }
       next = { ...state, reposicoes: remainingRepos, vagas: newVagas };
       const tLbl = getTurmaLabel(state.turmas, repo.turmaOrigemId);
-      next.log = addLog(state.log, action.professor, `Cancelou reposição sem crédito — ${repo.alunoNome} (${tLbl}) em ${fmtBRFull(repo.dataReposicao)}`);
+      const tRepoSC = getTurmaLabel(state.turmas, repo.turmaReposicaoId);
+      next.log = addLog(state.log, action.professor, `Cancelou reposição sem crédito — ${repo.alunoNome} (${tLbl}) → ${tRepoSC} ${fmtBRFull(repo.dataReposicao)}`);
       break;
     }
 
