@@ -4989,7 +4989,7 @@ function AlunoView({ state, dispatch, acesso }) {
         {/* Modal notificações de vagas */}
         {showNotifModal && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center" onClick={() => setShowNotifModal(false)}>
-            <div className="bg-white rounded-t-2xl w-full max-w-md p-6 pb-8 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="bg-white rounded-t-2xl w-full max-w-md p-6 pb-8 shadow-xl overflow-y-auto max-h-[85vh]" onClick={e => e.stopPropagation()}>
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-base font-bold text-gray-900">🔔 Notificações de vagas</h2>
                 <button onClick={() => setShowNotifModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
