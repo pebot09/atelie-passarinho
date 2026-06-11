@@ -4858,8 +4858,8 @@ function AlunoView({ state, dispatch, acesso }) {
                       {vagasFuturas.map(v => {
                         const tV = state.turmas.find(t => t.id === v.turmaId);
                         const jaOcupada = state.reposicoes.some(r =>
-                          r.alunoNome === alunoNome && r.dataReposicao === v.data &&
-                          r.turmaReposicaoId === v.turmaId && !r.realizada);
+                          r.alunoNome === alunoNome && r.turmaOrigemId === turmaId &&
+                          r.dataReposicao === v.data && r.turmaReposicaoId === v.turmaId && !r.realizada);
                         const dt = getClassDatetime(v.turmaId, v.data, state.turmas);
                         const horasAte = dt ? (dt - Date.now()) / 3600000 : null;
                         const within2h = horasAte !== null && horasAte >= 0 && horasAte <= 2;
