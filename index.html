@@ -1562,7 +1562,7 @@ function SectionTurmas({ state, dispatch }) {
                   className="text-xs font-medium px-2.5 py-1 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors">
                   Gerenciar
                 </button>
-                <button onClick={e => { e.stopPropagation(); setConfirm(turma.alunos.length > 0 ? {type:'deleteTurmaComAlunos', turma} : {type:'deleteTurma', turma}); }} className="text-red-400 hover:text-red-600 text-sm px-2">Excluir</button>
+                {turma.alunos.length === 0 && <button onClick={e => { e.stopPropagation(); setConfirm({type:'deleteTurma', turma}); }} className="text-red-400 hover:text-red-600 text-sm px-2">Excluir</button>}
                 <span className="text-gray-400 text-lg">{exp ? '▲' : '▼'}</span>
               </div>
             </div>
