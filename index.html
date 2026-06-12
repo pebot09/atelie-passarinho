@@ -3025,7 +3025,7 @@ function generatePainelText(state) {
 function SectionPainel({ state, dispatch }) {
   const [tab, setTab] = useState(0);
   const [showResumo, setShowResumo] = useState(false);
-  const tabs = ['Lista atual', 'Histórico', 'Registro', 'Análise'];
+  const tabs = ['Lista atual', 'Histórico', 'Análise', 'Registro'];
   const td = todayStr();
 
   // Alertas
@@ -3072,8 +3072,8 @@ function SectionPainel({ state, dispatch }) {
         <div className="p-4">
           {tab === 0 && <PainelLista state={state} dispatch={dispatch} />}
           {tab === 1 && <PainelHistorico state={state} dispatch={dispatch} />}
-          {tab === 2 && <PainelRegistro state={state} dispatch={dispatch} />}
-          {tab === 3 && <PainelAnalise state={state} />}
+          {tab === 2 && <PainelAnalise state={state} />}
+          {tab === 3 && <PainelRegistro state={state} dispatch={dispatch} />}
         </div>
       </div>
 
