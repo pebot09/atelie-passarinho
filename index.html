@@ -4320,7 +4320,7 @@ function AlunoView({ state, dispatch, acesso }) {
     [state.ausencias, alunoNome, turmaId]);
   const ausenciaCredito = ausenciasAtivas.find(a => !a.creditoUsado && a.creditoReposicao > 0) || null;
   const creditosExtras = useMemo(() =>
-    arr(state.creditos).filter(c => c.alunoNome === alunoNome && !c.usado && c.dataExpiracao >= td),
+    arr(state.creditos).filter(c => c.alunoNome === alunoNome && c.turmaId === turmaId && !c.usado && c.dataExpiracao >= td),
     [state.creditos, alunoNome, td]);
   const [confirmCreditoRepo, setConfirmCreditoRepo] = useState(null);
   const [mesFerias, setMesFerias] = useState('');
