@@ -723,6 +723,7 @@ function reducer(state, action) {
         const tLblCR = getTurmaLabel(state.turmas, repo.turmaOrigemId);
         const tRepoCR = getTurmaLabel(state.turmas, repo.turmaReposicaoId);
         next.log = addLog(state.log, action.professor, `Cancelou reposição (férias) de ${repo.alunoNome} (${tLblCR}) → ${tRepoCR} ${fmtBRFull(repo.dataReposicao)}`);
+        next.estatisticas = { ...next.estatisticas, reposCanceladas: [...arr((next.estatisticas||{}).reposCanceladas), { alunoNome: repo.alunoNome, turmaId: repo.turmaOrigemId, turmaReposicaoId: repo.turmaReposicaoId, dataReposicao: repo.dataReposicao, semCredito: false, ts: new Date().toISOString() }] };
         break;
       }
 
@@ -742,6 +743,7 @@ function reducer(state, action) {
         const tLblCred = getTurmaLabel(state.turmas, repo.turmaOrigemId);
         const tRepoCred = getTurmaLabel(state.turmas, repo.turmaReposicaoId);
         next.log = addLog(state.log, action.professor, `Cancelou reposição (crédito extra) de ${repo.alunoNome} (${tLblCred}) → ${tRepoCred} ${fmtBRFull(repo.dataReposicao)}`);
+        next.estatisticas = { ...next.estatisticas, reposCanceladas: [...arr((next.estatisticas||{}).reposCanceladas), { alunoNome: repo.alunoNome, turmaId: repo.turmaOrigemId, turmaReposicaoId: repo.turmaReposicaoId, dataReposicao: repo.dataReposicao, semCredito: false, ts: new Date().toISOString() }] };
         break;
       }
 
@@ -795,6 +797,7 @@ function reducer(state, action) {
         const tLbl = getTurmaLabel(state.turmas, repo.turmaOrigemId);
         const tRepo = getTurmaLabel(state.turmas, repo.turmaReposicaoId);
         next.log = addLog(state.log, action.professor, `Cancelou reposição de ${repo.alunoNome} (${tLbl}) → ${tRepo} ${fmtBRFull(repo.dataReposicao)}`);
+        next.estatisticas = { ...(next.estatisticas||{}), reposCanceladas: [...arr((next.estatisticas||{}).reposCanceladas), { alunoNome: repo.alunoNome, turmaId: repo.turmaOrigemId, turmaReposicaoId: repo.turmaReposicaoId, dataReposicao: repo.dataReposicao, semCredito: false, ts: new Date().toISOString() }] };
       }
       break;
     }
@@ -823,6 +826,7 @@ function reducer(state, action) {
       const tLbl = getTurmaLabel(state.turmas, repo.turmaOrigemId);
       const tRepoSC = getTurmaLabel(state.turmas, repo.turmaReposicaoId);
       next.log = addLog(state.log, action.professor, `Cancelou reposição sem crédito — ${repo.alunoNome} (${tLbl}) → ${tRepoSC} ${fmtBRFull(repo.dataReposicao)}`);
+      next.estatisticas = { ...(next.estatisticas||{}), reposCanceladas: [...arr((next.estatisticas||{}).reposCanceladas), { alunoNome: repo.alunoNome, turmaId: repo.turmaOrigemId, turmaReposicaoId: repo.turmaReposicaoId, dataReposicao: repo.dataReposicao, semCredito: true, ts: new Date().toISOString() }] };
       break;
     }
 
@@ -1077,7 +1081,7 @@ function normalizeState(s) {
     log:        arr(s.log),
     acessos:    arr(s.acessos),
     creditos:   arr(s.creditos),
-    estatisticas: { faltasExpiradas: arr((s.estatisticas || {}).faltasExpiradas) },
+    estatisticas: { faltasExpiradas: arr((s.estatisticas || {}).faltasExpiradas), reposCanceladas: arr((s.estatisticas || {}).reposCanceladas) },
   };
   var afterFaltaMig = migrateFaltas(base);
   // Migration: create vacation vagas for existing ausencias that don't have them yet
@@ -3021,7 +3025,7 @@ function generatePainelText(state) {
 function SectionPainel({ state, dispatch }) {
   const [tab, setTab] = useState(0);
   const [showResumo, setShowResumo] = useState(false);
-  const tabs = ['Lista atual', 'Histórico', 'Importação', 'Registro', 'Análise'];
+  const tabs = ['Lista atual', 'Histórico', 'Registro', 'Análise'];
   const td = todayStr();
 
   // Alertas
@@ -3068,9 +3072,8 @@ function SectionPainel({ state, dispatch }) {
         <div className="p-4">
           {tab === 0 && <PainelLista state={state} dispatch={dispatch} />}
           {tab === 1 && <PainelHistorico state={state} dispatch={dispatch} />}
-          {tab === 2 && <PainelImportacao state={state} dispatch={dispatch} />}
-          {tab === 3 && <PainelRegistro state={state} dispatch={dispatch} />}
-          {tab === 4 && <PainelAnalise state={state} />}
+          {tab === 2 && <PainelRegistro state={state} dispatch={dispatch} />}
+          {tab === 3 && <PainelAnalise state={state} />}
         </div>
       </div>
 
@@ -5276,29 +5279,35 @@ function AlunoView({ state, dispatch, acesso }) {
 function PainelAnalise({ state }) {
   const td = todayStr();
   const expiradas = arr((state.estatisticas || {}).faltasExpiradas);
+  const canceladas = arr((state.estatisticas || {}).reposCanceladas);
 
   // — contadores gerais —
   const totalFaltas = state.faltas.length;
-  const totalReposicoes = state.reposicoes.length;
   const reposRealizadas = state.reposicoes.filter(r => r.realizada).length;
   const reposPendentes = state.reposicoes.filter(r => !r.realizada && r.dataReposicao >= td).length;
   const faltasPendentes = state.faltas.filter(f => f.status === 'pendente').length;
-  const taxaReposicao = totalFaltas > 0 ? Math.round((reposRealizadas / (reposRealizadas + expiradas.length)) * 100) : null;
+  const taxaReposicao = (reposRealizadas + expiradas.length) > 0 ? Math.round((reposRealizadas / (reposRealizadas + expiradas.length)) * 100) : null;
+  const canceladasSemCredito = canceladas.filter(c => c.semCredito).length;
+
+  // — faltas totais por turma (do estado atual) —
+  const faltasPorTurma = {};
+  state.faltas.forEach(f => {
+    const lbl = getTurmaLabel(state.turmas, f.turmaId);
+    faltasPorTurma[lbl] = (faltasPorTurma[lbl] || 0) + 1;
+  });
+  const rankFaltasTurma = Object.entries(faltasPorTurma).sort((a,b) => b[1]-a[1]);
+
+  // — alunos com mais faltas totais —
+  const faltasPorAluno = {};
+  state.faltas.forEach(f => {
+    faltasPorAluno[f.alunoNome] = (faltasPorAluno[f.alunoNome] || 0) + 1;
+  });
+  const rankFaltasAluno = Object.entries(faltasPorAluno).sort((a,b) => b[1]-a[1]);
 
   // — faltas expiradas por aluno —
   const expPorAluno = {};
-  expiradas.forEach(e => {
-    expPorAluno[e.alunoNome] = (expPorAluno[e.alunoNome] || 0) + 1;
-  });
-  const rankAlunos = Object.entries(expPorAluno).sort((a,b) => b[1]-a[1]);
-
-  // — faltas expiradas por turma —
-  const expPorTurma = {};
-  expiradas.forEach(e => {
-    const lbl = getTurmaLabel(state.turmas, e.turmaId);
-    expPorTurma[lbl] = (expPorTurma[lbl] || 0) + 1;
-  });
-  const rankTurmas = Object.entries(expPorTurma).sort((a,b) => b[1]-a[1]);
+  expiradas.forEach(e => { expPorAluno[e.alunoNome] = (expPorAluno[e.alunoNome] || 0) + 1; });
+  const rankExpAluno = Object.entries(expPorAluno).sort((a,b) => b[1]-a[1]);
 
   // — faltas expiradas por mês —
   const expPorMes = {};
@@ -5308,13 +5317,26 @@ function PainelAnalise({ state }) {
   });
   const meses = Object.keys(expPorMes).sort();
 
-  // — reposições por turma de destino —
+  // — reposições realizadas por turma de destino —
   const repoPorTurma = {};
   state.reposicoes.filter(r => r.realizada).forEach(r => {
     const lbl = getTurmaLabel(state.turmas, r.turmaReposicaoId);
     repoPorTurma[lbl] = (repoPorTurma[lbl] || 0) + 1;
   });
   const rankRepoDest = Object.entries(repoPorTurma).sort((a,b) => b[1]-a[1]);
+
+  // — tempo médio falta → reposição (em dias) —
+  const tempos = state.reposicoes.filter(r => r.realizada && r.faltaId).map(r => {
+    const falta = state.faltas.find(f => f.id === r.faltaId);
+    if (!falta) return null;
+    const dias = (new Date(r.dataReposicao) - new Date(falta.datas[0])) / 86400000;
+    return dias >= 0 ? dias : null;
+  }).filter(d => d !== null);
+  const tempoMedio = tempos.length > 0 ? Math.round(tempos.reduce((a,b) => a+b, 0) / tempos.length) : null;
+
+  // — vagas extras: geradas vs usadas —
+  const vagasExtrasGeradas = state.vagas.filter(v => v.vagaExtra).length;
+  const vagasExtrasUsadas = state.reposicoes.filter(r => r.vagaExtra && r.realizada).length;
 
   const Stat = ({label, value, sub, color}) => (
     <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
@@ -5334,10 +5356,6 @@ function PainelAnalise({ state }) {
     </div>
   );
 
-  if (expiradas.length === 0 && totalFaltas === 0) {
-    return <p className="text-sm text-gray-400 italic text-center py-8">Nenhum dado estatístico ainda.</p>;
-  }
-
   return (
     <div className="space-y-6">
 
@@ -5347,41 +5365,54 @@ function PainelAnalise({ state }) {
         <Stat label="Reposições realizadas" value={reposRealizadas} color="text-green-600" />
         <Stat label="Faltas expiradas" value={expiradas.length} color={expiradas.length > 0 ? 'text-red-500' : 'text-gray-800'} sub="sem reposição" />
         <Stat label="Taxa de reposição" value={taxaReposicao !== null ? `${taxaReposicao}%` : '—'} color={taxaReposicao >= 70 ? 'text-green-600' : taxaReposicao !== null ? 'text-amber-600' : 'text-gray-400'} sub="realizadas vs expiradas" />
-        <Stat label="Aguardando reposição" value={faltasPendentes} color={faltasPendentes > 0 ? 'text-amber-600' : 'text-gray-800'} sub="faltas pendentes" />
+        <Stat label="Faltas pendentes" value={faltasPendentes} color={faltasPendentes > 0 ? 'text-amber-600' : 'text-gray-800'} sub="aguardando reposição" />
         <Stat label="Reposições marcadas" value={reposPendentes} sub="agendadas, não realizadas" />
+        <Stat label="Cancelamentos" value={canceladas.length} sub={canceladasSemCredito > 0 ? `${canceladasSemCredito} sem crédito devolvido` : 'todos com crédito'} color={canceladasSemCredito > 0 ? 'text-orange-500' : 'text-gray-800'} />
+        <Stat label="Tempo médio p/ repor" value={tempoMedio !== null ? `${tempoMedio}d` : '—'} sub="da falta à reposição" />
+        <Stat label="Vagas extras abertas" value={vagasExtrasGeradas} sub={`${vagasExtrasUsadas} aproveitadas`} />
       </div>
 
-      {/* Faltas expiradas por mês */}
+      {/* Faltas por mês (expiradas) */}
       {meses.length > 0 && (
         <div>
-          <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Expiradas por mês</div>
+          <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Faltas expiradas por mês</div>
           <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 space-y-2">
             {meses.map(m => <Bar key={m} label={getMesNome(m)} value={expPorMes[m]} max={Math.max(...Object.values(expPorMes))} color="bg-red-300" />)}
           </div>
         </div>
       )}
 
+      {/* Faltas totais por turma */}
+      {rankFaltasTurma.length > 0 && (
+        <div>
+          <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Faltas por turma</div>
+          <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 space-y-2">
+            {rankFaltasTurma.map(([lbl, n]) => <Bar key={lbl} label={lbl} value={n} max={rankFaltasTurma[0][1]} color="bg-orange-300" />)}
+          </div>
+        </div>
+      )}
+
+      {/* Alunos com mais faltas */}
+      {rankFaltasAluno.length > 0 && (
+        <div>
+          <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Alunos com mais faltas</div>
+          <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 space-y-2">
+            {rankFaltasAluno.slice(0,8).map(([nome, n]) => <Bar key={nome} label={nome} value={n} max={rankFaltasAluno[0][1]} color="bg-amber-300" />)}
+          </div>
+        </div>
+      )}
+
       {/* Alunos com mais expiradas */}
-      {rankAlunos.length > 0 && (
+      {rankExpAluno.length > 0 && (
         <div>
           <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Alunos com mais faltas expiradas</div>
           <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 space-y-2">
-            {rankAlunos.slice(0,8).map(([nome, n]) => <Bar key={nome} label={nome} value={n} max={rankAlunos[0][1]} color="bg-amber-400" />)}
+            {rankExpAluno.slice(0,8).map(([nome, n]) => <Bar key={nome} label={nome} value={n} max={rankExpAluno[0][1]} color="bg-amber-500" />)}
           </div>
         </div>
       )}
 
-      {/* Turmas com mais expiradas */}
-      {rankTurmas.length > 0 && (
-        <div>
-          <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Turmas com mais faltas expiradas</div>
-          <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 space-y-2">
-            {rankTurmas.map(([lbl, n]) => <Bar key={lbl} label={lbl} value={n} max={rankTurmas[0][1]} color="bg-orange-300" />)}
-          </div>
-        </div>
-      )}
-
-      {/* Turmas mais procuradas pra reposição */}
+      {/* Turmas mais usadas para reposição */}
       {rankRepoDest.length > 0 && (
         <div>
           <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Turmas mais usadas para reposição</div>
