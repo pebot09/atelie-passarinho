@@ -105,8 +105,8 @@ const SEED = {
     {id:"qui-17h",diaSemana:"quinta",horario:"17h",capacidade:7,observacao:"",alunos:["Adriana","Niara","Aline"]},
     {id:"qui-19h",diaSemana:"quinta",horario:"19h",capacidade:7,observacao:"",alunos:["Anna Clara"]},
     {id:"sab-09h",diaSemana:"sábado",horario:"09h",capacidade:7,observacao:"",alunos:["João","Livia","Claudia","Cris"]},
-    {id:"sab-11h",diaSemana:"sábado",horario:"11h",capacidade:7,observacao:"",alunos:["Juliana","Marcella"]}
-    ,{id:"turma-extra",diaSemana:null,horario:null,capacidade:99,observacao:"Alunos extras e ex-alunos",alunos:[]}
+    {id:"sab-11h",diaSemana:"sábado",horario:"11h",capacidade:7,observacao:"",alunos:["Juliana","Marcella"]},
+    {id:"turma-extra",diaSemana:null,horario:null,capacidade:99,observacao:"Alunos extras e ex-alunos",alunos:[]}
   ],
   faltas: [
     {id:"f001",alunoNome:"Laila",turmaId:"seg-09h",datas:["2026-03-30","2026-04-27"],status:"pendente"},
@@ -159,8 +159,8 @@ const SEED = {
   snapshots: [],
   estatisticas: { faltasExpiradas: [] },
   log: [],
-  acessos: []
-  ,creditos: []
+  acessos: [],
+  creditos: []
 };
 
 // ==================== HELPERS ====================
@@ -403,6 +403,27 @@ function reducer(state, action) {
   let next;
   switch (action.type) {
 
+    case 'ADD_CREDITO': {
+      const cred = {
+        id: genId('cred'),
+        alunoNome: action.alunoNome,
+        turmaId: action.turmaId,
+        dataExpiracao: action.dataExpiracao,
+        usado: false,
+        criadoPor: action.professor || null,
+        criadoEm: new Date().toISOString()
+      };
+      next = { ...state, creditos: [...arr(state.creditos), cred] };
+      const tLbl = getTurmaLabel(state.turmas, action.turmaId);
+      next.log = addLog(state.log, action.professor, `Deu crédito extra de reposição para ${action.alunoNome} (${tLbl}) — expira ${fmtBRFull(action.dataExpiracao)}`);
+      break;
+    }
+
+    case 'DELETE_CREDITO': {
+      next = { ...state, creditos: arr(state.creditos).filter(c => c.id !== action.id) };
+      break;
+    }
+
     case 'DISMISS_SEED_WARNING':
       next = {...state, _seedWarning: false};
       break;
@@ -411,13 +432,14 @@ function reducer(state, action) {
       next = { ...state, log: arr(state.log).filter(e => e.id !== action.id) };
       break;
 
-    case 'CANCEL_VAGAS_SLOT':
-      next = { ...state, vagas: state.vagas.map(v =>
-        v.turmaId === action.turmaId && v.data === action.data
-          ? { ...v, cancelada: action.cancelada }
-          : v
+    case 'SET_ALUNO_WATCHLIST': {
+      next = { ...state, acessos: state.acessos.map(a =>
+        a.alunoNome === action.alunoNome && a.turmaId === action.turmaId
+          ? { ...a, watchlist: action.watchlist }
+          : a
       )};
       break;
+    }
 
     case 'ADD_TURMA': {
       const { diaSemana, horario, observacao } = action;
@@ -500,41 +522,6 @@ function reducer(state, action) {
         ausencias: newAusenciasRen,
         acessos: newAcessosRen,
         log: addLog(state.log, action.professor, `Renomeou ${oldNome} → ${renNome} (${tLblRen})`),
-      };
-      break;
-    }
-
-    case 'CHANGE_TURMA_ALUNO': {
-      const { oldTurmaId, newTurmaId, alunoNome: ctaNome } = action;
-      if (!newTurmaId || oldTurmaId === newTurmaId) { next = state; break; }
-      const newTurmasCT = state.turmas.map(t => {
-        if (t.id === oldTurmaId) return { ...t, alunos: t.alunos.filter(a => a !== ctaNome) };
-        if (t.id === newTurmaId) return { ...t, alunos: t.alunos.includes(ctaNome) ? t.alunos : [...t.alunos, ctaNome] };
-        return t;
-      });
-      const newFaltasCT = state.faltas.map(f =>
-        f.turmaId === oldTurmaId && f.alunoNome === ctaNome ? { ...f, turmaId: newTurmaId } : f
-      );
-      const newReposCT = state.reposicoes.map(r =>
-        r.turmaOrigemId === oldTurmaId && r.alunoNome === ctaNome && !r.realizada ? { ...r, turmaOrigemId: newTurmaId } : r
-      );
-      const newAusenciasCT = state.ausencias.map(a =>
-        a.turmaId === oldTurmaId && a.alunoNome === ctaNome ? { ...a, turmaId: newTurmaId } : a
-      );
-      const newAcessosCT = (state.acessos || []).map(a =>
-        a.turmaId === oldTurmaId && a.alunoNome === ctaNome ? { ...a, turmaId: newTurmaId } : a
-      );
-      const faltaIdsCT = new Set(state.faltas.filter(f => f.turmaId === oldTurmaId && f.alunoNome === ctaNome).map(f => f.id));
-      const newVagasCT = state.vagas.map(v => v.faltaId && faltaIdsCT.has(v.faltaId) ? { ...v, turmaId: newTurmaId } : v);
-      const tdCT = todayStr();
-      const oldLblCT = getTurmaLabel(state.turmas, oldTurmaId);
-      const newLblCT = getTurmaLabel(state.turmas, newTurmaId);
-      next = {
-        ...state,
-        turmas: newTurmasCT, faltas: newFaltasCT, reposicoes: newReposCT,
-        ausencias: newAusenciasCT, acessos: newAcessosCT,
-        vagas: computeVagasExtras(newTurmasCT, newFaltasCT, newReposCT, newVagasCT, tdCT, newAusenciasCT),
-        log: addLog(state.log, action.professor, `Moveu ${ctaNome} de ${oldLblCT} para ${newLblCT}`),
       };
       break;
     }
@@ -744,11 +731,11 @@ function reducer(state, action) {
         break;
       }
 
-      // Special case: credito-extra reposicao
       if (repo.tipo === 'reposicao_credito') {
         const remainingRepos = state.reposicoes.filter(r => r.id !== repo.id);
         let newVagas = state.vagas;
         let newCreditos = state.creditos;
+        // Restore credit
         if (repo.creditoId) {
           newCreditos = arr(newCreditos).map(c => c.id === repo.creditoId ? {...c, usado: false} : c);
         }
@@ -812,9 +799,9 @@ function reducer(state, action) {
       next = { ...state, faltas: newFaltas, vagas: newVagas, reposicoes: newReposicoes };
       {
         const tLbl = getTurmaLabel(state.turmas, repo.turmaOrigemId);
-        const tRepoLbl = getTurmaLabel(state.turmas, repo.turmaReposicaoId);
-        next.log = addLog(state.log, action.professor, `Cancelou reposição de ${repo.alunoNome} (${tLbl}) → ${tRepoLbl} ${fmtBRFull(repo.dataReposicao)}`);
-        next.estatisticas = { ...next.estatisticas, reposCanceladas: [...arr((next.estatisticas||{}).reposCanceladas), { alunoNome: repo.alunoNome, turmaId: repo.turmaOrigemId, turmaReposicaoId: repo.turmaReposicaoId, dataReposicao: repo.dataReposicao, semCredito: false, ts: new Date().toISOString() }] };
+        const tRepo = getTurmaLabel(state.turmas, repo.turmaReposicaoId);
+        next.log = addLog(state.log, action.professor, `Cancelou reposição de ${repo.alunoNome} (${tLbl}) → ${tRepo} ${fmtBRFull(repo.dataReposicao)}`);
+        next.estatisticas = { ...(next.estatisticas||{}), reposCanceladas: [...arr((next.estatisticas||{}).reposCanceladas), { alunoNome: repo.alunoNome, turmaId: repo.turmaOrigemId, turmaReposicaoId: repo.turmaReposicaoId, dataReposicao: repo.dataReposicao, semCredito: false, ts: new Date().toISOString() }] };
       }
       break;
     }
@@ -843,7 +830,7 @@ function reducer(state, action) {
       const tLbl = getTurmaLabel(state.turmas, repo.turmaOrigemId);
       const tRepoSC = getTurmaLabel(state.turmas, repo.turmaReposicaoId);
       next.log = addLog(state.log, action.professor, `Cancelou reposição sem crédito — ${repo.alunoNome} (${tLbl}) → ${tRepoSC} ${fmtBRFull(repo.dataReposicao)}`);
-      next.estatisticas = { ...next.estatisticas, reposCanceladas: [...arr((next.estatisticas||{}).reposCanceladas), { alunoNome: repo.alunoNome, turmaId: repo.turmaOrigemId, turmaReposicaoId: repo.turmaReposicaoId, dataReposicao: repo.dataReposicao, semCredito: true, ts: new Date().toISOString() }] };
+      next.estatisticas = { ...(next.estatisticas||{}), reposCanceladas: [...arr((next.estatisticas||{}).reposCanceladas), { alunoNome: repo.alunoNome, turmaId: repo.turmaOrigemId, turmaReposicaoId: repo.turmaReposicaoId, dataReposicao: repo.dataReposicao, semCredito: true, ts: new Date().toISOString() }] };
       break;
     }
 
@@ -853,36 +840,6 @@ function reducer(state, action) {
       if (existing) { next = state; break; }
       const codigo = String(Math.floor(100000 + Math.random() * 900000));
       next = { ...state, acessos: [...state.acessos, { id: genId('ac'), codigo, alunoNome, turmaId }] };
-      break;
-    }
-
-    case 'SET_ALUNO_WATCHLIST': {
-      next = { ...state, acessos: state.acessos.map(a =>
-        a.alunoNome === action.alunoNome && a.turmaId === action.turmaId
-          ? { ...a, watchlist: action.watchlist }
-          : a
-      )};
-      break;
-    }
-
-    case 'ADD_CREDITO': {
-      const cred = {
-        id: genId('cred'),
-        alunoNome: action.alunoNome,
-        turmaId: action.turmaId,
-        dataExpiracao: action.dataExpiracao,
-        usado: false,
-        criadoPor: action.professor || null,
-        criadoEm: new Date().toISOString()
-      };
-      next = { ...state, creditos: [...arr(state.creditos), cred] };
-      const tLbl = getTurmaLabel(state.turmas, action.turmaId);
-      next.log = addLog(state.log, action.professor, `Deu crédito extra de reposição para ${action.alunoNome} (${tLbl}) — expira ${fmtBRFull(action.dataExpiracao)}`);
-      break;
-    }
-
-    case 'DELETE_CREDITO': {
-      next = { ...state, creditos: arr(state.creditos).filter(c => c.id !== action.id) };
       break;
     }
 
@@ -1292,14 +1249,14 @@ function normalizeState(s) {
     }
     return a;
   }) };
-  // Migration: ensure turma-extra exists
-  if (!afterFaltaMig.turmas.find(function(t) { return t.id === TURMA_EXTRA_ID; })) {
-    afterFaltaMig = { ...afterFaltaMig, turmas: [...afterFaltaMig.turmas, {id:TURMA_EXTRA_ID,diaSemana:null,horario:null,capacidade:99,observacao:'Alunos extras e ex-alunos',alunos:[]}] };
-  }
   // Migration: remove vagas that fall on recesso dates (e.g. João 18/07)
   afterFaltaMig = { ...afterFaltaMig, vagas: afterFaltaMig.vagas.filter(function(v) {
     return !isRecesso(v.data);
   }) };
+  // Migration: ensure turma-extra exists
+  if (!afterFaltaMig.turmas.find(function(t) { return t.id === TURMA_EXTRA_ID; })) {
+    afterFaltaMig = { ...afterFaltaMig, turmas: [...afterFaltaMig.turmas, {id:TURMA_EXTRA_ID,diaSemana:null,horario:null,capacidade:99,observacao:'Alunos extras e ex-alunos',alunos:[]}] };
+  }
   // Prune log to last 90 days
   afterFaltaMig = { ...afterFaltaMig, log: pruneLog(afterFaltaMig.log) };
   // Always recompute vagasExtras at the end so counts are correct after any migration
@@ -1319,15 +1276,17 @@ function loadState() {
 
 function fetchFromFirebase() {
   var controller = new AbortController();
-  var timer = setTimeout(function() { controller.abort(); }, 30000);
+  var timeout = setTimeout(function() { controller.abort(); }, 30000);
   return fetch(DB_URL + '/state.json', { signal: controller.signal })
-    .then(function(r) { return r.json(); })
+    .then(function(r) { clearTimeout(timeout); return r.json(); })
     .then(function(d) {
-      clearTimeout(timer);
       if (d && typeof d === 'object') { var { _auth: _a, ...clean } = d; return clean; }
       return d;
     })
-    .catch(function(e) { clearTimeout(timer); throw e; });
+    .catch(function(err) {
+      clearTimeout(timeout);
+      throw err;
+    });
 }
 
 const DB_WRITE_SECRET = '109';
@@ -1460,6 +1419,94 @@ function GerarLinkModal({ state, dispatch, onClose }) {
   );
 }
 
+// ==================== HISTÓRICO DO ALUNO (inline na seção Turmas) ====================
+function nomeExatoMatch(texto, nome) {
+  const escaped = nome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('(^|[\\s(,/—])' + escaped + '($|[\\s),/—])', 'i').test(texto);
+}
+
+function HistoricoAlunoContent({ alunoNome, turmaId, state }) {
+  const td = todayStr();
+  const turmaLabel = turmaId ? getTurmaLabel(state.turmas, turmaId) : null;
+
+  const logEntries = arr(state.log)
+    .filter(e => {
+      const atuouComoAluno = !PROFESSORES.includes(alunoNome) && e.professor === alunoNome;
+      if (!atuouComoAluno && !nomeExatoMatch(e.descricao, alunoNome)) return false;
+      if (turmaLabel) return e.descricao.includes(turmaLabel);
+      return true;
+    })
+    .map(e => ({ ts: e.ts, texto: e.descricao, tipo: 'log', autor: e.professor }));
+
+  const faltaEvents = state.faltas
+    .filter(f => f.alunoNome === alunoNome && (!turmaId || f.turmaId === turmaId))
+    .flatMap(f => f.datas.filter(d => d < td).map(d => ({
+      ts: d + 'T23:59:00',
+      texto: `Faltou — ${getTurmaLabel(state.turmas, f.turmaId)} em ${fmtBRFull(d)}`,
+      tipo: 'falta',
+      autor: f.criadoPor || null
+    })));
+
+  const repoEvents = state.reposicoes
+    .filter(r => r.alunoNome === alunoNome && r.realizada && (!turmaId || r.turmaOrigemId === turmaId))
+    .map(r => ({
+      ts: r.dataReposicao + 'T23:58:00',
+      texto: `Repôs — ${getTurmaLabel(state.turmas, r.turmaReposicaoId)} em ${fmtBRFull(r.dataReposicao)}`,
+      tipo: 'repo',
+      autor: r.criadoPor || null
+    }));
+
+  const all = [...logEntries, ...faltaEvents, ...repoEvents]
+    .sort((a, b) => b.ts.localeCompare(a.ts));
+
+  if (all.length === 0) return <p className="text-xs text-gray-400 py-2 italic">Sem histórico registrado.</p>;
+
+  return (
+    <div className="space-y-1">
+      {all.map((e, i) => {
+        const dt = new Date(e.ts);
+        const dataHora = dt.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' }) +
+          (e.tipo === 'log' ? ' ' + dt.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' }) : '');
+        const autorColors = e.autor ? (PROFESSOR_COLORS[e.autor] || { bg:'bg-gray-100', text:'text-gray-600', dot:'bg-gray-400' }) : null;
+        return (
+          <div key={i} className="flex items-start gap-2 text-xs py-1 border-b border-gray-50 last:border-0">
+            <span className={`shrink-0 mt-0.5 ${e.tipo === 'falta' ? 'text-red-400' : e.tipo === 'repo' ? 'text-blue-400' : 'text-gray-400'}`}>
+              {e.tipo === 'falta' ? '✗' : e.tipo === 'repo' ? '↩' : '•'}
+            </span>
+            <span className="text-gray-700 flex-1">{e.texto}</span>
+            {e.autor && (
+              <span className={`inline-flex items-center gap-1 font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap shrink-0 ${autorColors.bg} ${autorColors.text}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${autorColors.dot}`}></span>
+                {e.autor}
+              </span>
+            )}
+            <span className="text-gray-300 shrink-0">{dataHora}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function HistoricoAlunoModal({ alunoNome, turmaId, state, onClose }) {
+  const td = todayStr();
+  const label = turmaId ? getTurmaLabel(state.turmas, turmaId) : null;
+  const f = state.faltas.filter(f => f.alunoNome === alunoNome && (!turmaId || f.turmaId === turmaId) && f.status === 'pendente').length;
+  const r = state.reposicoes.filter(r => r.alunoNome === alunoNome && (!turmaId || r.turmaOrigemId === turmaId) && !r.realizada && r.dataReposicao >= td).length;
+  const title = (
+    <span className="flex items-center gap-2">
+      <span>Histórico — {alunoNome}{label ? ` (${label})` : ''}</span>
+      {f > 0 && <span className="inline-flex items-center justify-center w-5 h-5 rounded text-xs font-bold bg-amber-100 text-amber-700">F{f}</span>}
+      {r > 0 && <span className="inline-flex items-center justify-center w-5 h-5 rounded text-xs font-bold bg-blue-100 text-blue-700">R{r}</span>}
+    </span>
+  );
+  return (
+    <Modal title={title} onClose={onClose}>
+      <HistoricoAlunoContent alunoNome={alunoNome} turmaId={turmaId} state={state} />
+    </Modal>
+  );
+}
+
 // ==================== SECTION 1: TURMAS ====================
 function SectionTurmas({ state, dispatch }) {
   const [expandedId, setExpandedId] = useState(null);
@@ -1472,10 +1519,18 @@ function SectionTurmas({ state, dispatch }) {
   const [showGerarLink, setShowGerarLink] = useState(false);
   const [gerenciandoTurma, setGerenciandoTurma] = useState(null); // turma obj
   const [historicoAberto, setHistoricoAberto] = useState({}); // { 'turmaId|nome': bool }
+  const [renamingAluno, setRenamingAluno] = useState(null); // { turmaId, nome } — usado na turma extra
+  const [renameValue, setRenameValue] = useState('');
 
-  const sorted = useMemo(() => sortTurmas(state.turmas), [state.turmas]);
+  const sorted = useMemo(() => sortTurmas(state.turmas).filter(t => t.id !== TURMA_EXTRA_ID), [state.turmas]);
+  const turmaExtra = useMemo(() => state.turmas.find(t => t.id === TURMA_EXTRA_ID), [state.turmas]);
 
-  const horarios =['07h','08h','09h','10h','11h','12h','13h','14h','15h','16h','17h','18h','19h','20h','21h'];
+  const hasPendencies = (turmaId, alunoNome) => {
+    return state.faltas.some(f => f.turmaId === turmaId && f.alunoNome === alunoNome && f.status === 'pendente') ||
+           state.reposicoes.some(r => r.turmaOrigemId === turmaId && r.alunoNome === alunoNome && !r.realizada);
+  };
+
+  const horarios = ['07h','08h','09h','10h','11h','12h','13h','14h','15h','16h','17h','18h','19h','20h','21h'];
 
   return (
     <div className="max-w-4xl mx-auto p-4 space-y-3">
@@ -1515,7 +1570,7 @@ function SectionTurmas({ state, dispatch }) {
                   className="text-xs font-medium px-2.5 py-1 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors">
                   Gerenciar
                 </button>
-                <button onClick={e => { e.stopPropagation(); setConfirm({type:'deleteTurma', turma}); }} className="text-red-400 hover:text-red-600 text-sm px-2">Excluir</button>
+                {turma.alunos.length === 0 && <button onClick={e => { e.stopPropagation(); setConfirm({type:'deleteTurma', turma}); }} className="text-red-400 hover:text-red-600 text-sm px-2">Excluir</button>}
                 <span className="text-gray-400 text-lg">{exp ? '▲' : '▼'}</span>
               </div>
             </div>
@@ -1592,6 +1647,85 @@ function SectionTurmas({ state, dispatch }) {
         );
       })}
 
+      {turmaExtra && (() => {
+        const exp = expandedId === TURMA_EXTRA_ID;
+        return (
+          <div className="bg-white rounded-xl shadow-sm border border-dashed border-gray-300 mt-4">
+            <div className="flex items-center justify-between p-4 cursor-pointer" onClick={() => setExpandedId(exp ? null : TURMA_EXTRA_ID)}>
+              <div>
+                <div className="font-semibold text-gray-500 flex items-center gap-2">
+                  Alunos Extras & Ex-alunos
+                </div>
+                <div className="text-sm text-gray-400 mt-0.5">{turmaExtra.alunos.length} aluno(s)</div>
+              </div>
+              <span className="text-gray-400 text-lg">{exp ? '▲' : '▼'}</span>
+            </div>
+            {exp && (
+              <div className="border-t border-dashed border-gray-200 p-4 fade-in">
+                <div className="space-y-1 mb-3">
+                  {turmaExtra.alunos.length === 0 && <p className="text-gray-400 text-sm italic">Nenhum aluno cadastrado</p>}
+                  {[...turmaExtra.alunos].sort((a,b) => a.localeCompare(b,'pt')).map(nome => {
+                    const isRenaming = renamingAluno?.turmaId === TURMA_EXTRA_ID && renamingAluno?.nome === nome;
+                    const commitRename = () => {
+                      const n = renameValue.trim();
+                      if (n && n !== nome) dispatch({ type: 'RENAME_ALUNO', turmaId: TURMA_EXTRA_ID, oldNome: nome, newNome: n });
+                      setRenamingAluno(null);
+                    };
+                    return (
+                      <div key={nome} className="flex justify-between items-center py-1.5 px-2 rounded-lg hover:bg-gray-50">
+                        {isRenaming ? (
+                          <input
+                            className="flex-1 border border-blue-400 rounded-lg px-2 py-0.5 text-sm mr-2 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                            value={renameValue}
+                            onChange={e => setRenameValue(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenamingAluno(null); }}
+                            onBlur={commitRename}
+                            autoFocus
+                          />
+                        ) : (
+                          <span
+                            className="text-sm text-gray-700 cursor-pointer hover:text-blue-600 hover:underline"
+                            onClick={() => { setRenamingAluno({ turmaId: TURMA_EXTRA_ID, nome }); setRenameValue(nome); }}
+                          >{nome}</span>
+                        )}
+                        <button onClick={() => setConfirm({type:'removeAluno', nome, turma: turmaExtra})}
+                          className="text-red-400 hover:text-red-600 text-xs px-2 shrink-0">Remover</button>
+                      </div>
+                    );
+                  })}
+                </div>
+                {addingAluno === TURMA_EXTRA_ID ? (
+                  <div className="flex gap-2">
+                    <input
+                      className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+                      placeholder="Nome do aluno"
+                      value={newNome[TURMA_EXTRA_ID] || ''}
+                      onChange={e => setNewNome(prev => ({...prev, [TURMA_EXTRA_ID]: e.target.value}))}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          const n = (newNome[TURMA_EXTRA_ID]||'').trim();
+                          if (n) { dispatch({type:'ADD_ALUNO', turmaId: TURMA_EXTRA_ID, nome: n}); setNewNome(prev => ({...prev, [TURMA_EXTRA_ID]: ''})); setAddingAluno(null); }
+                        }
+                        if (e.key === 'Escape') setAddingAluno(null);
+                      }}
+                      autoFocus
+                    />
+                    <button onClick={() => {
+                      const n = (newNome[TURMA_EXTRA_ID]||'').trim();
+                      if (n) { dispatch({type:'ADD_ALUNO', turmaId: TURMA_EXTRA_ID, nome: n}); setNewNome(prev => ({...prev, [TURMA_EXTRA_ID]: ''})); }
+                      setAddingAluno(null);
+                    }} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">OK</button>
+                    <button onClick={() => setAddingAluno(null)} className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm">✕</button>
+                  </div>
+                ) : (
+                  <button onClick={() => setAddingAluno(TURMA_EXTRA_ID)} className="text-sm text-blue-600 hover:text-blue-800 font-medium">+ Adicionar aluno</button>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {showNewTurma && (
         <Modal title="Nova Turma" onClose={() => setShowNewTurma(false)}>
           <div className="space-y-3">
@@ -1636,6 +1770,33 @@ function SectionTurmas({ state, dispatch }) {
           confirmLabel="Excluir"
         />
       )}
+      {confirm?.type === 'deleteTurmaComAlunos' && (
+        <ConfirmModal
+          title="Turma não está vazia"
+          message={`A turma ${ABREV[confirm.turma.diaSemana]} ${confirm.turma.horario} ainda tem ${confirm.turma.alunos.length} aluno${confirm.turma.alunos.length > 1 ? 's' : ''}. Remova todos os alunos antes de excluir a turma.`}
+          confirmLabel="Entendi"
+          onConfirm={() => setConfirm(null)}
+          onCancel={() => setConfirm(null)}
+        />
+      )}
+      {confirm?.type === 'removeAluno' && (
+        <ConfirmModal
+          title="Remover aluno?" danger
+          message={`Remover ${confirm.nome} da turma ${confirm.turma.id === TURMA_EXTRA_ID ? 'Extra' : `${ABREV[confirm.turma.diaSemana]} ${confirm.turma.horario}`}?`}
+          onConfirm={() => { dispatch({type:'REMOVE_ALUNO', turmaId: confirm.turma.id, nome: confirm.nome}); setConfirm(null); }}
+          onCancel={() => setConfirm(null)}
+          confirmLabel="Remover"
+        />
+      )}
+      {confirm?.type === 'removeAlunoPendencias' && (
+        <ConfirmModal
+          title="Aluno com pendências" danger
+          message={`${confirm.nome} possui faltas ou reposições pendentes. Remover mesmo assim?`}
+          onConfirm={() => { dispatch({type:'REMOVE_ALUNO', turmaId: confirm.turma.id, nome: confirm.nome}); setConfirm(null); }}
+          onCancel={() => setConfirm(null)}
+          confirmLabel="Remover mesmo assim"
+        />
+      )}
     </div>
   );
 }
@@ -1648,23 +1809,10 @@ function TabRegistrarFalta({ state, dispatch }) {
   const [success, setSuccess] = useState('');
   const [tiposModal, setTiposModal] = useState(null); // [{data, semAntecedencia}] for dates <24h
 
-  const professor = localStorage.getItem(PROFESSOR_KEY) || '';
-  const isProfessor = PROFESSORES.includes(professor);
-
   const sorted = useMemo(() => sortTurmas(state.turmas), [state.turmas]);
   const turma = state.turmas.find(t => t.id === turmaId);
-
-  const occurrences = useMemo(() => {
-    if (!turma) return [];
-    const td = todayStr();
-    const futureDates = getNextOccurrences(turma.diaSemana, 8);
-    if (!isProfessor) return futureDates;
-    // Past dates within the 30-day validity window (expiry = date + 30 days >= today)
-    const from30ago = (() => { const d = new Date(); d.setDate(d.getDate() - 30); return dateToStr(d); })();
-    const yesterday = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return dateToStr(d); })();
-    const pastDates = getClassDatesInRange(turma, from30ago, yesterday);
-    return [...pastDates, ...futureDates]; // chronological order
-  }, [turma, isProfessor]);
+  const isTurmaExtra = turmaId === TURMA_EXTRA_ID;
+  const occurrences = useMemo(() => (!turma || isTurmaExtra) ? [] : getNextOccurrences(turma.diaSemana, 8), [turma, isTurmaExtra]);
 
   const toggleDate = d => setSelectedDates(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]);
 
@@ -1679,17 +1827,14 @@ function TabRegistrarFalta({ state, dispatch }) {
 
   const handleSubmit = () => {
     if (!turmaId || !alunoNome || !selectedDates.length) return;
-    const td = todayStr();
-    // Retroativas e <24h vão para o modal de classificação
-    const precisamModal = selectedDates.filter(d => {
-      if (d < td) return true; // retroativa — perguntar
+    const menosde24h = selectedDates.filter(d => {
       const dt = getClassDatetime(turmaId, d, state.turmas);
       if (!dt) return false;
       const horas = (dt - Date.now()) / 3600000;
       return horas >= 0 && horas < 24;
     });
-    if (precisamModal.length > 0) {
-      setTiposModal(precisamModal.map(d => ({ data: d, semAntecedencia: true })));
+    if (menosde24h.length > 0) {
+      setTiposModal(menosde24h.map(d => ({ data: d, semAntecedencia: true })));
       return;
     }
     doSubmit(selectedDates.map(d => ({ data: d, semAntecedencia: false })));
@@ -1703,7 +1848,7 @@ function TabRegistrarFalta({ state, dispatch }) {
         <label className="block text-sm font-medium text-gray-700 mb-1">Turma</label>
         <select value={turmaId} onChange={e => { setTurmaId(e.target.value); setAlunoNome(''); setSelectedDates([]); }} className="w-full border border-gray-300 rounded-lg px-3 py-2">
           <option value="">— Selecione a turma —</option>
-          {sorted.map(t => <option key={t.id} value={t.id}>{EXTENSO[t.diaSemana]} {t.horario}{t.observacao ? ` (${t.observacao})` : ''}</option>)}
+          {sorted.map(t => <option key={t.id} value={t.id}>{t.id === TURMA_EXTRA_ID ? 'Alunos Extras & Ex-alunos' : `${EXTENSO[t.diaSemana]} ${t.horario}${t.observacao ? ` (${t.observacao})` : ''}`}</option>)}
         </select>
       </div>
 
@@ -1718,13 +1863,19 @@ function TabRegistrarFalta({ state, dispatch }) {
         </div>
       )}
 
-      {turma && alunoNome && (
+      {turma && alunoNome && isTurmaExtra && (
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Datas da falta</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Data da falta</label>
+          <input type="date" value={selectedDates[0] || ''} onChange={e => setSelectedDates(e.target.value ? [e.target.value] : [])}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2" />
+        </div>
+      )}
+
+      {turma && alunoNome && !isTurmaExtra && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Datas da falta (próximas ocorrências)</label>
           <div className="grid grid-cols-2 gap-2">
             {occurrences.map(d => {
-              const td = todayStr();
-              const isRetroativa = d < td;
               const feriadoNome = getFeriadoNome(d);
               const recessoNome = !feriadoNome ? getRecessoNome(d) : null;
               const jaRegistrado = !feriadoNome && !recessoNome && state.faltas.some(f =>
@@ -1749,7 +1900,6 @@ function TabRegistrarFalta({ state, dispatch }) {
                     {feriadoNome && <span className="ml-1 text-xs text-purple-500 font-medium">🎌 {feriadoNome}</span>}
                     {recessoNome && <span className="ml-1 text-xs text-amber-600 font-medium">🏠 {recessoNome}</span>}
                     {!feriadoNome && !recessoNome && jaRegistrado && <span className="ml-1 text-xs text-orange-500 font-medium">já registrado</span>}
-                    {!feriadoNome && !recessoNome && !jaRegistrado && isRetroativa && <span className="ml-1 text-xs text-purple-500 font-medium">retroativa</span>}
                   </span>
                 </label>
               );
@@ -1760,17 +1910,11 @@ function TabRegistrarFalta({ state, dispatch }) {
 
       {tiposModal && (
         <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 space-y-3">
-          <div className="font-semibold text-orange-800 text-sm">⚠️ Classifique as faltas</div>
-          <div className="text-xs text-orange-700">Escolha o tipo de cada falta registrada:</div>
-          {tiposModal.map((item, i) => {
-            const td = todayStr();
-            const isRetro = item.data < td;
-            return (
+          <div className="font-semibold text-orange-800 text-sm">⚠️ Falta registrada com menos de 24h de antecedência</div>
+          <div className="text-xs text-orange-700">Classifique cada data:</div>
+          {tiposModal.map((item, i) => (
             <div key={item.data} className="flex items-center justify-between gap-3">
-              <span className="text-sm font-medium text-gray-800">
-                {fmtBRFull(item.data)}
-                {isRetro && <span className="ml-1.5 text-xs text-purple-500 font-medium">retroativa</span>}
-              </span>
+              <span className="text-sm font-medium text-gray-800">{fmtBRFull(item.data)}</span>
               <div className="flex gap-2">
                 <button
                   onClick={() => setTiposModal(prev => prev.map((x, j) => j === i ? { ...x, semAntecedencia: false } : x))}
@@ -1784,7 +1928,7 @@ function TabRegistrarFalta({ state, dispatch }) {
                 </button>
               </div>
             </div>
-          ); })}
+          ))}
           <div className="flex gap-2 pt-1">
             <button onClick={() => setTiposModal(null)} className="flex-1 py-2 border border-gray-300 rounded-lg text-sm text-gray-600">Cancelar</button>
             <button onClick={() => {
@@ -1818,6 +1962,7 @@ function TabRegistrarReposicao({ state, dispatch }) {
   const [extraData, setExtraData]         = useState('');
   const [extraTurma, setExtraTurma]       = useState('');
   const [tipoManual, setTipoManual]       = useState('reposicao'); // quando !hasPending + isManual
+  const [creditoId, setCreditoId]         = useState('');
   const [success, setSuccess]             = useState('');
 
   const td     = todayStr();
@@ -1865,6 +2010,13 @@ function TabRegistrarReposicao({ state, dispatch }) {
     return { turmaId: oldest.turmaId, datas: oldest.datas, expiry: getFaltaExpiry(oldest) };
   }, [alunoNome, state.faltas]);
 
+  const creditosDisponiveis = useMemo(() => {
+    if (!alunoNome || !turmaOrigemId) return [];
+    return arr(state.creditos).filter(c =>
+      c.alunoNome === alunoNome && c.turmaId === turmaOrigemId && !c.usado && c.dataExpiracao >= td
+    );
+  }, [alunoNome, turmaOrigemId, state.creditos, td]);
+
   const occupancy = useMemo(() => {
     if (!turmaRepoId || !dataRepo) return null;
     return calcOccupancy(turmaRepoId, dataRepo, state);
@@ -1880,9 +2032,14 @@ function TabRegistrarReposicao({ state, dispatch }) {
 
   const handleSubmit = () => {
     if (!canSubmit) return;
-    dispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId, dataReposicao: dataRepo, turmaReposicaoId: turmaRepoId, tipo, semVagaOficial: isManual, vagaSelId: vagaObj?.id || null });
+    dispatch({
+      type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId,
+      dataReposicao: dataRepo, turmaReposicaoId: turmaRepoId,
+      tipo, semVagaOficial: isManual, vagaSelId: vagaObj?.id || null,
+      creditoId: (!faltaInfo && creditoId) ? creditoId : null
+    });
     setSuccess(`${tipo === 'aula_extra' ? 'Aula extra' : 'Reposição'} de ${alunoNome} agendada para ${fmtBRFull(dataRepo)}.`);
-    setAlunoNome(''); setVagaSel(''); setExtraData(''); setExtraTurma(''); setTipoManual('reposicao');
+    setAlunoNome(''); setVagaSel(''); setExtraData(''); setExtraTurma(''); setTipoManual('reposicao'); setCreditoId('');
     setTimeout(() => setSuccess(''), 4000);
   };
 
@@ -1897,7 +2054,7 @@ function TabRegistrarReposicao({ state, dispatch }) {
           className="w-full border border-gray-300 rounded-lg px-3 py-2">
           <option value="">— Selecione a turma —</option>
           {sorted.map(t => (
-            <option key={t.id} value={t.id}>{EXTENSO[t.diaSemana]} {t.horario}</option>
+            <option key={t.id} value={t.id}>{t.id === TURMA_EXTRA_ID ? 'Alunos Extras & Ex-alunos' : `${EXTENSO[t.diaSemana]} ${t.horario}`}</option>
           ))}
         </select>
       </div>
@@ -1925,6 +2082,19 @@ function TabRegistrarReposicao({ state, dispatch }) {
             {getTurmaLabel(state.turmas, faltaInfo.turmaId)} — <strong>{fmtDatesText(faltaInfo.datas)}</strong>
           </div>
           <div className="text-blue-600 mt-0.5">Expira em: {fmtBRFull(faltaInfo.expiry)}</div>
+        </div>
+      )}
+
+      {/* Info: crédito extra disponível */}
+      {alunoNome && !faltaInfo && creditosDisponiveis.length > 0 && (
+        <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 text-sm">
+          <div className="font-medium text-purple-800">Crédito extra disponível:</div>
+          {creditosDisponiveis.map(c => (
+            <label key={c.id} className="flex items-center gap-2 mt-1 cursor-pointer">
+              <input type="radio" name="creditoSel" value={c.id} checked={creditoId === c.id} onChange={() => setCreditoId(c.id)} />
+              <span className="text-purple-700">Expira {fmtBRFull(c.dataExpiracao)}</span>
+            </label>
+          ))}
         </div>
       )}
 
@@ -1966,7 +2136,7 @@ function TabRegistrarReposicao({ state, dispatch }) {
               className="w-full border border-gray-300 rounded-lg px-3 py-2">
               <option value="">— Selecione a turma —</option>
               {sorted.map(t => (
-                <option key={t.id} value={t.id}>{EXTENSO[t.diaSemana]} {t.horario}</option>
+                <option key={t.id} value={t.id}>{t.id === TURMA_EXTRA_ID ? 'Alunos Extras & Ex-alunos' : `${EXTENSO[t.diaSemana]} ${t.horario}`}</option>
               ))}
             </select>
           </div>
@@ -2347,27 +2517,333 @@ function TabCancelarFalta({ state, dispatch }) {
   );
 }
 
+// ==================== GERENCIAR ALUNO MODAL ====================
+function GerenciarAlunoModal({ turma, state, dispatch, onClose }) {
+  const td = todayStr();
+  const [expanded, setExpanded] = useState(null);
+  const [renames, setRenames] = useState({});
+  const [confirmRemove, setConfirmRemove] = useState(null);
+  const otherTurmas = useMemo(() => sortTurmas(state.turmas).filter(t => t.id !== turma.id), [state.turmas, turma.id]);
+
+  const canChangeTurma = (nome, destinoId) => {
+    if (destinoId === TURMA_EXTRA_ID) return { can: true };
+    const hasFutureFalta = state.faltas.some(f =>
+      f.turmaId === turma.id && f.alunoNome === nome && f.datas.some(d => d >= td)
+    );
+    if (hasFutureFalta) return { can: false, reason: 'tem faltas futuras marcadas' };
+    const hasFutureAusencia = state.ausencias.some(a =>
+      a.turmaId === turma.id && a.alunoNome === nome && a.mesAno >= td.slice(0, 7)
+    );
+    if (hasFutureAusencia) return { can: false, reason: 'tem férias futuras marcadas' };
+    return { can: true };
+  };
+
+  const hasPendencies = (nome) =>
+    state.faltas.some(f => f.turmaId === turma.id && f.alunoNome === nome && f.status === 'pendente') ||
+    state.reposicoes.some(r => r.turmaOrigemId === turma.id && r.alunoNome === nome && !r.realizada);
+
+  const handleRename = (oldNome) => {
+    const n = (renames[oldNome] ?? oldNome).trim();
+    if (n && n !== oldNome) dispatch({ type: 'RENAME_ALUNO', turmaId: turma.id, oldNome, newNome: n });
+  };
+
+  const sorted = useMemo(() => [...turma.alunos].sort((a,b) => a.localeCompare(b,'pt')), [turma.alunos]);
+
+  return (
+    <Modal title={`Gerenciar alunos — ${ABREV[turma.diaSemana]} ${turma.horario}`} onClose={onClose}>
+      {confirmRemove && (
+        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm space-y-2">
+          <p className="text-red-700 font-medium">Remover <strong>{confirmRemove}</strong> da turma?</p>
+          {hasPendencies(confirmRemove) && <p className="text-red-500 text-xs">⚠️ Este aluno tem faltas ou reposições pendentes.</p>}
+          <div className="flex gap-2">
+            <button onClick={() => { dispatch({ type:'REMOVE_ALUNO', turmaId: turma.id, nome: confirmRemove }); onClose(); }}
+              className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs hover:bg-red-700">Confirmar</button>
+            <button onClick={() => setConfirmRemove(null)} className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs">Cancelar</button>
+          </div>
+        </div>
+      )}
+      <div className="space-y-1">
+        {sorted.map(nome => {
+          const isOpen = expanded === nome;
+          const changeableDefault = canChangeTurma(nome, null);
+          const renameVal = renames[nome] !== undefined ? renames[nome] : nome;
+          return (
+            <div key={nome} className="border border-gray-200 rounded-xl overflow-hidden">
+              <button
+                onClick={() => setExpanded(isOpen ? null : nome)}
+                className="w-full flex items-center justify-between px-3 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+              >
+                <span className="text-sm font-medium text-gray-800">{nome}</span>
+                <span className="text-gray-400 text-xs ml-2">{isOpen ? '▲' : '▼'}</span>
+              </button>
+              {isOpen && (
+                <div className="px-3 pb-3 pt-2 bg-white space-y-2 border-t border-gray-100">
+                  <div className="flex gap-2 items-center">
+                    <input
+                      className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
+                      value={renameVal}
+                      onChange={e => setRenames(r => ({ ...r, [nome]: e.target.value }))}
+                      onKeyDown={e => { if (e.key === 'Enter') { handleRename(nome); onClose(); } }}
+                      placeholder="Renomear…"
+                    />
+                    {renameVal.trim() !== nome && renameVal.trim() !== '' && (
+                      <button onClick={() => { handleRename(nome); onClose(); }}
+                        className="text-xs px-2.5 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shrink-0">
+                        Salvar
+                      </button>
+                    )}
+                  </div>
+                  <div>
+                    <select
+                      value=""
+                      onChange={e => {
+                        if (!e.target.value) return;
+                        const check = canChangeTurma(nome, e.target.value);
+                        if (!check.can) return;
+                        dispatch({ type:'CHANGE_TURMA_ALUNO', oldTurmaId: turma.id, newTurmaId: e.target.value, alunoNome: nome });
+                        onClose();
+                      }}
+                      className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white"
+                    >
+                      <option value="">Mover para outra turma…</option>
+                      {otherTurmas.map(t => {
+                        const check = canChangeTurma(nome, t.id);
+                        return <option key={t.id} value={t.id} disabled={!check.can}>{getTurmaLabel(state.turmas, t.id)}{!check.can ? ` (${check.reason})` : ''}</option>;
+                      })}
+                    </select>
+                    {!changeableDefault.can && (
+                      <p className="text-xs text-amber-600 mt-1">⚠️ {changeableDefault.reason} — só Turma Extra disponível</p>
+                    )}
+                  </div>
+                  <button onClick={() => { setExpanded(null); setConfirmRemove(nome); }}
+                    className="text-xs text-red-400 hover:text-red-600 transition-colors">
+                    Remover aluno
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {sorted.length === 0 && <p className="text-sm text-gray-400 text-center py-4">Nenhum aluno nesta turma.</p>}
+      </div>
+    </Modal>
+  );
+}
+
+// ==================== TAB: CRÉDITO EXTRA ====================
+function TabCreditoExtra({ state, dispatch }) {
+  const [turmaId, setTurmaId] = useState('');
+  const [alunoNome, setAlunoNome] = useState('');
+  const [dataExpiracao, setDataExpiracao] = useState('');
+  const [success, setSuccess] = useState('');
+  const td = todayStr();
+
+  const sorted = useMemo(() => sortTurmas(state.turmas), [state.turmas]);
+  const turma = state.turmas.find(t => t.id === turmaId);
+
+  useEffect(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 30);
+    setDataExpiracao(dateToStr(d));
+  }, []);
+
+  const handleSubmit = () => {
+    if (!turmaId || !alunoNome || !dataExpiracao) return;
+    const prof = localStorage.getItem(PROFESSOR_KEY) || '';
+    dispatch({ type: 'ADD_CREDITO', alunoNome, turmaId, dataExpiracao, professor: prof });
+    setSuccess(`Crédito de reposição adicionado para ${alunoNome}.`);
+    setAlunoNome('');
+    setTimeout(() => setSuccess(''), 4000);
+  };
+
+  const creditos = useMemo(() => arr(state.creditos).filter(c => !c.usado && c.dataExpiracao >= td), [state.creditos, td]);
+  const creditosExpirados = useMemo(() => arr(state.creditos).filter(c => !c.usado && c.dataExpiracao < td), [state.creditos, td]);
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 text-sm text-purple-700">
+        Dar um crédito de reposição avulso ao aluno. Ele pode usar para marcar uma reposição sem precisar de uma falta registrada.
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Turma</label>
+        <select value={turmaId} onChange={e => { setTurmaId(e.target.value); setAlunoNome(''); }} className="w-full border border-gray-300 rounded-lg px-3 py-2">
+          <option value="">— Selecione a turma —</option>
+          {sorted.map(t => <option key={t.id} value={t.id}>{t.id === TURMA_EXTRA_ID ? 'Alunos Extras & Ex-alunos' : `${EXTENSO[t.diaSemana]} ${t.horario}`}</option>)}
+        </select>
+      </div>
+
+      {turma && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Aluno</label>
+          <select value={alunoNome} onChange={e => setAlunoNome(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2">
+            <option value="">— Selecione o aluno —</option>
+            {[...turma.alunos].sort((a,b) => a.localeCompare(b,'pt')).map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+      )}
+
+      {alunoNome && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Data de expiração</label>
+          <input type="date" value={dataExpiracao} min={td} onChange={e => setDataExpiracao(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2" />
+        </div>
+      )}
+
+      {success && <div className="bg-green-50 text-green-700 rounded-lg px-4 py-3 text-sm font-medium">{success}</div>}
+
+      <button
+        onClick={handleSubmit}
+        disabled={!turmaId || !alunoNome || !dataExpiracao}
+        className="w-full py-2.5 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        Dar Crédito
+      </button>
+
+      {creditos.length > 0 && (
+        <div className="mt-4 border-t border-gray-200 pt-4">
+          <h4 className="text-sm font-semibold text-gray-600 mb-2">Créditos ativos</h4>
+          <div className="space-y-2">
+            {[...creditos].sort((a, b) => {
+              const turmaOrder = sortTurmas(state.turmas).map(t => t.id);
+              const ai = turmaOrder.indexOf(a.turmaId); const bi = turmaOrder.indexOf(b.turmaId);
+              if (ai !== bi) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+              return a.alunoNome.localeCompare(b.alunoNome, 'pt');
+            }).map(c => (
+              <div key={c.id} className="bg-gray-50 rounded-lg p-3 text-sm flex justify-between items-center">
+                <div>
+                  <span className="font-medium">{c.alunoNome}</span>
+                  <span className="text-gray-400 ml-2">({getTurmaLabel(state.turmas, c.turmaId)})</span>
+                  <div className="text-gray-500 mt-0.5">Expira: {fmtBRFull(c.dataExpiracao)}</div>
+                  {(c.criadoPor || c.criadoEm) && (
+                    <div className="text-gray-400 text-xs mt-0.5">
+                      {c.criadoPor && <span>por {c.criadoPor}</span>}
+                      {c.criadoEm && <span> · {fmtBR(c.criadoEm.slice(0,10))}</span>}
+                    </div>
+                  )}
+                </div>
+                <button onClick={() => dispatch({type:'DELETE_CREDITO', id: c.id})} className="text-red-400 hover:text-red-600 text-xs ml-2 shrink-0">Remover</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {creditosExpirados.length > 0 && (
+        <div className="mt-2 border-t border-gray-100 pt-3">
+          <h4 className="text-sm font-semibold text-gray-400 mb-2">Expirados</h4>
+          <div className="space-y-1">
+            {creditosExpirados.map(c => (
+              <div key={c.id} className="bg-gray-50 rounded-lg px-3 py-2 text-sm flex justify-between items-center opacity-60">
+                <div>
+                  <span className="font-medium">{c.alunoNome}</span>
+                  <span className="text-gray-400 ml-2 text-xs">expirou {fmtBRFull(c.dataExpiracao)}</span>
+                </div>
+                <button onClick={() => dispatch({type:'DELETE_CREDITO', id: c.id})} className="text-red-400 hover:text-red-600 text-xs ml-2">Remover</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ==================== SECTION 2: FALTAS & REPOSIÇÕES ====================
 function SectionFaltasReposicoes({ state, dispatch }) {
-  const [tab, setTab] = useState(0);
-  const tabs = ['Registrar Falta', 'Registrar Reposição', 'Cancelar Reposição', 'Cancelar Falta', 'Ausência Programada'];
+  const [openGroup, setOpenGroup] = useState(null);
+  const [subTab, setSubTab] = useState({});
+
+  const toggleGroup = (g) => setOpenGroup(prev => prev === g ? null : g);
+  const getSubTab = (g) => subTab[g] ?? 0;
+  const setGroupSubTab = (g, i) => setSubTab(prev => ({...prev, [g]: i}));
+
+  const groups = [
+    {
+      key: 'faltas',
+      label: 'Faltas',
+      color: 'amber',
+      tabs: ['Registrar', 'Cancelar'],
+      content: [
+        <TabRegistrarFalta state={state} dispatch={dispatch} />,
+        <TabCancelarFalta state={state} dispatch={dispatch} />,
+      ]
+    },
+    {
+      key: 'reposicoes',
+      label: 'Reposições',
+      color: 'blue',
+      tabs: ['Registrar', 'Cancelar'],
+      content: [
+        <TabRegistrarReposicao state={state} dispatch={dispatch} />,
+        <TabCancelarReposicao state={state} dispatch={dispatch} />,
+      ]
+    },
+    {
+      key: 'ferias',
+      label: 'Férias',
+      color: 'green',
+      tabs: ['Ausência Programada'],
+      content: [
+        <TabAusenciaProgramada state={state} dispatch={dispatch} />,
+      ]
+    },
+    {
+      key: 'credito',
+      label: 'Crédito Extra',
+      color: 'purple',
+      tabs: ['Dar Crédito'],
+      content: [
+        <TabCreditoExtra state={state} dispatch={dispatch} />,
+      ]
+    },
+  ];
+
+  const colorMap = {
+    amber:  { header: 'bg-amber-50 border-amber-200 text-amber-800',   tab: 'border-amber-500 text-amber-700 bg-amber-50',   btn: 'bg-amber-500'  },
+    blue:   { header: 'bg-blue-50 border-blue-200 text-blue-800',      tab: 'border-blue-600 text-blue-700 bg-blue-50',      btn: 'bg-blue-500'   },
+    green:  { header: 'bg-green-50 border-green-200 text-green-800',   tab: 'border-green-600 text-green-700 bg-green-50',   btn: 'bg-green-500'  },
+    purple: { header: 'bg-purple-50 border-purple-200 text-purple-800',tab: 'border-purple-600 text-purple-700 bg-purple-50',btn: 'bg-purple-500' },
+  };
 
   return (
     <div className="max-w-2xl mx-auto p-4">
       <h2 className="text-xl font-bold text-gray-800 mb-4">Faltas & Reposições</h2>
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="flex border-b border-gray-200 overflow-x-auto">
-          {tabs.map((t,i) => (
-            <button key={i} onClick={() => setTab(i)} className={`flex-shrink-0 px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors ${tab===i ? 'border-b-2 border-blue-600 text-blue-600 bg-blue-50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}>{t}</button>
-          ))}
-        </div>
-        <div className="p-4">
-          {tab === 0 && <TabRegistrarFalta state={state} dispatch={dispatch} />}
-          {tab === 1 && <TabRegistrarReposicao state={state} dispatch={dispatch} />}
-          {tab === 2 && <TabCancelarReposicao state={state} dispatch={dispatch} />}
-          {tab === 3 && <TabCancelarFalta state={state} dispatch={dispatch} />}
-          {tab === 4 && <TabAusenciaProgramada state={state} dispatch={dispatch} />}
-        </div>
+      <div className="space-y-3">
+        {groups.map(group => {
+          const isOpen = openGroup === group.key;
+          const c = colorMap[group.color];
+          const curTab = getSubTab(group.key);
+          return (
+            <div key={group.key} className={`rounded-xl border overflow-hidden shadow-sm ${isOpen ? c.header.split(' ').slice(0,2).join(' ') : 'bg-white border-gray-200'}`}>
+              <button
+                onClick={() => toggleGroup(group.key)}
+                className={`w-full flex items-center justify-between px-4 py-3 font-semibold text-sm transition-colors ${isOpen ? c.header : 'text-gray-700 hover:bg-gray-50'}`}
+              >
+                <span>{group.label}</span>
+                <span className="text-base">{isOpen ? '▲' : '▼'}</span>
+              </button>
+              {isOpen && (
+                <div className="bg-white">
+                  {group.tabs.length > 1 && (
+                    <div className="flex border-b border-gray-200">
+                      {group.tabs.map((t, i) => (
+                        <button key={i} onClick={() => setGroupSubTab(group.key, i)}
+                          className={`px-4 py-2 text-sm font-medium transition-colors ${curTab === i ? `border-b-2 ${c.tab}` : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}>
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="p-4">
+                    {group.content[curTab]}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -2565,7 +3041,7 @@ function generatePainelText(state) {
 function SectionPainel({ state, dispatch }) {
   const [tab, setTab] = useState(0);
   const [showResumo, setShowResumo] = useState(false);
-  const tabs = ['Lista atual', 'Histórico', 'Importação', 'Registro'];
+  const tabs = ['Lista atual', 'Histórico', /* 'Análise', */ 'Registro'];
   const td = todayStr();
 
   // Alertas
@@ -2612,8 +3088,8 @@ function SectionPainel({ state, dispatch }) {
         <div className="p-4">
           {tab === 0 && <PainelLista state={state} dispatch={dispatch} />}
           {tab === 1 && <PainelHistorico state={state} dispatch={dispatch} />}
-          {tab === 2 && <PainelImportacao state={state} dispatch={dispatch} />}
-          {tab === 3 && <PainelRegistro state={state} dispatch={dispatch} />}
+          {/* tab === 2 && <PainelAnalise state={state} /> */}
+          {tab === 2 && <PainelRegistro state={state} dispatch={dispatch} />}
         </div>
       </div>
 
@@ -2958,7 +3434,6 @@ function PainelVisual({ state, dispatch }) {
         }
         return vg.vagaExtra ? 'vaga extra' : null;
       }).filter(Boolean);
-      const todaCancelada = v.vagas.every(vg => vg.cancelada);
       title = `Vagas — ${t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?'}`;
       body = (
         <div className="space-y-2 text-sm">
@@ -2972,11 +3447,6 @@ function PainelVisual({ state, dispatch }) {
               <div key={i} className="font-semibold text-gray-800">· {a}</div>
             )) : <div className="text-gray-400 text-xs italic">vaga extra</div>}
           </div>
-          <button
-            onClick={() => { dispatch({ type: 'CANCEL_VAGAS_SLOT', turmaId: v.turmaId, data: v.data, cancelada: !todaCancelada }); setDet(null); }}
-            className={`w-full py-2 rounded-lg text-sm font-medium transition-colors ${todaCancelada ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-red-100 text-red-700 hover:bg-red-200'}`}>
-            {todaCancelada ? 'Reabrir vagas para alunos' : 'Ocultar vagas dos alunos'}
-          </button>
         </div>
       );
     }
@@ -3138,16 +3608,14 @@ function PainelVisual({ state, dispatch }) {
               {vagasGrupos.map((v, i) => {
                 const t   = state.turmas.find(x => x.id === v.turmaId);
                 const dia = getDiaSemanaFromDateStr(v.data);
-                const todaCancelada = v.vagas.every(vg => vg.cancelada);
                 return (
                   <div key={i} onClick={() => setDet({ tipo:'vaga', obj: v })}
-                    className={`px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors flex justify-between items-center ${todaCancelada ? 'bg-gray-50 opacity-60' : 'bg-white'}`}>
+                    className="px-4 py-3 bg-white cursor-pointer hover:bg-gray-50 transition-colors flex justify-between items-center">
                     <div>
-                      <span className={`font-bold ${todaCancelada ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{EXTENSO[dia]}, {fmtBR(v.data)}</span>
+                      <span className="font-bold text-gray-900">{EXTENSO[dia]}, {fmtBR(v.data)}</span>
                       <span className="text-gray-500 ml-2 text-sm">{t?.horario || '?'}</span>
-                      {todaCancelada && <span className="ml-2 text-xs font-medium px-1.5 py-0.5 rounded bg-gray-200 text-gray-500">oculta dos alunos</span>}
                     </div>
-                    {v.count > 1 && !todaCancelada && (
+                    {v.count > 1 && (
                       <span className="bg-blue-100 text-blue-700 text-xs font-bold px-2 py-0.5 rounded-full">{v.count} vagas</span>
                     )}
                   </div>
@@ -3531,184 +3999,6 @@ function ProfessorModal({ onSelect }) {
   );
 }
 
-// ==================== HISTÓRICO PESSOAL DO ALUNO ====================
-function nomeExatoMatch(texto, nome) {
-  const escaped = nome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp('(^|[\\s(,/—])' + escaped + '($|[\\s),/—])', 'i').test(texto);
-}
-
-function HistoricoAlunoContent({ alunoNome, turmaId, state }) {
-  const td = todayStr();
-  const turmaLabel = turmaId ? getTurmaLabel(state.turmas, turmaId) : null;
-
-  const logEntries = arr(state.log)
-    .filter(e => {
-      const nomePresente = nomeExatoMatch(e.descricao, alunoNome) ||
-        (!PROFESSORES.includes(alunoNome) && e.professor === alunoNome);
-      if (!nomePresente) return false;
-      // Sempre checar turma quando disponível — garante individualização entre alunos homônimos
-      if (turmaLabel) return e.descricao.includes(turmaLabel);
-      return true;
-    })
-    .map(e => ({ ts: e.ts, texto: e.descricao, tipo: 'log', autor: e.professor }));
-
-  const faltaEvents = state.faltas
-    .filter(f => f.alunoNome === alunoNome && (!turmaId || f.turmaId === turmaId))
-    .flatMap(f => f.datas.filter(d => d < td).map(d => ({
-      ts: d + 'T23:59:00',
-      texto: `Faltou — ${getTurmaLabel(state.turmas, f.turmaId)} em ${fmtBRFull(d)}`,
-      tipo: 'falta',
-      autor: f.criadoPor || null
-    })));
-
-  const repoEvents = state.reposicoes
-    .filter(r => r.alunoNome === alunoNome && r.realizada && (!turmaId || r.turmaOrigemId === turmaId))
-    .map(r => ({
-      ts: r.dataReposicao + 'T23:58:00',
-      texto: `Repôs — ${getTurmaLabel(state.turmas, r.turmaReposicaoId)} em ${fmtBRFull(r.dataReposicao)}`,
-      tipo: 'repo',
-      autor: r.criadoPor || null
-    }));
-
-  const all = [...logEntries, ...faltaEvents, ...repoEvents]
-    .sort((a, b) => b.ts.localeCompare(a.ts));
-
-  if (all.length === 0) return <p className="text-xs text-gray-400 py-2 italic">Sem histórico registrado.</p>;
-
-  return (
-    <div className="space-y-1">
-      {all.map((e, i) => {
-        const dt = new Date(e.ts);
-        const dataHora = dt.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' }) +
-          (e.tipo === 'log' ? ' ' + dt.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' }) : '');
-        const autorColors = e.autor ? (PROFESSOR_COLORS[e.autor] || { bg:'bg-gray-100', text:'text-gray-600', dot:'bg-gray-400' }) : null;
-        return (
-          <div key={i} className="flex items-start gap-2 text-xs py-1 border-b border-gray-50 last:border-0">
-            <span className={`shrink-0 mt-0.5 ${e.tipo === 'falta' ? 'text-red-400' : e.tipo === 'repo' ? 'text-blue-400' : 'text-gray-400'}`}>
-              {e.tipo === 'falta' ? '✗' : e.tipo === 'repo' ? '↩' : '•'}
-            </span>
-            <span className="text-gray-700 flex-1">{e.texto}</span>
-            {e.autor && (
-              <span className={`inline-flex items-center gap-1 font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap shrink-0 ${autorColors.bg} ${autorColors.text}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${autorColors.dot}`}></span>
-                {e.autor}
-              </span>
-            )}
-            <span className="text-gray-300 shrink-0">{dataHora}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function HistoricoAlunoModal({ alunoNome, turmaId, state, onClose }) {
-  const label = turmaId ? getTurmaLabel(state.turmas, turmaId) : null;
-  return (
-    <Modal title={`Histórico — ${alunoNome}${label ? ` (${label})` : ''}`} onClose={onClose}>
-      <HistoricoAlunoContent alunoNome={alunoNome} turmaId={turmaId} state={state} />
-    </Modal>
-  );
-}
-
-// ==================== GERENCIAR ALUNO MODAL ====================
-function GerenciarAlunoModal({ turma, state, dispatch, onClose }) {
-  const td = todayStr();
-  const [renames, setRenames] = useState({});
-  const [confirmRemove, setConfirmRemove] = useState(null);
-  const otherTurmas = useMemo(() => sortTurmas(state.turmas).filter(t => t.id !== turma.id), [state.turmas, turma.id]);
-
-  const canChangeTurma = (nome) => {
-    const hasFutureFalta = state.faltas.some(f =>
-      f.turmaId === turma.id && f.alunoNome === nome && f.datas.some(d => d >= td)
-    );
-    if (hasFutureFalta) return { can: false, reason: 'tem faltas futuras marcadas' };
-    const hasFutureAusencia = state.ausencias.some(a =>
-      a.turmaId === turma.id && a.alunoNome === nome && a.mesAno >= td.slice(0, 7)
-    );
-    if (hasFutureAusencia) return { can: false, reason: 'tem férias futuras marcadas' };
-    return { can: true };
-  };
-
-  const hasPendencies = (nome) =>
-    state.faltas.some(f => f.turmaId === turma.id && f.alunoNome === nome && f.status === 'pendente') ||
-    state.reposicoes.some(r => r.turmaOrigemId === turma.id && r.alunoNome === nome && !r.realizada);
-
-  const handleRename = (oldNome) => {
-    const n = (renames[oldNome] ?? oldNome).trim();
-    if (n && n !== oldNome) dispatch({ type: 'RENAME_ALUNO', turmaId: turma.id, oldNome, newNome: n });
-  };
-
-  const sorted = useMemo(() => [...turma.alunos].sort((a,b) => a.localeCompare(b,'pt')), [turma.alunos]);
-
-  return (
-    <Modal title={`Gerenciar alunos — ${ABREV[turma.diaSemana]} ${turma.horario}`} onClose={onClose}>
-      {confirmRemove && (
-        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm space-y-2">
-          <p className="text-red-700 font-medium">Remover <strong>{confirmRemove}</strong> da turma?</p>
-          {hasPendencies(confirmRemove) && <p className="text-red-500 text-xs">⚠️ Este aluno tem faltas ou reposições pendentes.</p>}
-          <div className="flex gap-2">
-            <button onClick={() => { dispatch({ type:'REMOVE_ALUNO', turmaId: turma.id, nome: confirmRemove }); onClose(); }}
-              className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs hover:bg-red-700">Confirmar</button>
-            <button onClick={() => setConfirmRemove(null)} className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs">Cancelar</button>
-          </div>
-        </div>
-      )}
-      <div className="space-y-2">
-        {sorted.map(nome => {
-          const changeable = canChangeTurma(nome);
-          const renameVal = renames[nome] !== undefined ? renames[nome] : nome;
-          return (
-            <div key={nome} className="border border-gray-100 rounded-xl p-3 bg-gray-50 space-y-2">
-              {/* Nome / Rename */}
-              <div className="flex gap-2 items-center">
-                <input
-                  className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white"
-                  value={renameVal}
-                  onChange={e => setRenames(r => ({ ...r, [nome]: e.target.value }))}
-                  onKeyDown={e => { if (e.key === 'Enter') { handleRename(nome); onClose(); } }}
-                />
-                {renameVal.trim() !== nome && renameVal.trim() !== '' && (
-                  <button onClick={() => { handleRename(nome); onClose(); }}
-                    className="text-xs px-2.5 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shrink-0">
-                    Salvar
-                  </button>
-                )}
-              </div>
-              {/* Trocar turma */}
-              <div className="flex items-center gap-2">
-                <select
-                  disabled={!changeable.can}
-                  value=""
-                  onChange={e => {
-                    if (e.target.value) {
-                      dispatch({ type:'CHANGE_TURMA_ALUNO', oldTurmaId: turma.id, newTurmaId: e.target.value, alunoNome: nome });
-                      onClose();
-                    }
-                  }}
-                  className={`flex-1 border rounded-lg px-2 py-1.5 text-sm ${!changeable.can ? 'opacity-50 bg-gray-100 cursor-not-allowed' : 'border-gray-300 bg-white'}`}
-                >
-                  <option value="">Mover para outra turma…</option>
-                  {otherTurmas.map(t => <option key={t.id} value={t.id}>{getTurmaLabel(state.turmas, t.id)}</option>)}
-                </select>
-                {!changeable.can && (
-                  <span className="text-xs text-amber-600 shrink-0" title={changeable.reason}>⚠️ {changeable.reason}</span>
-                )}
-              </div>
-              {/* Remover */}
-              <button onClick={() => setConfirmRemove(nome)}
-                className="text-xs text-red-400 hover:text-red-600 transition-colors">
-                Remover aluno
-              </button>
-            </div>
-          );
-        })}
-        {sorted.length === 0 && <p className="text-sm text-gray-400 text-center py-4">Nenhum aluno nesta turma.</p>}
-      </div>
-    </Modal>
-  );
-}
-
 // ==================== RESUMO DE HOJE ====================
 function ResumoHoje({ state }) {
   const td = todayStr();
@@ -3717,7 +4007,7 @@ function ResumoHoje({ state }) {
   const mesHoje = td.slice(0, 7);
 
   const turmasHoje = sortTurmas(state.turmas).filter(t =>
-    t.alunos.length > 0 && t.diaSemana === diaNome && !FERIADOS_SET.has(td) && !isRecesso(td)
+    t.id !== TURMA_EXTRA_ID && t.alunos.length > 0 && t.diaSemana === diaNome && !FERIADOS_SET.has(td) && !isRecesso(td)
   );
 
   return (
@@ -3793,6 +4083,7 @@ function App() {
   const lastOwnSave = useRef(0);
   const saveTimer   = useRef(null);
   const initialised = useRef(false);
+  const prevVagasRef = useRef(null);
 
   // Wrapper que injeta o professor em toda ação
   const dispatch = useCallback((action) => {
@@ -3840,6 +4131,33 @@ function App() {
 
     return function() { es.close(); };
   }, []);
+
+  // 2b. Detecta vagas novas e notifica alunos com watchlist
+  useEffect(function() {
+    const prev = prevVagasRef.current;
+    prevVagasRef.current = state.vagas;
+    if (!prev) return;
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    const td = todayStr();
+    const newVagaIds = new Set(state.vagas.map(v => v.id));
+    const oldVagaIds = new Set(prev.map(v => v.id));
+    const added = state.vagas.filter(v => !oldVagaIds.has(v.id) && v.data >= td);
+    if (!added.length) return;
+    state.acessos.forEach(acesso => {
+      if (!acesso.watchlist || !acesso.watchlist.length) return;
+      const hasPending = state.faltas.some(f => f.alunoNome === acesso.alunoNome && f.turmaId === acesso.turmaId && f.status === 'pendente');
+      if (!hasPending) return;
+      added.forEach(v => {
+        if (!acesso.watchlist.includes(v.turmaId)) return;
+        const tLabel = getTurmaLabel(state.turmas, v.turmaId);
+        new Notification('🎉 Vaga aberta — ' + tLabel, {
+          body: fmtBRFull(v.data) + ' · Escola Passarinho',
+          icon: document.getElementById('favicon')?.href || '',
+          tag: v.id
+        });
+      });
+    });
+  }, [state.vagas]);
 
   // 2. Salva no Firebase a cada mudança (debounce 600ms)
   useEffect(function() {
@@ -3989,11 +4307,38 @@ function AlunoView({ state, dispatch, acesso }) {
   // Regras modal
   const [showRegras, setShowRegras] = useState(false);
 
+  // Notificações de vagas
+  const acessoObj = state.acessos.find(a => a.alunoNome === alunoNome && a.turmaId === turmaId);
+  const watchlist = acessoObj?.watchlist || [];
+  const hasPendingFaltas = state.faltas.some(f => f.alunoNome === alunoNome && f.turmaId === turmaId && f.status === 'pendente');
+  const notifAtiva = watchlist.length > 0 && hasPendingFaltas;
+  const [showNotifModal, setShowNotifModal] = useState(false);
+  const [notifPermission, setNotifPermission] = useState(() => typeof Notification !== 'undefined' ? Notification.permission : 'denied');
+
+  const handleToggleWatch = async (tId) => {
+    let newList;
+    if (watchlist.includes(tId)) {
+      newList = watchlist.filter(x => x !== tId);
+    } else {
+      if (notifPermission !== 'granted') {
+        const perm = await Notification.requestPermission();
+        setNotifPermission(perm);
+        if (perm !== 'granted') return;
+      }
+      newList = [...watchlist, tId];
+    }
+    dispatch({ type: 'SET_ALUNO_WATCHLIST', alunoNome, turmaId, watchlist: newList });
+  };
+
   // Férias
   const ausenciasAtivas = useMemo(() =>
     state.ausencias.filter(a => a.turmaId === turmaId && a.alunoNome === alunoNome),
     [state.ausencias, alunoNome, turmaId]);
   const ausenciaCredito = ausenciasAtivas.find(a => !a.creditoUsado && a.creditoReposicao > 0) || null;
+  const creditosExtras = useMemo(() =>
+    arr(state.creditos).filter(c => c.alunoNome === alunoNome && c.turmaId === turmaId && !c.usado && c.dataExpiracao >= td),
+    [state.creditos, alunoNome, td]);
+  const [confirmCreditoRepo, setConfirmCreditoRepo] = useState(null);
   const [mesFerias, setMesFerias] = useState('');
   const [successFerias, setSuccessFerias] = useState('');
   const [confirmFeriasRepo, setConfirmFeriasRepo] = useState(null); // vaga para usar crédito férias
@@ -4025,7 +4370,7 @@ function AlunoView({ state, dispatch, acesso }) {
   // Registrar falta — inclui hoje (data some só no dia seguinte)
   const proximasDatas = useMemo(() => {
     const turma = state.turmas.find(t => t.id === turmaId);
-    if (!turma) return [];
+    if (!turma || turma.id === TURMA_EXTRA_ID || !turma.diaSemana) return [];
     const DIAS = { segunda:1, terça:2, quarta:3, quinta:4, sexta:5, sábado:6, domingo:0 };
     const targetDay = DIAS[turma.diaSemana];
     const horaAula = parseInt((turma.horario || '09h').replace('h',''), 10);
@@ -4076,8 +4421,6 @@ function AlunoView({ state, dispatch, acesso }) {
     return state.vagas
       .filter(v => {
         if (v.data < td) return false;
-        if (v.cancelada) return false;
-        if (v.turmaId === turmaId) return false; // nunca mostrar a própria turma
         const dt = getClassDatetime(v.turmaId, v.data, state.turmas);
         if (dt && dt.getTime() <= now) return false; // remove quando a aula começa
         return true;
@@ -4162,20 +4505,22 @@ function AlunoView({ state, dispatch, acesso }) {
     setConfirmCancel(null);
   };
 
-  // Alertas — só faltas expirando em ≤7 dias e reposições próximas
+  // Alertas — faltas expirando em ≤7 dias, faltas expiradas há ≤20 dias, reposições próximas
   const in7 = (() => { const d = new Date(); d.setDate(d.getDate()+7); return dateToStr(d); })();
+  const ago20 = (() => { const d = new Date(); d.setDate(d.getDate()-20); return dateToStr(d); })();
   const alertas = [];
   state.faltas.filter(f => f.alunoNome === alunoNome && f.turmaId === turmaId && f.status === 'pendente').forEach(f => {
     const exp = getFaltaExpiry(f);
     if (exp >= td && exp <= in7) alertas.push({ level:'red', text:`Falta de ${fmtBR(f.datas[0])} expira em ${fmtBRFull(exp)} — marque uma reposição!` });
+    if (exp < td && exp >= ago20) alertas.push({ level:'expired', text:`Falta de ${fmtBR(f.datas[0])} expirou em ${fmtBRFull(exp)}.` });
   });
   minhasRepos.filter(r => { const d = new Date(r.dataReposicao + 'T00:00:00'); return (d - Date.now()) <= 7*24*3600*1000; }).forEach(r => {
     const tRepo = state.turmas.find(t => t.id === r.turmaReposicaoId);
     alertas.push({ level:'blue', text:`Reposição em ${fmtBRFull(r.dataReposicao)} às ${tRepo?.horario || '?'}` });
   });
 
-  const alertColors = { red:'bg-red-50 border-red-200 text-red-700', blue:'bg-blue-50 border-blue-200 text-blue-700' };
-  const alertIcons  = { red:'⚠️', blue:'📅' };
+  const alertColors = { red:'bg-red-50 border-red-200 text-red-700', blue:'bg-blue-50 border-blue-200 text-blue-700', expired:'bg-gray-50 border-gray-200 text-gray-500' };
+  const alertIcons  = { red:'⚠️', blue:'📅', expired:'💨' };
 
   // Minhas faltas — todas as pendentes e marcadas, ordenadas por data
   const minhasFaltas = state.faltas
@@ -4198,7 +4543,7 @@ function AlunoView({ state, dispatch, acesso }) {
           <button onClick={() => setShowRegras(true)} className="text-xs text-amber-700 border border-amber-300 bg-amber-50 px-2.5 py-1 rounded-lg font-medium hover:bg-amber-100 transition-colors">Regras</button>
           <div className="text-right">
             <div className="text-xs text-gray-400">Sua turma</div>
-            <div className="text-sm font-semibold text-gray-700">{turma ? `${EXTENSO[turma.diaSemana]} ${turma.horario}` : '?'}</div>
+            <div className="text-sm font-semibold text-gray-700">{turma ? (turma.id === TURMA_EXTRA_ID ? 'Turma Extra' : `${EXTENSO[turma.diaSemana]} ${turma.horario}`) : '?'}</div>
           </div>
         </div>
       </div>
@@ -4273,23 +4618,32 @@ function AlunoView({ state, dispatch, acesso }) {
       <div className="max-w-md mx-auto p-4 space-y-4">
 
         {/* Alertas */}
-        {alertas.length > 0 && (
-          <div className="space-y-2">
-            {alertas.map((a, i) => (
-              <div key={i} className={`border rounded-xl px-4 py-3 flex items-start gap-3 ${alertColors[a.level]}`}>
-                <div className="text-lg mt-0.5">{alertIcons[a.level]}</div>
-                <div className="text-sm font-medium">{a.text}</div>
-              </div>
-            ))}
+        <div className="space-y-2">
+          {alertas.map((a, i) => (
+            <div key={i} className={`border rounded-xl px-4 py-3 flex items-start gap-3 ${alertColors[a.level]}`}>
+              <div className="text-lg mt-0.5">{alertIcons[a.level]}</div>
+              <div className="text-sm font-medium">{a.text}</div>
+            </div>
+          ))}
+          <div className="border border-gray-100 rounded-xl px-4 py-3 flex items-start gap-3 bg-white">
+            <div className="text-lg mt-0.5">🍞</div>
+            <div className="text-sm text-gray-500">Vagas novas do dia seguinte quentinhas saindo sempre às 10h</div>
           </div>
-        )}
+        </div>
 
         {/* Minhas faltas */}
         {minhasFaltas.length > 0 && (
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
               <div className="font-semibold text-gray-800 text-sm">Minhas faltas</div>
-              <div className="text-xs text-gray-400">{minhasFaltas.length} falta{minhasFaltas.length > 1 ? 's' : ''}</div>
+              <div className="flex items-center gap-3">
+                <button onClick={() => setShowNotifModal(true)}
+                  className={`flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-colors ${notifAtiva ? 'bg-amber-50 border-amber-300 text-amber-700' : 'border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600'}`}
+                  title="Notificações de vagas">
+                  {notifAtiva ? '🔔' : '🔕'} Notificação
+                </button>
+                <div className="text-xs text-gray-400">{minhasFaltas.length} falta{minhasFaltas.length > 1 ? 's' : ''}</div>
+              </div>
             </div>
             <div className="divide-y divide-gray-50">
               {minhasFaltas.map(f => {
@@ -4376,7 +4730,7 @@ function AlunoView({ state, dispatch, acesso }) {
         )}
 
         {/* Crédito de férias disponível */}
-        {ausenciaCredito && (
+        {ausenciaCredito && (!turma || turma.id !== TURMA_EXTRA_ID) && (
           <div className="bg-teal-50 border border-teal-200 rounded-xl px-4 py-3 flex items-start gap-3">
             <div className="text-xl shrink-0">🏖️</div>
             <div className="min-w-0">
@@ -4389,8 +4743,20 @@ function AlunoView({ state, dispatch, acesso }) {
           </div>
         )}
 
+        {/* Crédito extra disponível */}
+        {creditosExtras.length > 0 && (
+          <div className="bg-purple-50 border border-purple-200 rounded-xl px-4 py-3 flex items-start gap-3">
+            <div className="text-xl shrink-0">🎟️</div>
+            <div className="min-w-0">
+              <div className="font-semibold text-purple-800 text-sm">Você tem {creditosExtras.length} crédito{creditosExtras.length > 1 ? 's' : ''} de reposição extra</div>
+              <div className="text-xs text-purple-700 mt-0.5">Expira em {fmtBRFull(creditosExtras[0].dataExpiracao)}</div>
+              <div className="text-xs text-purple-600 mt-1">Abra "Marcar reposição" abaixo para usá-lo.</div>
+            </div>
+          </div>
+        )}
+
         {/* Registrar falta */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        {!turma || turma.id !== TURMA_EXTRA_ID ? <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <button onClick={() => toggle('falta')} className="w-full px-4 py-3 flex items-center justify-between text-left">
             <div className="flex items-center gap-3">
               <div className="text-xl">🙋</div>
@@ -4466,7 +4832,7 @@ function AlunoView({ state, dispatch, acesso }) {
             </div>
           )}
           {successFalta && <div className="px-4 pb-3"><div className="bg-green-50 text-green-700 rounded-lg px-3 py-2 text-sm font-medium">{successFalta}</div></div>}
-        </div>
+        </div> : null}
 
         {/* Marcar reposição / aula extra */}
         {(() => {
@@ -4476,7 +4842,7 @@ function AlunoView({ state, dispatch, acesso }) {
             const h = (dt - Date.now()) / 3600000;
             return h >= 0 && h <= 2;
           });
-          const cardTitle = (hasPending || (pendingSemAnt.length > 0 && someWithin2h) || !!ausenciaCredito)
+          const cardTitle = (hasPending || (pendingSemAnt.length > 0 && someWithin2h) || !!ausenciaCredito || creditosExtras.length > 0)
             ? 'Marcar reposição' : 'Marcar aula extra';
           const cardIcon = cardTitle === 'Marcar reposição' ? '✅' : '➕';
           return (
@@ -4487,7 +4853,7 @@ function AlunoView({ state, dispatch, acesso }) {
                   <div>
                     <div className="font-semibold text-gray-800 text-sm">{cardTitle}</div>
                     <div className="text-xs text-gray-500">
-                      {ausenciaCredito && !hasPending ? 'Usando crédito de férias' : 'Escolha uma vaga disponível'}
+                      {ausenciaCredito && !hasPending ? 'Usando crédito de férias' : creditosExtras.length > 0 && !hasPending && !ausenciaCredito ? 'Usando crédito extra' : 'Escolha uma vaga disponível'}
                     </div>
                   </div>
                 </div>
@@ -4500,6 +4866,11 @@ function AlunoView({ state, dispatch, acesso }) {
                       🎫 Crédito de férias disponível — escolha qualquer vaga abaixo para sua reposição
                     </div>
                   )}
+                  {creditosExtras.length > 0 && !hasPending && !ausenciaCredito && (
+                    <div className="px-4 py-2 bg-purple-50 border-b border-purple-100 text-xs text-purple-700 font-medium">
+                      🎟️ Crédito extra disponível — escolha qualquer vaga abaixo para sua reposição
+                    </div>
+                  )}
                   {vagasFuturas.length === 0 ? (
                     <p className="px-4 py-3 text-sm text-gray-400 italic">Nenhuma vaga disponível no momento.</p>
                   ) : (
@@ -4507,8 +4878,8 @@ function AlunoView({ state, dispatch, acesso }) {
                       {vagasFuturas.map(v => {
                         const tV = state.turmas.find(t => t.id === v.turmaId);
                         const jaOcupada = state.reposicoes.some(r =>
-                          r.alunoNome === alunoNome && r.dataReposicao === v.data &&
-                          r.turmaReposicaoId === v.turmaId && !r.realizada);
+                          r.alunoNome === alunoNome && r.turmaOrigemId === turmaId &&
+                          r.dataReposicao === v.data && r.turmaReposicaoId === v.turmaId && !r.realizada);
                         const dt = getClassDatetime(v.turmaId, v.data, state.turmas);
                         const horasAte = dt ? (dt - Date.now()) / 3600000 : null;
                         const within2h = horasAte !== null && horasAte >= 0 && horasAte <= 2;
@@ -4516,6 +4887,7 @@ function AlunoView({ state, dispatch, acesso }) {
                         const eligibleFaltas = within2h ? allPending : pendingNormal;
                         const canRepor = eligibleFaltas.length > 0;
                         const canUseFerias = !canRepor && !!ausenciaCredito;
+                        const canUseCredito = !canRepor && !canUseFerias && creditosExtras.length > 0;
                         const needsChoice = within2h && pendingNormal.length > 0 && pendingSemAnt.length > 0
                           && pendingNormal[0].datas[0] < pendingSemAnt[0].datas[0];
                         const isMyFeriasVaga = v.ausenciaId && ausenciasAtivas.some(a => a.id === v.ausenciaId);
@@ -4533,12 +4905,14 @@ function AlunoView({ state, dispatch, acesso }) {
                             setTimeout(() => setSuccessRepo(''), 4000);
                           } else if (canUseFerias) {
                             setConfirmFeriasRepo(v);
+                          } else if (canUseCredito) {
+                            setConfirmCreditoRepo(v);
                           } else {
                             setConfirmAulaExtra(v);
                           }
                         };
                         return (
-                          <div key={v.id} className={`px-4 py-3 flex items-center justify-between gap-3 ${isMyFeriasVaga && canUseFerias ? 'bg-teal-50/50' : ''}`}>
+                          <div key={v.id} className={`px-4 py-3 flex items-center justify-between gap-3 ${isMyFeriasVaga && canUseFerias ? 'bg-teal-50/50' : canUseCredito ? 'bg-purple-50/30' : ''}`}>
                             <div>
                               <div className="font-medium text-gray-800 text-sm">{fmtBR(v.data).slice(0,5)}</div>
                               <div className="text-xs text-gray-500">
@@ -4554,9 +4928,10 @@ function AlunoView({ state, dispatch, acesso }) {
                               className={`text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-40 shrink-0 border ${
                                 canRepor ? 'text-blue-600 border-blue-300 bg-blue-50'
                                 : canUseFerias ? 'text-teal-700 border-teal-300 bg-teal-50'
+                                : canUseCredito ? 'text-purple-700 border-purple-300 bg-purple-50'
                                 : 'text-green-700 border-green-300 bg-green-50'
                               }`}>
-                              {canRepor ? 'Repor' : canUseFerias ? 'Repor (férias)' : 'Aula extra'}
+                              {canRepor ? 'Repor' : canUseFerias ? 'Repor (férias)' : canUseCredito ? 'Repor (crédito)' : 'Aula extra'}
                             </button>
                           </div>
                         );
@@ -4590,6 +4965,27 @@ function AlunoView({ state, dispatch, acesso }) {
           );
         })()}
 
+        {/* Confirm usar crédito extra */}
+        {confirmCreditoRepo && (() => {
+          const tV = state.turmas.find(t => t.id === confirmCreditoRepo.turmaId);
+          const credito = creditosExtras[0];
+          return (
+            <ConfirmModal
+              title="Usar crédito extra?"
+              message={`Usar seu crédito de reposição extra (expira em ${fmtBRFull(credito?.dataExpiracao || '')}) para repor em ${fmtBRFull(confirmCreditoRepo.data)}${tV ? ` (${ABREV[tV.diaSemana]} ${tV.horario})` : ''}?`}
+              confirmLabel="Confirmar reposição"
+              onConfirm={() => {
+                alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: confirmCreditoRepo.data, turmaReposicaoId: confirmCreditoRepo.turmaId, semVagaOficial: false, vagaSelId: confirmCreditoRepo.id, creditoId: credito?.id, tipo: 'reposicao_credito' });
+                setSuccessRepo('Reposição marcada com crédito extra!');
+                setOpen(o => ({ ...o, reposicao: false }));
+                setConfirmCreditoRepo(null);
+                setTimeout(() => setSuccessRepo(''), 4000);
+              }}
+              onCancel={() => setConfirmCreditoRepo(null)}
+            />
+          );
+        })()}
+
         {/* Confirm aula extra modal */}
         {confirmAulaExtra && (() => {
           const tV = state.turmas.find(t => t.id === confirmAulaExtra.turmaId);
@@ -4609,6 +5005,53 @@ function AlunoView({ state, dispatch, acesso }) {
             />
           );
         })()}
+
+        {/* Modal notificações de vagas */}
+        {showNotifModal && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center" onClick={() => setShowNotifModal(false)}>
+            <div className="bg-white rounded-t-2xl w-full max-w-md p-6 pb-8 shadow-xl overflow-y-auto max-h-[85vh]" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-base font-bold text-gray-900">🔔 Notificações de vagas</h2>
+                <button onClick={() => setShowNotifModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+              </div>
+              <p className="text-sm text-gray-500 mb-1">
+                Avisa quando abrir uma vaga numa turma que você escolher — útil se você só pode repor em dias específicos.
+              </p>
+              <p className="text-xs text-gray-400 mb-4">
+                Para funcionar, o app precisa estar aberto (pode estar em segundo plano com a tela bloqueada). A notificação para automaticamente quando você não tiver mais faltas pendentes.
+              </p>
+              {!hasPendingFaltas && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-xs text-amber-700 mb-4">
+                  Você não tem faltas pendentes no momento — as notificações só disparam quando houver.
+                </div>
+              )}
+              {notifPermission === 'denied' && (
+                <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2 text-xs text-red-700 mb-4">
+                  Notificações bloqueadas nas configurações do seu dispositivo. Libere nas configurações do Safari/Chrome para este site.
+                </div>
+              )}
+              <div className="space-y-2">
+                {sortTurmas(state.turmas).filter(t => t.id !== TURMA_EXTRA_ID).map(t => {
+                  const tId = t.id;
+                  const ativo = watchlist.includes(tId);
+                  return (
+                    <button key={tId} onClick={() => handleToggleWatch(tId)}
+                      className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border text-sm transition-colors ${ativo ? 'bg-amber-50 border-amber-300 text-amber-800 font-medium' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                      <span>{getTurmaLabel(state.turmas, tId)}</span>
+                      <span>{ativo ? '🔔 Ativo' : '🔕'}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {watchlist.length > 0 && (
+                <button onClick={() => dispatch({ type: 'SET_ALUNO_WATCHLIST', alunoNome, turmaId, watchlist: [] })}
+                  className="mt-4 w-full text-xs text-gray-400 hover:text-red-500 transition-colors">
+                  Desativar todas
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Confirm escolha de falta (normal vs semAntecedencia) */}
         {confirmEscolhaFalta && (() => {
@@ -4714,7 +5157,7 @@ function AlunoView({ state, dispatch, acesso }) {
         )}
 
         {/* Registrar / ver férias */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        {!turma || turma.id !== TURMA_EXTRA_ID ? <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <button onClick={() => toggle('ferias')} className="w-full px-4 py-3 flex items-center justify-between text-left">
             <div className="flex items-center gap-3">
               <div className="text-xl">🏖️</div>
@@ -4836,7 +5279,7 @@ function AlunoView({ state, dispatch, acesso }) {
             </div>
           )}
           {successFerias && <div className="px-4 pb-3"><div className="bg-green-50 text-green-700 rounded-lg px-3 py-2 text-sm font-medium">{successFerias}</div></div>}
-        </div>
+        </div> : null}
 
         {/* Rodapé */}
         <div className="text-center text-xs text-gray-400 py-4">
@@ -4848,6 +5291,157 @@ function AlunoView({ state, dispatch, acesso }) {
   );
 }
 
+// ==================== PAINEL: ANÁLISE ====================
+function PainelAnalise({ state }) {
+  const td = todayStr();
+  const expiradas = arr((state.estatisticas || {}).faltasExpiradas);
+  const canceladas = arr((state.estatisticas || {}).reposCanceladas);
+
+  // — contadores gerais —
+  const totalFaltas = state.faltas.length;
+  const reposRealizadas = state.reposicoes.filter(r => r.realizada).length;
+  const reposPendentes = state.reposicoes.filter(r => !r.realizada && r.dataReposicao >= td).length;
+  const faltasPendentes = state.faltas.filter(f => f.status === 'pendente').length;
+  const taxaReposicao = (reposRealizadas + expiradas.length) > 0 ? Math.round((reposRealizadas / (reposRealizadas + expiradas.length)) * 100) : null;
+  const canceladasSemCredito = canceladas.filter(c => c.semCredito).length;
+
+  // — faltas totais por turma (do estado atual) —
+  const faltasPorTurma = {};
+  state.faltas.forEach(f => {
+    const lbl = getTurmaLabel(state.turmas, f.turmaId);
+    faltasPorTurma[lbl] = (faltasPorTurma[lbl] || 0) + 1;
+  });
+  const rankFaltasTurma = Object.entries(faltasPorTurma).sort((a,b) => b[1]-a[1]);
+
+  // — alunos com mais faltas totais —
+  const faltasPorAluno = {};
+  state.faltas.forEach(f => {
+    faltasPorAluno[f.alunoNome] = (faltasPorAluno[f.alunoNome] || 0) + 1;
+  });
+  const rankFaltasAluno = Object.entries(faltasPorAluno).sort((a,b) => b[1]-a[1]);
+
+  // — faltas expiradas por aluno —
+  const expPorAluno = {};
+  expiradas.forEach(e => { expPorAluno[e.alunoNome] = (expPorAluno[e.alunoNome] || 0) + 1; });
+  const rankExpAluno = Object.entries(expPorAluno).sort((a,b) => b[1]-a[1]);
+
+  // — faltas expiradas por mês —
+  const expPorMes = {};
+  expiradas.forEach(e => {
+    const mes = (e.expiradaEm || e.data || '').slice(0, 7);
+    if (mes) expPorMes[mes] = (expPorMes[mes] || 0) + 1;
+  });
+  const meses = Object.keys(expPorMes).sort();
+
+  // — reposições realizadas por turma de destino —
+  const repoPorTurma = {};
+  state.reposicoes.filter(r => r.realizada).forEach(r => {
+    const lbl = getTurmaLabel(state.turmas, r.turmaReposicaoId);
+    repoPorTurma[lbl] = (repoPorTurma[lbl] || 0) + 1;
+  });
+  const rankRepoDest = Object.entries(repoPorTurma).sort((a,b) => b[1]-a[1]);
+
+  // — tempo médio falta → reposição (em dias) —
+  const tempos = state.reposicoes.filter(r => r.realizada && r.faltaId).map(r => {
+    const falta = state.faltas.find(f => f.id === r.faltaId);
+    if (!falta) return null;
+    const dias = (new Date(r.dataReposicao) - new Date(falta.datas[0])) / 86400000;
+    return dias >= 0 ? dias : null;
+  }).filter(d => d !== null);
+  const tempoMedio = tempos.length > 0 ? Math.round(tempos.reduce((a,b) => a+b, 0) / tempos.length) : null;
+
+  // — vagas extras: geradas vs usadas —
+  const vagasExtrasGeradas = state.vagas.filter(v => v.vagaExtra).length;
+  const vagasExtrasUsadas = state.reposicoes.filter(r => r.vagaExtra && r.realizada).length;
+
+  const Stat = ({label, value, sub, color}) => (
+    <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
+      <div className={`text-2xl font-bold ${color || 'text-gray-800'}`}>{value}</div>
+      <div className="text-xs font-medium text-gray-600 mt-0.5">{label}</div>
+      {sub && <div className="text-xs text-gray-400 mt-0.5">{sub}</div>}
+    </div>
+  );
+
+  const Bar = ({label, value, max, color}) => (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="w-28 text-gray-600 truncate shrink-0">{label}</span>
+      <div className="flex-1 bg-gray-100 rounded-full h-2">
+        <div className={`h-2 rounded-full ${color || 'bg-blue-400'}`} style={{width: max ? `${Math.round((value/max)*100)}%` : '0%'}} />
+      </div>
+      <span className="w-5 text-right text-gray-500 shrink-0">{value}</span>
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+
+      {/* Cards de resumo */}
+      <div className="grid grid-cols-2 gap-3">
+        <Stat label="Faltas registradas" value={totalFaltas} />
+        <Stat label="Reposições realizadas" value={reposRealizadas} color="text-green-600" />
+        <Stat label="Faltas expiradas" value={expiradas.length} color={expiradas.length > 0 ? 'text-red-500' : 'text-gray-800'} sub="sem reposição" />
+        <Stat label="Taxa de reposição" value={taxaReposicao !== null ? `${taxaReposicao}%` : '—'} color={taxaReposicao >= 70 ? 'text-green-600' : taxaReposicao !== null ? 'text-amber-600' : 'text-gray-400'} sub="realizadas vs expiradas" />
+        <Stat label="Faltas pendentes" value={faltasPendentes} color={faltasPendentes > 0 ? 'text-amber-600' : 'text-gray-800'} sub="aguardando reposição" />
+        <Stat label="Reposições marcadas" value={reposPendentes} sub="agendadas, não realizadas" />
+        <Stat label="Cancelamentos" value={canceladas.length} sub={canceladasSemCredito > 0 ? `${canceladasSemCredito} sem crédito devolvido` : 'todos com crédito'} color={canceladasSemCredito > 0 ? 'text-orange-500' : 'text-gray-800'} />
+        <Stat label="Tempo médio p/ repor" value={tempoMedio !== null ? `${tempoMedio}d` : '—'} sub="da falta à reposição" />
+        <Stat label="Vagas extras abertas" value={vagasExtrasGeradas} sub={`${vagasExtrasUsadas} aproveitadas`} />
+      </div>
+
+      {/* Faltas por mês (expiradas) */}
+      {meses.length > 0 && (
+        <div>
+          <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Faltas expiradas por mês</div>
+          <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 space-y-2">
+            {meses.map(m => <Bar key={m} label={getMesNome(m)} value={expPorMes[m]} max={Math.max(...Object.values(expPorMes))} color="bg-red-300" />)}
+          </div>
+        </div>
+      )}
+
+      {/* Faltas totais por turma */}
+      {rankFaltasTurma.length > 0 && (
+        <div>
+          <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Faltas por turma</div>
+          <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 space-y-2">
+            {rankFaltasTurma.map(([lbl, n]) => <Bar key={lbl} label={lbl} value={n} max={rankFaltasTurma[0][1]} color="bg-orange-300" />)}
+          </div>
+        </div>
+      )}
+
+      {/* Alunos com mais faltas */}
+      {rankFaltasAluno.length > 0 && (
+        <div>
+          <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Alunos com mais faltas</div>
+          <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 space-y-2">
+            {rankFaltasAluno.slice(0,8).map(([nome, n]) => <Bar key={nome} label={nome} value={n} max={rankFaltasAluno[0][1]} color="bg-amber-300" />)}
+          </div>
+        </div>
+      )}
+
+      {/* Alunos com mais expiradas */}
+      {rankExpAluno.length > 0 && (
+        <div>
+          <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Alunos com mais faltas expiradas</div>
+          <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 space-y-2">
+            {rankExpAluno.slice(0,8).map(([nome, n]) => <Bar key={nome} label={nome} value={n} max={rankExpAluno[0][1]} color="bg-amber-500" />)}
+          </div>
+        </div>
+      )}
+
+      {/* Turmas mais usadas para reposição */}
+      {rankRepoDest.length > 0 && (
+        <div>
+          <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Turmas mais usadas para reposição</div>
+          <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 space-y-2">
+            {rankRepoDest.map(([lbl, n]) => <Bar key={lbl} label={lbl} value={n} max={rankRepoDest[0][1]} color="bg-blue-300" />)}
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
+
 // ==================== PAINEL: REGISTRO ====================
 function PainelRegistro({ state, dispatch }) {
   const log = arr(state.log);
@@ -4855,7 +5449,6 @@ function PainelRegistro({ state, dispatch }) {
   const [historicoModal, setHistoricoModal] = useState(null); // { nome, turmaId }
 
   const abrirHistorico = (nome, descricao) => {
-    // Tenta inferir turmaId pelo label da turma mencionado na descrição
     const turmasDoAluno = state.turmas.filter(t => t.alunos.includes(nome));
     const turmaEncontrada = turmasDoAluno.find(t => descricao.includes(getTurmaLabel(state.turmas, t.id)));
     const turmaId = turmaEncontrada?.id || (turmasDoAluno.length === 1 ? turmasDoAluno[0].id : null);
@@ -4863,11 +5456,9 @@ function PainelRegistro({ state, dispatch }) {
   };
 
   const allAlunoNames = useMemo(() =>
-    [...new Set(state.turmas.flatMap(t => t.alunos))].sort((a,b) => b.length - a.length), // longest first to avoid partial matches
+    [...new Set(state.turmas.flatMap(t => t.alunos))].sort((a,b) => b.length - a.length),
     [state.turmas]
   );
-
-  const renderDesc = (descricao) => descricao;
 
   const professor = localStorage.getItem(PROFESSOR_KEY) || '';
   const isDesktop = window.matchMedia('(pointer: fine)').matches;
@@ -4907,7 +5498,7 @@ function PainelRegistro({ state, dispatch }) {
               )}
               {allAlunoNames.includes(entry.professor)
                 ? <button onClick={() => abrirHistorico(entry.professor, entry.descricao)}
-                    className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap mt-0.5 ${c.bg} ${c.text}`}>
+                    className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap mt-0.5 ${c.bg} ${c.text} hover:opacity-75`}>
                     <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`}></span>
                     {entry.professor}
                   </button>
@@ -4917,7 +5508,7 @@ function PainelRegistro({ state, dispatch }) {
                   </span>
               }
               <div className="flex-1 min-w-0">
-                <p className="text-sm text-gray-800">{renderDesc(entry.descricao)}</p>
+                <p className="text-sm text-gray-800">{entry.descricao.replace(/\b(\d{2})\/(\d{2})\/20\d{2}\b/g, '$1/$2')}</p>
                 <p className="text-xs text-gray-400 mt-0.5">{dataHora}</p>
               </div>
             </div>
