@@ -2649,7 +2649,8 @@ function TabCreditoExtra({ state, dispatch }) {
 
   const handleSubmit = () => {
     if (!turmaId || !alunoNome || !dataExpiracao) return;
-    dispatch({ type: 'ADD_CREDITO', alunoNome, turmaId, dataExpiracao });
+    const prof = localStorage.getItem(PROFESSOR_KEY) || '';
+    dispatch({ type: 'ADD_CREDITO', alunoNome, turmaId, dataExpiracao, professor: prof });
     setSuccess(`Crédito de reposição adicionado para ${alunoNome}.`);
     setAlunoNome('');
     setTimeout(() => setSuccess(''), 4000);
@@ -2704,12 +2705,23 @@ function TabCreditoExtra({ state, dispatch }) {
         <div className="mt-4 border-t border-gray-200 pt-4">
           <h4 className="text-sm font-semibold text-gray-600 mb-2">Créditos ativos</h4>
           <div className="space-y-2">
-            {creditos.map(c => (
+            {[...creditos].sort((a, b) => {
+              const turmaOrder = sortTurmas(state.turmas).map(t => t.id);
+              const ai = turmaOrder.indexOf(a.turmaId); const bi = turmaOrder.indexOf(b.turmaId);
+              if (ai !== bi) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+              return a.alunoNome.localeCompare(b.alunoNome, 'pt');
+            }).map(c => (
               <div key={c.id} className="bg-gray-50 rounded-lg p-3 text-sm flex justify-between items-center">
                 <div>
                   <span className="font-medium">{c.alunoNome}</span>
                   <span className="text-gray-400 ml-2">({getTurmaLabel(state.turmas, c.turmaId)})</span>
                   <div className="text-gray-500 mt-0.5">Expira: {fmtBRFull(c.dataExpiracao)}</div>
+                  {(c.criadoPor || c.criadoEm) && (
+                    <div className="text-gray-400 text-xs mt-0.5">
+                      {c.criadoPor && <span>por {c.criadoPor}</span>}
+                      {c.criadoEm && <span> · {fmtBR(c.criadoEm.slice(0,10))}</span>}
+                    </div>
+                  )}
                 </div>
                 <button onClick={() => dispatch({type:'DELETE_CREDITO', id: c.id})} className="text-red-400 hover:text-red-600 text-xs ml-2 shrink-0">Remover</button>
               </div>
