@@ -282,7 +282,11 @@ function computeVagasExtras(turmas, faltas, reposicoes, vagasBase, td, ausencias
         f.turmaId === turma.id && f.datas.includes(date) &&
         (f.status === 'pendente' || f.status === 'marcada')
       ).length;
-      if (faltasCount >= alunosEfetivos) return;
+      if (faltasCount >= alunosEfetivos) {
+        // All students absent — remove any extra vagas already created for this date
+        vagas = vagas.filter(v => !(v.vagaExtra && v.turmaId === turma.id && v.data === date));
+        return;
+      }
       const totalRepos = reposicoes.filter(r =>
         r.turmaReposicaoId === turma.id && r.dataReposicao === date && !r.realizada
       ).length;
