@@ -441,6 +441,14 @@ function reducer(state, action) {
       break;
     }
 
+    case 'CANCEL_VAGAS_SLOT':
+      next = { ...state, vagas: state.vagas.map(v =>
+        v.turmaId === action.turmaId && v.data === action.data
+          ? { ...v, cancelada: action.cancelada }
+          : v
+      )};
+      break;
+
     case 'ADD_TURMA': {
       const { diaSemana, horario, observacao } = action;
       const id = `${diaSemana.slice(0,3).replace('ç','c').replace('á','a')}-${horario}`;
@@ -3447,6 +3455,13 @@ function PainelVisual({ state, dispatch }) {
               <div key={i} className="font-semibold text-gray-800">· {a}</div>
             )) : <div className="text-gray-400 text-xs italic">vaga extra</div>}
           </div>
+          {(() => { const todaCancelada = v.vagas.every(vg => vg.cancelada); return (
+            <button
+              onClick={() => { dispatch({ type: 'CANCEL_VAGAS_SLOT', turmaId: v.turmaId, data: v.data, cancelada: !todaCancelada }); setDet(null); }}
+              className={`w-full py-2 rounded-lg text-sm font-medium transition-colors ${todaCancelada ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-red-100 text-red-700 hover:bg-red-200'}`}>
+              {todaCancelada ? 'Reabrir vagas para alunos' : 'Ocultar vagas dos alunos'}
+            </button>
+          ); })()}
         </div>
       );
     }
@@ -3608,12 +3623,14 @@ function PainelVisual({ state, dispatch }) {
               {vagasGrupos.map((v, i) => {
                 const t   = state.turmas.find(x => x.id === v.turmaId);
                 const dia = getDiaSemanaFromDateStr(v.data);
+                const todaCancelada = v.vagas.every(vg => vg.cancelada);
                 return (
                   <div key={i} onClick={() => setDet({ tipo:'vaga', obj: v })}
-                    className="px-4 py-3 bg-white cursor-pointer hover:bg-gray-50 transition-colors flex justify-between items-center">
+                    className={`px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors flex justify-between items-center ${todaCancelada ? 'bg-gray-50 opacity-60' : 'bg-white'}`}>
                     <div>
-                      <span className="font-bold text-gray-900">{EXTENSO[dia]}, {fmtBR(v.data)}</span>
+                      <span className={`font-bold ${todaCancelada ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{EXTENSO[dia]}, {fmtBR(v.data)}</span>
                       <span className="text-gray-500 ml-2 text-sm">{t?.horario || '?'}</span>
+                      {todaCancelada && <span className="ml-2 text-xs font-medium px-1.5 py-0.5 rounded bg-gray-200 text-gray-500">oculta dos alunos</span>}
                     </div>
                     {v.count > 1 && (
                       <span className="bg-blue-100 text-blue-700 text-xs font-bold px-2 py-0.5 rounded-full">{v.count} vagas</span>
@@ -4421,6 +4438,7 @@ function AlunoView({ state, dispatch, acesso }) {
     return state.vagas
       .filter(v => {
         if (v.data < td) return false;
+        if (v.cancelada) return false;
         const dt = getClassDatetime(v.turmaId, v.data, state.turmas);
         if (dt && dt.getTime() <= now) return false; // remove quando a aula começa
         return true;
