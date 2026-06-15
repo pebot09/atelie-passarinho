@@ -47,6 +47,7 @@ const PIN_KEY = 'atelie_pin_ok';
 const DB_URL = 'https://atelie-passarinho-default-rtdb.firebaseio.com';
 const PROFESSORES = ['Carol', 'Gláucio', 'Laura', 'Pedro'];
 const PROFESSOR_KEY = 'atelie_professor';
+const TURMA_EXTRA_ID = 'turma-extra';
 const PROFESSOR_COLORS = {
   Carol:   { bg: 'bg-pink-100',   text: 'text-pink-700',   dot: 'bg-pink-400'   },
   Gláucio: { bg: 'bg-blue-100',   text: 'text-blue-700',   dot: 'bg-blue-400'   },
@@ -105,6 +106,7 @@ const SEED = {
     {id:"qui-19h",diaSemana:"quinta",horario:"19h",capacidade:7,observacao:"",alunos:["Anna Clara"]},
     {id:"sab-09h",diaSemana:"sábado",horario:"09h",capacidade:7,observacao:"",alunos:["João","Livia","Claudia","Cris"]},
     {id:"sab-11h",diaSemana:"sábado",horario:"11h",capacidade:7,observacao:"",alunos:["Juliana","Marcella"]}
+    ,{id:"turma-extra",diaSemana:null,horario:null,capacidade:99,observacao:"Alunos extras e ex-alunos",alunos:[]}
   ],
   faltas: [
     {id:"f001",alunoNome:"Laila",turmaId:"seg-09h",datas:["2026-03-30","2026-04-27"],status:"pendente"},
@@ -158,6 +160,7 @@ const SEED = {
   estatisticas: { faltasExpiradas: [] },
   log: [],
   acessos: []
+  ,creditos: []
 };
 
 // ==================== HELPERS ====================
@@ -260,6 +263,7 @@ function computeVagasExtras(turmas, faltas, reposicoes, vagasBase, td, ausencias
   const endDateStr = (() => { const e = new Date(); e.setDate(e.getDate()+60); return dateToStr(e); })();
   let vagas = [...vagasBase];
   turmas.forEach(turma => {
+    if (turma.id === TURMA_EXTRA_ID) return;
     if (turma.alunos.length === 0) return;
     const classDates = getClassDatesInRange(turma, td, endDateStr);
     classDates.forEach(date => {
@@ -278,7 +282,11 @@ function computeVagasExtras(turmas, faltas, reposicoes, vagasBase, td, ausencias
         f.turmaId === turma.id && f.datas.includes(date) &&
         (f.status === 'pendente' || f.status === 'marcada')
       ).length;
-      if (faltasCount >= alunosEfetivos) return;
+      if (faltasCount >= alunosEfetivos) {
+        // All students absent — remove any extra vagas already created for this date
+        vagas = vagas.filter(v => !(v.vagaExtra && v.turmaId === turma.id && v.data === date));
+        return;
+      }
       const totalRepos = reposicoes.filter(r =>
         r.turmaReposicaoId === turma.id && r.dataReposicao === date && !r.realizada
       ).length;
@@ -348,6 +356,7 @@ function genId(prefix='id') {
 function getTurmaLabel(turmas, id) {
   const t = turmas.find(x => x.id === id);
   if (!t) return '?';
+  if (t.id === TURMA_EXTRA_ID) return 'Extra';
   return `${ABREV[t.diaSemana]} ${t.horario}`;
 }
 
@@ -363,6 +372,8 @@ function addLog(currentLog, professor, descricao) {
 
 function sortTurmas(turmas) {
   return [...turmas].sort((a,b) => {
+    if (a.id === TURMA_EXTRA_ID) return 1;
+    if (b.id === TURMA_EXTRA_ID) return -1;
     const da = DIAS_ORDER.indexOf(a.diaSemana), db = DIAS_ORDER.indexOf(b.diaSemana);
     if (da !== db) return da - db;
     return a.horario.localeCompare(b.horario);
@@ -600,6 +611,24 @@ function reducer(state, action) {
         const tOLbl = getTurmaLabel(state.turmas, action.turmaOrigemId);
         const tRLbl = getTurmaLabel(state.turmas, turmaReposicaoId);
         next.log = addLog(state.log, action.professor, `Agendou reposição (férias) de ${alunoNome} (${tOLbl}) → ${tRLbl}, ${fmtBRFull(dataReposicao)}`);
+      } else if (action.creditoId) {
+        next = {
+          ...state,
+          creditos: arr(state.creditos).map(c => c.id === action.creditoId ? {...c, usado: true} : c),
+          reposicoes: [...state.reposicoes, {
+            id: repoId, alunoNome,
+            turmaOrigemId: action.turmaOrigemId,
+            faltaId: null, creditoId: action.creditoId,
+            vagaConsumedFaltaId, vagaExtra: isVagaExtra,
+            dataReposicao, turmaReposicaoId,
+            tipo: 'reposicao_credito', realizada: false, semVagaOficial,
+            criadoPor: action.professor || null, criadoEm: new Date().toISOString()
+          }],
+          vagas: removeVagaSel(state.vagas)
+        };
+        const tOLbl = getTurmaLabel(state.turmas, action.turmaOrigemId);
+        const tRLbl = getTurmaLabel(state.turmas, turmaReposicaoId);
+        next.log = addLog(state.log, action.professor, `Agendou reposição (crédito extra) de ${alunoNome} (${tOLbl}) → ${tRLbl}, ${fmtBRFull(dataReposicao)}`);
       } else if (tipo === 'aula_extra') {
         const turmaOrigem = state.turmas.find(t => t.alunos.includes(alunoNome));
         next = { ...state,
@@ -709,7 +738,29 @@ function reducer(state, action) {
         }
         next = { ...state, vagas: newVagas, reposicoes: remainingRepos, ausencias: newAusenciasCR };
         const tLblCR = getTurmaLabel(state.turmas, repo.turmaOrigemId);
-        next.log = addLog(state.log, action.professor, `Cancelou reposição (férias) de ${repo.alunoNome} (${tLblCR}) — ${fmtBRFull(repo.dataReposicao)}`);
+        const tRepoCR = getTurmaLabel(state.turmas, repo.turmaReposicaoId);
+        next.log = addLog(state.log, action.professor, `Cancelou reposição (férias) de ${repo.alunoNome} (${tLblCR}) → ${tRepoCR} ${fmtBRFull(repo.dataReposicao)}`);
+        next.estatisticas = { ...next.estatisticas, reposCanceladas: [...arr((next.estatisticas||{}).reposCanceladas), { alunoNome: repo.alunoNome, turmaId: repo.turmaOrigemId, turmaReposicaoId: repo.turmaReposicaoId, dataReposicao: repo.dataReposicao, semCredito: false, ts: new Date().toISOString() }] };
+        break;
+      }
+
+      // Special case: credito-extra reposicao
+      if (repo.tipo === 'reposicao_credito') {
+        const remainingRepos = state.reposicoes.filter(r => r.id !== repo.id);
+        let newVagas = state.vagas;
+        let newCreditos = state.creditos;
+        if (repo.creditoId) {
+          newCreditos = arr(newCreditos).map(c => c.id === repo.creditoId ? {...c, usado: false} : c);
+        }
+        if (repo.vagaConsumedFaltaId) {
+          const jaExiste = newVagas.some(v => v.turmaId === repo.turmaReposicaoId && v.data === repo.dataReposicao && v.faltaId === repo.vagaConsumedFaltaId);
+          if (!jaExiste) newVagas = [...newVagas, { id: genId('v'), turmaId: repo.turmaReposicaoId, data: repo.dataReposicao, faltaId: repo.vagaConsumedFaltaId }];
+        }
+        next = { ...state, vagas: newVagas, reposicoes: remainingRepos, creditos: newCreditos };
+        const tLblCred = getTurmaLabel(state.turmas, repo.turmaOrigemId);
+        const tRepoCred = getTurmaLabel(state.turmas, repo.turmaReposicaoId);
+        next.log = addLog(state.log, action.professor, `Cancelou reposição (crédito extra) de ${repo.alunoNome} (${tLblCred}) → ${tRepoCred} ${fmtBRFull(repo.dataReposicao)}`);
+        next.estatisticas = { ...next.estatisticas, reposCanceladas: [...arr((next.estatisticas||{}).reposCanceladas), { alunoNome: repo.alunoNome, turmaId: repo.turmaOrigemId, turmaReposicaoId: repo.turmaReposicaoId, dataReposicao: repo.dataReposicao, semCredito: false, ts: new Date().toISOString() }] };
         break;
       }
 
@@ -761,7 +812,9 @@ function reducer(state, action) {
       next = { ...state, faltas: newFaltas, vagas: newVagas, reposicoes: newReposicoes };
       {
         const tLbl = getTurmaLabel(state.turmas, repo.turmaOrigemId);
-        next.log = addLog(state.log, action.professor, `Cancelou reposição de ${repo.alunoNome} (${tLbl}) — ${fmtBRFull(repo.dataReposicao)}`);
+        const tRepoLbl = getTurmaLabel(state.turmas, repo.turmaReposicaoId);
+        next.log = addLog(state.log, action.professor, `Cancelou reposição de ${repo.alunoNome} (${tLbl}) → ${tRepoLbl} ${fmtBRFull(repo.dataReposicao)}`);
+        next.estatisticas = { ...next.estatisticas, reposCanceladas: [...arr((next.estatisticas||{}).reposCanceladas), { alunoNome: repo.alunoNome, turmaId: repo.turmaOrigemId, turmaReposicaoId: repo.turmaReposicaoId, dataReposicao: repo.dataReposicao, semCredito: false, ts: new Date().toISOString() }] };
       }
       break;
     }
@@ -788,7 +841,9 @@ function reducer(state, action) {
       }
       next = { ...state, reposicoes: remainingRepos, vagas: newVagas };
       const tLbl = getTurmaLabel(state.turmas, repo.turmaOrigemId);
-      next.log = addLog(state.log, action.professor, `Cancelou reposição sem crédito — ${repo.alunoNome} (${tLbl}) em ${fmtBRFull(repo.dataReposicao)}`);
+      const tRepoSC = getTurmaLabel(state.turmas, repo.turmaReposicaoId);
+      next.log = addLog(state.log, action.professor, `Cancelou reposição sem crédito — ${repo.alunoNome} (${tLbl}) → ${tRepoSC} ${fmtBRFull(repo.dataReposicao)}`);
+      next.estatisticas = { ...next.estatisticas, reposCanceladas: [...arr((next.estatisticas||{}).reposCanceladas), { alunoNome: repo.alunoNome, turmaId: repo.turmaOrigemId, turmaReposicaoId: repo.turmaReposicaoId, dataReposicao: repo.dataReposicao, semCredito: true, ts: new Date().toISOString() }] };
       break;
     }
 
@@ -798,6 +853,36 @@ function reducer(state, action) {
       if (existing) { next = state; break; }
       const codigo = String(Math.floor(100000 + Math.random() * 900000));
       next = { ...state, acessos: [...state.acessos, { id: genId('ac'), codigo, alunoNome, turmaId }] };
+      break;
+    }
+
+    case 'SET_ALUNO_WATCHLIST': {
+      next = { ...state, acessos: state.acessos.map(a =>
+        a.alunoNome === action.alunoNome && a.turmaId === action.turmaId
+          ? { ...a, watchlist: action.watchlist }
+          : a
+      )};
+      break;
+    }
+
+    case 'ADD_CREDITO': {
+      const cred = {
+        id: genId('cred'),
+        alunoNome: action.alunoNome,
+        turmaId: action.turmaId,
+        dataExpiracao: action.dataExpiracao,
+        usado: false,
+        criadoPor: action.professor || null,
+        criadoEm: new Date().toISOString()
+      };
+      next = { ...state, creditos: [...arr(state.creditos), cred] };
+      const tLbl = getTurmaLabel(state.turmas, action.turmaId);
+      next.log = addLog(state.log, action.professor, `Deu crédito extra de reposição para ${action.alunoNome} (${tLbl}) — expira ${fmtBRFull(action.dataExpiracao)}`);
+      break;
+    }
+
+    case 'DELETE_CREDITO': {
+      next = { ...state, creditos: arr(state.creditos).filter(c => c.id !== action.id) };
       break;
     }
 
@@ -1042,7 +1127,8 @@ function normalizeState(s) {
     reposicoes: arr(s.reposicoes),
     log:        arr(s.log),
     acessos:    arr(s.acessos),
-    estatisticas: { faltasExpiradas: arr((s.estatisticas || {}).faltasExpiradas) },
+    creditos:   arr(s.creditos),
+    estatisticas: { faltasExpiradas: arr((s.estatisticas || {}).faltasExpiradas), reposCanceladas: arr((s.estatisticas || {}).reposCanceladas) },
   };
   var afterFaltaMig = migrateFaltas(base);
   // Migration: create vacation vagas for existing ausencias that don't have them yet
@@ -1206,6 +1292,10 @@ function normalizeState(s) {
     }
     return a;
   }) };
+  // Migration: ensure turma-extra exists
+  if (!afterFaltaMig.turmas.find(function(t) { return t.id === TURMA_EXTRA_ID; })) {
+    afterFaltaMig = { ...afterFaltaMig, turmas: [...afterFaltaMig.turmas, {id:TURMA_EXTRA_ID,diaSemana:null,horario:null,capacidade:99,observacao:'Alunos extras e ex-alunos',alunos:[]}] };
+  }
   // Migration: remove vagas that fall on recesso dates (e.g. João 18/07)
   afterFaltaMig = { ...afterFaltaMig, vagas: afterFaltaMig.vagas.filter(function(v) {
     return !isRecesso(v.data);
