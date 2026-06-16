@@ -35,8 +35,8 @@
     <div style="font-size:2.5rem;margin-bottom:1rem">🔧</div>
     <div style="font-size:1.25rem;font-weight:700;color:#92400e;margin-bottom:0.5rem">App em manutenção</div>
     <div style="color:#78350f;font-size:0.95rem;max-width:280px;line-height:1.5">Estamos fazendo uma atualização e voltamos em breve. Suas informações estão seguras!</div>
-    <button onclick="(function(){var d=localStorage.getItem('atelie_passarinho_v3');if(!d){alert('Nenhum dado encontrado no cache deste dispositivo.');return;}var ts='';try{ts=new Date(JSON.parse(d)._updatedAt).toLocaleString('pt-BR');}catch(e){}if(navigator.clipboard){navigator.clipboard.writeText(d).then(function(){alert('Cache copiado! Data: '+ts+'. Cole no WhatsApp pro Pedro.');});}else{var t=document.createElement('textarea');t.value=d;document.body.appendChild(t);t.select();document.execCommand('copy');document.body.removeChild(t);alert('Cache copiado! Data: '+ts);}})();" style="margin-top:1.5rem;padding:0.75rem 1.5rem;background:#92400e;color:white;border:none;border-radius:8px;font-size:0.95rem;font-weight:700;cursor:pointer">
-      📋 Copiar cache local (Laura: clique aqui)
+    <button onclick="(function(){var d=localStorage.getItem('atelie_passarinho_v3');if(!d){alert('Nenhum dado encontrado no cache deste dispositivo.');return;}var ts='';try{ts=new Date(JSON.parse(d)._updatedAt).toLocaleString('pt-BR');}catch(e){}var blob=new Blob([d],{type:'application/json'});var url=URL.createObjectURL(blob);var a=document.createElement('a');a.href=url;a.download='cache-passarinho-'+Date.now()+'.json';document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);alert('Arquivo baixado! Data do cache: '+ts+'. Envie o arquivo pro Pedro via WhatsApp ou email.');})();" style="margin-top:1.5rem;padding:0.75rem 1.5rem;background:#92400e;color:white;border:none;border-radius:8px;font-size:0.95rem;font-weight:700;cursor:pointer">
+      💾 Baixar cache local (Laura: clique aqui)
     </button>
   </div>
 </div>
