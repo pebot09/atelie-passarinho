@@ -4097,7 +4097,17 @@ function ResumoHoje({ state }) {
 }
 
 // ==================== APP ====================
+const MANUTENCAO = true;
+
 function App() {
+  if (MANUTENCAO) return (
+    <div style={{minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'#fffbeb',padding:'2rem',textAlign:'center'}}>
+      <div style={{fontSize:'2.5rem',marginBottom:'1rem'}}>🔧</div>
+      <div style={{fontSize:'1.25rem',fontWeight:'700',color:'#92400e',marginBottom:'0.5rem'}}>App em manutenção</div>
+      <div style={{color:'#78350f',fontSize:'0.95rem',maxWidth:'280px',lineHeight:'1.5'}}>Estamos fazendo uma atualização e voltamos em breve. Suas informações estão seguras!</div>
+    </div>
+  );
+
   const [state, baseDispatch] = useReducer(reducer, null, loadState);
   const [pinOk, setPinOk]         = useState(() => localStorage.getItem(PIN_KEY) === '1');
   const [professor, setProfessor] = useState(() => localStorage.getItem(PROFESSOR_KEY) || '');
