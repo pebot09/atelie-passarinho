@@ -4132,6 +4132,7 @@ function App() {
   const lastOwnSave = useRef(0);
   const saveTimer   = useRef(null);
   const initialised = useRef(false);
+  const syncedUpdatedAt = useRef(0); // _updatedAt do último estado recebido do Firebase (controle de concorrência)
   const prevVagasRef = useRef(null);
 
   // Wrapper que injeta o professor em toda ação
@@ -4154,6 +4155,7 @@ function App() {
     fetchFromFirebase()
       .then(function(data) {
         if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+          syncedUpdatedAt.current = data._updatedAt || 0;
           baseDispatch({ type: 'SYNC_FROM_FIREBASE', data: normalizeState(data) });
         } else {
           saveToFirebase(Object.assign({}, SEED, { _updatedAt: Date.now() })).catch(function(){});
@@ -4172,6 +4174,7 @@ function App() {
         if (!data || typeof data !== 'object') return;
         if (data._updatedAt && data._updatedAt <= lastOwnSave.current + 3000) return;
         var { _auth: _a, ...cleanData } = data;
+        syncedUpdatedAt.current = data._updatedAt || syncedUpdatedAt.current;
         baseDispatch({ type: 'SYNC_FROM_FIREBASE', data: normalizeState(cleanData) });
       } catch(err) { console.error('[atelie] erro ao processar evento SSE:', err); }
     });
@@ -4209,14 +4212,37 @@ function App() {
   }, [state.vagas]);
 
   // 2. Salva no Firebase a cada mudança (debounce 600ms)
+  //    Com controle de concorrência otimista: antes de gravar, confere se o
+  //    servidor avançou além do que sincronizamos. Se sim, NÃO sobrescreve —
+  //    re-puxa o estado do servidor (evita perda de dados por cache antigo).
   useEffect(function() {
     if (!initialised.current) return;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(function() {
-      var ts = Date.now();
-      lastOwnSave.current = ts;
-      saveToFirebase(Object.assign({}, state, { _updatedAt: ts }))
-        .then(function() { setSyncStatus('ok'); })
+      // 1) Confere o _updatedAt atual do servidor antes de gravar
+      fetch(DB_URL + '/state/_updatedAt.json')
+        .then(function(r) { return r.json(); })
+        .then(function(serverTs) {
+          var base = syncedUpdatedAt.current || 0;
+          var mine = lastOwnSave.current || 0;
+          // Servidor mais novo do que sincronizamos E não foi nossa própria gravação recente
+          if (serverTs && serverTs > base + 1000 && serverTs > mine + 3000) {
+            // Alguém gravou depois de nós → re-puxar em vez de sobrescrever
+            return fetchFromFirebase().then(function(data) {
+              if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+                syncedUpdatedAt.current = data._updatedAt || serverTs;
+                baseDispatch({ type: 'SYNC_FROM_FIREBASE', data: normalizeState(data) });
+              }
+              setSyncStatus('ok');
+            });
+          }
+          // 2) Seguro para gravar
+          var ts = Date.now();
+          lastOwnSave.current = ts;
+          syncedUpdatedAt.current = ts;
+          return saveToFirebase(Object.assign({}, state, { _updatedAt: ts }))
+            .then(function() { setSyncStatus('ok'); });
+        })
         .catch(function() { setSyncStatus('erro'); });
     }, 600);
   }, [state]);
