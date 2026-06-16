@@ -31,8 +31,19 @@
 </head>
 <body class="bg-gray-100 min-h-screen">
 <div id="root">
-  <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#fffbeb;color:#92400e;font-size:1rem">Carregando…</div>
+  <div id="manutencao-screen" style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fffbeb;padding:2rem;text-align:center">
+    <div style="font-size:2.5rem;margin-bottom:1rem">🔧</div>
+    <div style="font-size:1.25rem;font-weight:700;color:#92400e;margin-bottom:0.5rem">App em manutenção</div>
+    <div style="color:#78350f;font-size:0.95rem;max-width:280px;line-height:1.5">Estamos fazendo uma atualização e voltamos em breve. Suas informações estão seguras!</div>
+    <button onclick="(function(){var d=localStorage.getItem('atelie_passarinho_v3');if(!d){alert('Nenhum dado encontrado no cache deste dispositivo.');return;}var ts='';try{ts=new Date(JSON.parse(d)._updatedAt).toLocaleString('pt-BR');}catch(e){}if(navigator.clipboard){navigator.clipboard.writeText(d).then(function(){alert('Cache copiado! Data: '+ts+'. Cole no WhatsApp pro Pedro.');});}else{var t=document.createElement('textarea');t.value=d;document.body.appendChild(t);t.select();document.execCommand('copy');document.body.removeChild(t);alert('Cache copiado! Data: '+ts);}})();" style="margin-top:1.5rem;padding:0.75rem 1.5rem;background:#92400e;color:white;border:none;border-radius:8px;font-size:0.95rem;font-weight:700;cursor:pointer">
+      📋 Copiar cache local (Laura: clique aqui)
+    </button>
+  </div>
 </div>
+<script>
+// Bloqueia o React de montar enquanto em manutenção
+window.__MANUTENCAO__ = true;
+</script>
 <script type="text/babel">
 const { useState, useEffect, useMemo, useCallback, useReducer, useRef } = React;
 
@@ -4116,35 +4127,7 @@ function ResumoHoje({ state }) {
 }
 
 // ==================== APP ====================
-const MANUTENCAO = true;
-
 function App() {
-  if (MANUTENCAO) return (
-    <div style={{minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'#fffbeb',padding:'2rem',textAlign:'center'}}>
-      <div style={{fontSize:'2.5rem',marginBottom:'1rem'}}>🔧</div>
-      <div style={{fontSize:'1.25rem',fontWeight:'700',color:'#92400e',marginBottom:'0.5rem'}}>App em manutenção</div>
-      <div style={{color:'#78350f',fontSize:'0.95rem',maxWidth:'280px',lineHeight:'1.5'}}>Estamos fazendo uma atualização e voltamos em breve. Suas informações estão seguras!</div>
-      <div style={{marginTop:'1.5rem'}}>
-        <button onClick={() => {
-          var d = localStorage.getItem('atelie_passarinho_v3');
-          if (!d) { alert('Nenhum dado no cache deste dispositivo.'); return; }
-          var ts = '';
-          try { ts = new Date(JSON.parse(d)._updatedAt).toLocaleString('pt-BR'); } catch(e) {}
-          if (navigator.clipboard) {
-            navigator.clipboard.writeText(d).then(() => alert('✅ Cache copiado!\nData: ' + ts + '\nCole num WhatsApp pro Pedro.'));
-          } else {
-            var t = document.createElement('textarea'); t.value = d;
-            document.body.appendChild(t); t.select(); document.execCommand('copy');
-            document.body.removeChild(t);
-            alert('✅ Cache copiado!\nData: ' + ts + '\nCole num WhatsApp pro Pedro.');
-          }
-        }} style={{background:'#92400e',color:'white',border:'none',borderRadius:'8px',padding:'0.75rem 1.5rem',fontSize:'0.95rem',fontWeight:'700',cursor:'pointer',display:'block',width:'100%',marginBottom:'0.75rem'}}>
-          📋 Copiar cache local (Laura: clique aqui)
-        </button>
-      </div>
-    </div>
-  );
-
   const [state, baseDispatch] = useReducer(reducer, null, loadState);
   const [pinOk, setPinOk]         = useState(() => localStorage.getItem(PIN_KEY) === '1');
   const [professor, setProfessor] = useState(() => localStorage.getItem(PROFESSOR_KEY) || '');
@@ -5620,7 +5603,9 @@ function PainelRegistro({ state, dispatch }) {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+if (!window.__MANUTENCAO__) {
+  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+}
   </script>
 </body>
 </html>
