@@ -1309,6 +1309,30 @@ function saveToFirebase(payload) {
   });
 }
 
+// Salva snapshot horário em /snapshots/YYYY-MM-DDTHH.json (últimas 168h = 7 dias)
+// Chamado após cada save bem-sucedido, throttled a 1 por hora.
+var _lastSnapshotHour = '';
+function maybeSaveSnapshot(state) {
+  var now = new Date();
+  var hour = now.toISOString().slice(0, 13); // "2026-06-16T15"
+  if (hour === _lastSnapshotHour) return;
+  _lastSnapshotHour = hour;
+  var key = hour.replace('T', '-') + 'h'; // "2026-06-16-15h"
+  var payload = { ...state, _auth: DB_WRITE_SECRET, _snapshotKey: key, _snapshotTs: now.toISOString() };
+  fetch(DB_URL + '/snapshots/' + key + '.json', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }).catch(function() {}); // silencioso — snapshot é melhor-esforço
+  // Remove snapshot de 8 dias atrás (7 dias de retenção)
+  var old = new Date(now - 8 * 24 * 60 * 60 * 1000);
+  var oldKey = old.toISOString().slice(0, 13).replace('T', '-') + 'h';
+  fetch(DB_URL + '/snapshots/' + oldKey + '.json', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' }
+  }).catch(function() {});
+}
+
 // ==================== MODAL ====================
 function Modal({ title, children, onClose, danger }) {
   useEffect(() => {
@@ -4241,7 +4265,10 @@ function App() {
           lastOwnSave.current = ts;
           syncedUpdatedAt.current = ts;
           return saveToFirebase(Object.assign({}, state, { _updatedAt: ts }))
-            .then(function() { setSyncStatus('ok'); });
+            .then(function() {
+              setSyncStatus('ok');
+              maybeSaveSnapshot(Object.assign({}, state, { _updatedAt: ts }));
+            });
         })
         .catch(function() { setSyncStatus('erro'); });
     }, 600);
