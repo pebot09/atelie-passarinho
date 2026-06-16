@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Diagnóstico — Passarinho</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f8fafc; color: #1e293b; padding: 2rem 1rem; }
+  h1 { font-size: 1.25rem; font-weight: 700; margin-bottom: 0.25rem; }
+  .subtitle { font-size: 0.85rem; color: #64748b; margin-bottom: 2rem; }
+  .card { background: white; border-radius: 12px; padding: 1.25rem; margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .card-title { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 0.75rem; }
+  .check { display: flex; align-items: flex-start; gap: 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9; }
+  .check:last-child { border-bottom: none; }
+  .icon { font-size: 1.1rem; line-height: 1.4; flex-shrink: 0; }
+  .check-label { font-size: 0.9rem; font-weight: 500; }
+  .check-detail { font-size: 0.78rem; color: #64748b; margin-top: 0.2rem; word-break: break-all; }
+  .btn { display: block; width: 100%; padding: 0.9rem; background: #1e293b; color: white; border: none; border-radius: 10px; font-size: 0.95rem; font-weight: 600; cursor: pointer; margin-top: 1.5rem; }
+  .btn:active { opacity: 0.85; }
+  .spinner { display: inline-block; width: 1rem; height: 1rem; border: 2px solid #e2e8f0; border-top-color: #64748b; border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #timestamp { font-size: 0.78rem; color: #94a3b8; text-align: center; margin-top: 1rem; }
+</style>
+</head>
+<body>
+
+<h1>🔍 Diagnóstico Passarinho</h1>
+<p class="subtitle">Verifica leitura, escrita e tela dos alunos</p>
+
+<div class="card">
+  <div class="card-title">Firebase</div>
+  <div class="check" id="check-read">
+    <span class="icon"><span class="spinner"></span></span>
+    <div><div class="check-label">Leitura do estado</div><div class="check-detail" id="detail-read">Verificando...</div></div>
+  </div>
+  <div class="check" id="check-freshness">
+    <span class="icon"><span class="spinner"></span></span>
+    <div><div class="check-label">Dados atualizados</div><div class="check-detail" id="detail-freshness">Aguardando leitura...</div></div>
+  </div>
+  <div class="check" id="check-write">
+    <span class="icon"><span class="spinner"></span></span>
+    <div><div class="check-label">Escrita (ping)</div><div class="check-detail" id="detail-write">Verificando...</div></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">App</div>
+  <div class="check" id="check-app">
+    <span class="icon"><span class="spinner"></span></span>
+    <div><div class="check-label">Painel principal carrega</div><div class="check-detail" id="detail-app">Verificando...</div></div>
+  </div>
+  <div class="check" id="check-aluno">
+    <span class="icon"><span class="spinner"></span></span>
+    <div><div class="check-label">Tela do aluno carrega</div><div class="check-detail" id="detail-aluno">Verificando...</div></div>
+  </div>
+</div>
+
+<button class="btn" onclick="runDiagnostic()">↺ Rodar novamente</button>
+<div id="timestamp"></div>
+
+<script>
+const DB = 'https://atelie-passarinho-default-rtdb.firebaseio.com';
+const AUTH = '109';
+const APP_URL = 'https://pebot09.github.io/atelie-passarinho/';
+
+function setCheck(id, status, detail) {
+  const icons = { ok: '✅', fail: '❌', warn: '⚠️', loading: '<span class="spinner"></span>' };
+  document.querySelector('#' + id + ' .icon').innerHTML = icons[status] || icons.loading;
+  if (detail !== undefined) document.getElementById('detail-' + id.replace('check-', '')).textContent = detail;
+}
+
+async function runDiagnostic() {
+  ['read','freshness','write','app','aluno'].forEach(id => {
+    setCheck('check-' + id, 'loading');
+  });
+  setCheck('check-freshness', 'loading', 'Aguardando leitura...');
+  document.getElementById('timestamp').textContent = '';
+
+  // 1. Leitura
+  let state = null;
+  try {
+    const r = await fetch(DB + '/state.json');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    state = await r.json();
+    if (!state || typeof state !== 'object') throw new Error('Resposta inválida');
+    const keys = Object.keys(state).length;
+    setCheck('check-read', 'ok', 'Leitura OK — ' + keys + ' campos no estado');
+  } catch(e) {
+    setCheck('check-read', 'fail', 'Falhou: ' + e.message);
+    setCheck('check-freshness', 'fail', 'Sem dados para verificar');
+  }
+
+  // 2. Frescor dos dados
+  if (state && state._updatedAt) {
+    const ago = Date.now() - state._updatedAt;
+    const mins = Math.round(ago / 60000);
+    const hrs = Math.round(ago / 3600000);
+    const label = ago < 3600000 ? mins + ' min atrás' : hrs + 'h atrás';
+    const dt = new Date(state._updatedAt).toLocaleString('pt-BR');
+    if (ago > 48 * 3600000) {
+      setCheck('check-freshness', 'warn', 'Último sync: ' + dt + ' (' + label + ') — muito antigo');
+    } else {
+      setCheck('check-freshness', 'ok', 'Último sync: ' + dt + ' (' + label + ')');
+    }
+  }
+
+  // 3. Escrita
+  try {
+    const payload = { _auth: AUTH, ts: Date.now(), ok: true };
+    const r = await fetch(DB + '/ping.json', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const result = await r.json();
+    if (!result || !result.ok) throw new Error('Resposta inesperada');
+    setCheck('check-write', 'ok', 'Escrita OK');
+  } catch(e) {
+    setCheck('check-write', 'fail', 'Falhou: ' + e.message);
+  }
+
+  // 4. App principal
+  try {
+    const r = await fetch(APP_URL, { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const html = await r.text();
+    if (html.includes('manutenção') || html.includes('__MANUTENCAO__')) {
+      setCheck('check-app', 'warn', 'App em modo manutenção');
+    } else if (html.includes('atelie_passarinho')) {
+      setCheck('check-app', 'ok', 'Painel carrega normalmente');
+    } else {
+      setCheck('check-app', 'warn', 'Resposta inesperada');
+    }
+  } catch(e) {
+    setCheck('check-app', 'fail', 'Falhou: ' + e.message);
+  }
+
+  // 5. Tela do aluno — pega primeiro código disponível
+  let testCode = null;
+  if (state && state.acessos && state.acessos.length > 0) {
+    testCode = state.acessos[0].codigo;
+  }
+  if (testCode) {
+    try {
+      const r = await fetch(APP_URL + '?c=' + testCode, { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const html = await r.text();
+      if (html.includes('manutenção') || html.includes('__MANUTENCAO__')) {
+        setCheck('check-aluno', 'warn', 'App em modo manutenção (código: ' + testCode + ')');
+      } else if (html.includes('atelie_passarinho')) {
+        setCheck('check-aluno', 'ok', 'Tela do aluno OK (código: ' + testCode + ')');
+      } else {
+        setCheck('check-aluno', 'warn', 'Resposta inesperada');
+      }
+    } catch(e) {
+      setCheck('check-aluno', 'fail', 'Falhou: ' + e.message);
+    }
+  } else {
+    setCheck('check-aluno', 'warn', 'Nenhum código de acesso encontrado no estado');
+  }
+
+  document.getElementById('timestamp').textContent = 'Diagnóstico rodado às ' + new Date().toLocaleString('pt-BR');
+}
+
+runDiagnostic();
+</script>
+</body>
+</html>
