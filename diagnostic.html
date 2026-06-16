@@ -108,7 +108,7 @@ async function runDiagnostic() {
   // 3. Escrita
   try {
     const payload = { _auth: AUTH, ts: Date.now(), ok: true };
-    const r = await fetch(DB + '/ping.json', {
+    const r = await fetch(DB + '/snapshots/ping.json', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -126,7 +126,7 @@ async function runDiagnostic() {
     const r = await fetch(APP_URL, { cache: 'no-store' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const html = await r.text();
-    if (html.includes('manutenção') || html.includes('__MANUTENCAO__')) {
+    if (html.includes('__MANUTENCAO__ = true')) {
       setCheck('check-app', 'warn', 'App em modo manutenção');
     } else if (html.includes('atelie_passarinho')) {
       setCheck('check-app', 'ok', 'Painel carrega normalmente');
@@ -147,7 +147,7 @@ async function runDiagnostic() {
       const r = await fetch(APP_URL + '?c=' + testCode, { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const html = await r.text();
-      if (html.includes('manutenção') || html.includes('__MANUTENCAO__')) {
+      if (html.includes('__MANUTENCAO__ = true')) {
         setCheck('check-aluno', 'warn', 'App em modo manutenção (código: ' + testCode + ')');
       } else if (html.includes('atelie_passarinho')) {
         setCheck('check-aluno', 'ok', 'Tela do aluno OK (código: ' + testCode + ')');
