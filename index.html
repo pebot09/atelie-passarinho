@@ -860,8 +860,6 @@ function reducer(state, action) {
       if (existing) { next = state; break; }
       const codigo = String(Math.floor(100000 + Math.random() * 900000));
       next = { ...state, acessos: [...state.acessos, { id: genId('ac'), codigo, alunoNome, turmaId }] };
-      const tLbl = getTurmaLabel(state.turmas, turmaId);
-      next.log = addLog(state.log, action.professor, `Gerou código de acesso para ${alunoNome} (${tLbl})`);
       break;
     }
 
