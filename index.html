@@ -783,7 +783,7 @@ function reducer(state, action) {
           newReposicoes = newReposicoes.map(r => r.id === activeRepos[i].id ? { ...r, faltaId: falta.id } : r);
         } else {
           // Newest falta — free it back to pendente and reopen its vaga
-          newFaltas = newFaltas.map(f => f.id === falta.id ? { ...f, status: 'pendente', reposicaoId: undefined } : f);
+          newFaltas = newFaltas.map(f => f.id === falta.id ? { ...f, status: 'pendente', reposicaoId: undefined, ...(action.converterSemAntecedencia ? { semAntecedencia: true } : {}) } : f);
           const extra = falta.datas
             .filter(d => !newVagas.some(v => v.turmaId === falta.turmaId && v.data === d && v.faltaId === falta.id))
             .map(d => ({ id: genId('v'), turmaId: falta.turmaId, data: d, faltaId: falta.id }));
@@ -808,7 +808,7 @@ function reducer(state, action) {
       {
         const tLbl = getTurmaLabel(state.turmas, repo.turmaOrigemId);
         const tRepo = getTurmaLabel(state.turmas, repo.turmaReposicaoId);
-        next.log = addLog(state.log, action.professor, `Cancelou reposição de ${repo.alunoNome} (${tLbl}) → ${tRepo} ${fmtBRFull(repo.dataReposicao)}`);
+        next.log = addLog(state.log, action.professor, `Cancelou reposição de ${repo.alunoNome} (${tLbl}) → ${tRepo} ${fmtBRFull(repo.dataReposicao)}${action.converterSemAntecedencia ? ' (crédito convertido p/ sem antecedência)' : ''}`);
         next.estatisticas = { ...(next.estatisticas||{}), reposCanceladas: [...arr((next.estatisticas||{}).reposCanceladas), { alunoNome: repo.alunoNome, turmaId: repo.turmaOrigemId, turmaReposicaoId: repo.turmaReposicaoId, dataReposicao: repo.dataReposicao, semCredito: false, ts: new Date().toISOString() }] };
       }
       break;
@@ -4610,9 +4610,20 @@ function AlunoView({ state, dispatch, acesso }) {
     return (aula - Date.now()) < 24 * 3600 * 1000;
   };
 
+  const getHorasAteAula = (repo) => {
+    const tRepo = state.turmas.find(t => t.id === repo.turmaReposicaoId);
+    const horaAula = parseInt((tRepo?.horario || '09h').replace('h',''), 10);
+    const aula = new Date(repo.dataReposicao + 'T00:00:00');
+    aula.setHours(horaAula, 0, 0, 0);
+    return (aula - Date.now()) / 3600000;
+  };
+
   const handleCancelarRepo = (repo) => {
-    if (isLessThan24h(repo)) {
+    const horas = getHorasAteAula(repo);
+    if (horas < 2) {
       setConfirmCancel({ repo, semCredito: true });
+    } else if (horas < 24) {
+      setConfirmCancel({ repo, semCredito: false, semAntecedencia: true });
     } else {
       setConfirmCancel({ repo, semCredito: false });
     }
@@ -4621,8 +4632,9 @@ function AlunoView({ state, dispatch, acesso }) {
   const confirmarCancelamento = () => {
     if (!confirmCancel) return;
     if (confirmCancel.semCredito) {
-      // Remove reposição mas não reverte falta
       alunoDispatch({ type: 'CANCEL_REPOSICAO_SEM_CREDITO', id: confirmCancel.repo.id });
+    } else if (confirmCancel.semAntecedencia) {
+      alunoDispatch({ type: 'CANCEL_REPOSICAO', id: confirmCancel.repo.id, converterSemAntecedencia: true });
     } else {
       alunoDispatch({ type: 'CANCEL_REPOSICAO', id: confirmCancel.repo.id });
     }
@@ -5270,10 +5282,12 @@ function AlunoView({ state, dispatch, acesso }) {
           <ConfirmModal
             title="Cancelar reposição?" danger
             message={confirmCancel.semCredito
-              ? `A reposição está a menos de 24h. Você pode cancelar, mas o crédito não será devolvido. Deseja cancelar mesmo assim?`
-              : confirmCancel.repo.tipo === 'reposicao_ferias'
-                ? `Cancelar a reposição de ${fmtBRFull(confirmCancel.repo.dataReposicao)}? Seu crédito de férias voltará a ficar disponível.`
-                : `Cancelar a reposição de ${fmtBRFull(confirmCancel.repo.dataReposicao)}? A falta voltará para pendente.`}
+              ? `A reposição está a menos de 2h da aula. Você pode cancelar, mas o crédito não será devolvido. Deseja cancelar mesmo assim?`
+              : confirmCancel.semAntecedencia
+                ? `A reposição está a menos de 24h. Você pode cancelar, mas a falta voltará como "sem antecedência" — só poderá remarcar quando faltar menos de 2h para a aula. Deseja cancelar?`
+                : confirmCancel.repo.tipo === 'reposicao_ferias'
+                  ? `Cancelar a reposição de ${fmtBRFull(confirmCancel.repo.dataReposicao)}? Seu crédito de férias voltará a ficar disponível.`
+                  : `Cancelar a reposição de ${fmtBRFull(confirmCancel.repo.dataReposicao)}? A falta voltará para pendente.`}
             onConfirm={confirmarCancelamento}
             onCancel={() => setConfirmCancel(null)}
             confirmLabel="Cancelar reposição"
