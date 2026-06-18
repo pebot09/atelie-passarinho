@@ -420,7 +420,12 @@ function reducer(state, action) {
     }
 
     case 'DELETE_CREDITO': {
+      const credDel = arr(state.creditos).find(c => c.id === action.id);
       next = { ...state, creditos: arr(state.creditos).filter(c => c.id !== action.id) };
+      if (credDel) {
+        const tLbl = getTurmaLabel(state.turmas, credDel.turmaId);
+        next.log = addLog(state.log, action.professor, `Removeu crédito extra de ${credDel.alunoNome} (${tLbl})`);
+      }
       break;
     }
 
@@ -453,11 +458,14 @@ function reducer(state, action) {
       const { diaSemana, horario, observacao } = action;
       const id = `${diaSemana.slice(0,3).replace('ç','c').replace('á','a')}-${horario}`;
       if (state.turmas.find(t => t.id === id)) return state;
+      const tLblNew = `${EXTENSO[diaSemana] || diaSemana} ${horario}`;
       next = { ...state, turmas: [...state.turmas, { id, diaSemana, horario, capacidade: 7, observacao: observacao||'', alunos: [] }] };
+      next.log = addLog(state.log, action.professor, `Criou turma ${tLblNew}`);
       break;
     }
 
     case 'DELETE_TURMA': {
+      const turmaDel = state.turmas.find(t => t.id === action.id);
       next = {
         ...state,
         turmas: state.turmas.filter(t => t.id !== action.id),
@@ -465,6 +473,10 @@ function reducer(state, action) {
         vagas: state.vagas.filter(v => v.turmaId !== action.id),
         ausencias: state.ausencias.filter(a => a.turmaId !== action.id)
       };
+      if (turmaDel) {
+        const tLbl = getTurmaLabel(state.turmas, turmaDel.id);
+        next.log = addLog(state.log, action.professor, `Deletou turma ${tLbl}`);
+      }
       break;
     }
 
@@ -848,6 +860,8 @@ function reducer(state, action) {
       if (existing) { next = state; break; }
       const codigo = String(Math.floor(100000 + Math.random() * 900000));
       next = { ...state, acessos: [...state.acessos, { id: genId('ac'), codigo, alunoNome, turmaId }] };
+      const tLbl = getTurmaLabel(state.turmas, turmaId);
+      next.log = addLog(state.log, action.professor, `Gerou código de acesso para ${alunoNome} (${tLbl})`);
       break;
     }
 
@@ -1402,7 +1416,7 @@ function GerarLinkModal({ state, dispatch, onClose }) {
 
   const handleGerar = () => {
     if (!turmaId || !alunoNome) return;
-    dispatch({ type: 'GERAR_ACESSO', alunoNome, turmaId });
+    dispatch({ type: 'GERAR_ACESSO', alunoNome, turmaId, professor: localStorage.getItem(PROFESSOR_KEY) || '' });
   };
 
   const handleCopy = () => {
@@ -1784,7 +1798,7 @@ function SectionTurmas({ state, dispatch }) {
               <button onClick={() => setShowNewTurma(false)} className="px-4 py-2 border border-gray-300 rounded-lg text-gray-600">Cancelar</button>
               <button onClick={() => {
                 if (!state.turmas.some(t => t.diaSemana === newTurma.diaSemana && t.horario === newTurma.horario)) {
-                  dispatch({type:'ADD_TURMA', ...newTurma});
+                  dispatch({type:'ADD_TURMA', ...newTurma, professor: localStorage.getItem(PROFESSOR_KEY) || ''});
                   setShowNewTurma(false);
                 }
               }} className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700">Criar Turma</button>
@@ -1797,7 +1811,7 @@ function SectionTurmas({ state, dispatch }) {
         <ConfirmModal
           title="Excluir turma?" danger
           message={`Remover ${ABREV[confirm.turma.diaSemana]} ${confirm.turma.horario}? Todas as faltas e vagas desta turma também serão removidas.`}
-          onConfirm={() => { dispatch({type:'DELETE_TURMA', id: confirm.turma.id}); setConfirm(null); }}
+          onConfirm={() => { dispatch({type:'DELETE_TURMA', id: confirm.turma.id, professor: localStorage.getItem(PROFESSOR_KEY) || ''}); setConfirm(null); }}
           onCancel={() => setConfirm(null)}
           confirmLabel="Excluir"
         />
@@ -2808,7 +2822,7 @@ function TabCreditoExtra({ state, dispatch }) {
                     </div>
                   )}
                 </div>
-                <button onClick={() => dispatch({type:'DELETE_CREDITO', id: c.id})} className="text-red-400 hover:text-red-600 text-xs ml-2 shrink-0">Remover</button>
+                <button onClick={() => dispatch({type:'DELETE_CREDITO', id: c.id, professor: localStorage.getItem(PROFESSOR_KEY) || ''})} className="text-red-400 hover:text-red-600 text-xs ml-2 shrink-0">Remover</button>
               </div>
             ))}
           </div>
@@ -2825,7 +2839,7 @@ function TabCreditoExtra({ state, dispatch }) {
                   <span className="font-medium">{c.alunoNome}</span>
                   <span className="text-gray-400 ml-2 text-xs">expirou {fmtBRFull(c.dataExpiracao)}</span>
                 </div>
-                <button onClick={() => dispatch({type:'DELETE_CREDITO', id: c.id})} className="text-red-400 hover:text-red-600 text-xs ml-2">Remover</button>
+                <button onClick={() => dispatch({type:'DELETE_CREDITO', id: c.id, professor: localStorage.getItem(PROFESSOR_KEY) || ''})} className="text-red-400 hover:text-red-600 text-xs ml-2">Remover</button>
               </div>
             ))}
           </div>
