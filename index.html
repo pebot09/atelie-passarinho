@@ -2093,9 +2093,8 @@ function TabRegistrarReposicao({ state, dispatch }) {
   const turmaRepo   = state.turmas.find(t => t.id === turmaRepoId);
 
   // Tipo: com falta pendente → sempre reposicao
-  //       sem falta + vaga oficial → reposicao sem falta vinculada
-  //       sem falta + manual → tipoManual (escolha explícita)
-  const tipo = hasPending ? 'reposicao' : (isManual ? tipoManual : 'reposicao');
+  //       sem falta → tipoManual (escolha explícita, tanto vaga oficial quanto manual)
+  const tipo = hasPending ? 'reposicao' : tipoManual;
 
   const faltaInfo = useMemo(() => {
     if (!alunoNome) return null;
@@ -2237,22 +2236,23 @@ function TabRegistrarReposicao({ state, dispatch }) {
               ))}
             </select>
           </div>
-          {/* Quando não tem falta pendente, pergunta o tipo */}
-          {!hasPending && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Tipo</label>
-              <div className="flex gap-3">
-                <label className={`flex-1 flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors ${tipoManual === 'reposicao' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}>
-                  <input type="radio" name="tipoManual" value="reposicao" checked={tipoManual === 'reposicao'} onChange={() => setTipoManual('reposicao')} />
-                  <span className="text-sm font-medium">Reposição sem falta vinculada</span>
-                </label>
-                <label className={`flex-1 flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors ${tipoManual === 'aula_extra' ? 'border-purple-500 bg-purple-50' : 'border-gray-200'}`}>
-                  <input type="radio" name="tipoManual" value="aula_extra" checked={tipoManual === 'aula_extra'} onChange={() => setTipoManual('aula_extra')} />
-                  <span className="text-sm font-medium">Aula extra</span>
-                </label>
-              </div>
-            </div>
-          )}
+        </div>
+      )}
+
+      {/* Quando não tem falta pendente e já selecionou vaga, pergunta o tipo */}
+      {!hasPending && vagaSel && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Tipo</label>
+          <div className="flex gap-3">
+            <label className={`flex-1 flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors ${tipoManual === 'reposicao' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}>
+              <input type="radio" name="tipoManual" value="reposicao" checked={tipoManual === 'reposicao'} onChange={() => setTipoManual('reposicao')} />
+              <span className="text-sm font-medium">Reposição sem falta vinculada</span>
+            </label>
+            <label className={`flex-1 flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors ${tipoManual === 'aula_extra' ? 'border-purple-500 bg-purple-50' : 'border-gray-200'}`}>
+              <input type="radio" name="tipoManual" value="aula_extra" checked={tipoManual === 'aula_extra'} onChange={() => setTipoManual('aula_extra')} />
+              <span className="text-sm font-medium">Aula extra</span>
+            </label>
+          </div>
         </div>
       )}
 
