@@ -1511,7 +1511,8 @@ function HistoricoAlunoContent({ alunoNome, turmaId, state }) {
         const dt = new Date(e.ts);
         const dataHora = dt.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' }) +
           (e.tipo === 'log' ? ' ' + dt.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' }) : '');
-        const autorColors = e.autor ? (PROFESSOR_COLORS[e.autor] || { bg:'bg-gray-100', text:'text-gray-600', dot:'bg-gray-400' }) : null;
+        const autorIsAluno = e.autor && state.turmas.some(t => t.alunos.includes(e.autor));
+        const autorColors = e.autor ? ((!autorIsAluno && PROFESSOR_COLORS[e.autor]) || { bg:'bg-gray-100', text:'text-gray-600', dot:'bg-gray-400' }) : null;
         return (
           <div key={i} className="flex items-start gap-2 text-xs py-1 border-b border-gray-50 last:border-0">
             <span className={`shrink-0 mt-0.5 ${e.tipo === 'falta' ? 'text-red-400' : e.tipo === 'repo' ? 'text-blue-400' : 'text-gray-400'}`}>
@@ -5633,7 +5634,8 @@ function PainelRegistro({ state, dispatch }) {
       )}
       <div className="space-y-2">
         {log.map(entry => {
-          const c = PROFESSOR_COLORS[entry.professor] || { bg:'bg-gray-100', text:'text-gray-600', dot:'bg-gray-400' };
+          const isAluno = allAlunoNames.includes(entry.professor);
+          const c = (!isAluno && PROFESSOR_COLORS[entry.professor]) || { bg:'bg-gray-100', text:'text-gray-600', dot:'bg-gray-400' };
           const dt = new Date(entry.ts);
           const dataHora = dt.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' }) +
                            ' ' + dt.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
