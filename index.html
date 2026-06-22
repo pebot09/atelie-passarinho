@@ -4254,10 +4254,12 @@ function ResumoHoje({ state }) {
               !faltandoNomes.includes(a) && !ausentesFerias.includes(a)
             );
 
+            const esperados = presentes.length + reposHoje.length;
+
             return (
               <div key={turma.id} className="px-4 py-3 space-y-0.5">
                 <div className="font-semibold text-gray-800 text-sm mb-1">
-                  {ABREV[turma.diaSemana]} {turma.horario}
+                  {ABREV[turma.diaSemana]} {turma.horario} <span className="text-gray-400 font-normal">({esperados})</span>
                 </div>
                 {presentes.length > 0 && (
                   <div className="text-sm text-gray-600">
