@@ -394,7 +394,7 @@ function calcOccupancy(turmaId, date, state) {
     (f.status === 'pendente' || f.status === 'marcada')
   ).length;
   const repos = state.reposicoes.filter(r =>
-    r.turmaReposicaoId === turmaId && r.dataReposicao === date && !r.realizada
+    r.turmaReposicaoId === turmaId && r.dataReposicao === date && !r.realizada && r.turmaOrigemId !== turmaId
   ).length;
   return alunosEfetivos - faltasOnDate + repos;
 }
@@ -4245,6 +4245,7 @@ function ResumoHoje({ state }) {
             const reposHoje = state.reposicoes.filter(r =>
               r.turmaReposicaoId === turma.id && r.dataReposicao === td && !r.realizada
             );
+            const reposVisitantes = reposHoje.filter(r => r.turmaOrigemId !== turma.id);
 
             const ausentesFerias = state.ausencias
               .filter(a => a.turmaId === turma.id && a.mesAno === mesHoje)
@@ -4254,7 +4255,7 @@ function ResumoHoje({ state }) {
               !faltandoNomes.includes(a) && !ausentesFerias.includes(a)
             );
 
-            const esperados = presentes.length + reposHoje.length;
+            const esperados = presentes.length + reposVisitantes.length;
 
             return (
               <div key={turma.id} className="px-4 py-3 space-y-0.5">
