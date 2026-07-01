@@ -547,6 +547,53 @@ function reducer(state, action) {
       break;
     }
 
+    case 'CHANGE_TURMA_ALUNO': {
+      const { oldTurmaId, newTurmaId, alunoNome: movNome } = action;
+      if (!oldTurmaId || !newTurmaId || oldTurmaId === newTurmaId) { next = state; break; }
+      // Move o aluno: remove da turma antiga, adiciona na nova (sem duplicar)
+      const newTurmasMov = state.turmas.map(t => {
+        if (t.id === oldTurmaId) return { ...t, alunos: t.alunos.filter(a => a !== movNome) };
+        if (t.id === newTurmaId) return t.alunos.includes(movNome) ? t : { ...t, alunos: [...t.alunos, movNome] };
+        return t;
+      });
+      // IDs das faltas do aluno na turma antiga (para mover as vagas vinculadas junto)
+      const faltasMovidasIds = new Set(
+        state.faltas.filter(f => f.turmaId === oldTurmaId && f.alunoNome === movNome).map(f => f.id)
+      );
+      const newFaltasMov = state.faltas.map(f =>
+        f.turmaId === oldTurmaId && f.alunoNome === movNome ? { ...f, turmaId: newTurmaId } : f
+      );
+      const newReposMov = state.reposicoes.map(r =>
+        r.turmaOrigemId === oldTurmaId && r.alunoNome === movNome ? { ...r, turmaOrigemId: newTurmaId } : r
+      );
+      const newAusenciasMov = state.ausencias.map(a =>
+        a.turmaId === oldTurmaId && a.alunoNome === movNome ? { ...a, turmaId: newTurmaId } : a
+      );
+      const newAcessosMov = arr(state.acessos).map(a =>
+        a.turmaId === oldTurmaId && a.alunoNome === movNome ? { ...a, turmaId: newTurmaId } : a
+      );
+      // Vagas ligadas às faltas movidas acompanham o novo turmaId
+      const newVagasMov = state.vagas.map(v =>
+        v.faltaId && faltasMovidasIds.has(v.faltaId) ? { ...v, turmaId: newTurmaId } : v
+      );
+      const td_mov = todayStr();
+      next = {
+        ...state,
+        turmas: newTurmasMov,
+        faltas: newFaltasMov,
+        reposicoes: newReposMov,
+        ausencias: newAusenciasMov,
+        acessos: newAcessosMov,
+        vagas: computeVagasExtras(newTurmasMov, newFaltasMov, newReposMov, newVagasMov, td_mov, newAusenciasMov),
+      };
+      {
+        const tOldLbl = getTurmaLabel(state.turmas, oldTurmaId);
+        const tNewLbl = getTurmaLabel(state.turmas, newTurmaId);
+        next.log = addLog(state.log, action.professor, `Moveu ${movNome} de ${tOldLbl} → ${tNewLbl}`, action.origem);
+      }
+      break;
+    }
+
     case 'ADD_FALTA': {
       const { alunoNome, turmaId } = action;
       const datasComTipoRaw = action.datasComTipo || (action.datas || []).map(d => ({ data: d, semAntecedencia: false }));
