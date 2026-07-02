@@ -196,8 +196,7 @@ function buildMensagem(alunosTurma) {
   const linhas = alunosTurma
     .filter(a => totalAluno(a) > 0)
     .map(a => {
-      const partes = [`${fmt(a.mensalidade)} (mensalidade)`];
-      if (barroReais(a) > 0) partes.push(`${fmt(barroReais(a))} (barro)`);
+      const partes = [`${fmt(a.mensalidade)} (mensalidade)`, `${fmt(barroReais(a))} (barro)`];
       (a.extras || []).forEach(e => {
         if (n2(e.valor) > 0) partes.push(`${fmt(e.valor)} (${CAT_LABEL[e.categoria] || 'extra'})`);
       });
