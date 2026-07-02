@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Passarinho — Barro & Repasse</title>
+  <link rel="icon" type="image/jpeg" href="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAgACADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD3+iiigAooooAKKKKACiiigAooooA//9k=">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Barro">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.23.9/babel.min.js"></script>
+  <script>
+    window.onerror = function(msg, src, line) {
+      document.getElementById('root').innerHTML =
+        '<div style="padding:2rem;color:#b91c1c;font-family:monospace;background:#fef2f2;margin:1rem;border-radius:8px">' +
+        '<strong>Erro JavaScript:</strong><br>' + msg + '<br><small>' + src + ':' + line + '</small></div>';
+    };
+  </script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    .fade-in { animation: fadeIn 0.15s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+    pre { white-space: pre-wrap; word-break: break-word; }
+    input[type=number]::-webkit-inner-spin-button { opacity: .4; }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useMemo, useCallback, useRef } = React;
+
+/* ============================================================
+   App 2 — Controle de Barro & Repasse (Ateliê Passarinho)
+   - LÊ (apenas leitura) /state.json do app 1: turmas, férias
+   - ESCREVE somente em /barro.json (path próprio, não toca no app 1)
+   ============================================================ */
+
+// ==================== FIREBASE ====================
+const DB_URL = 'https://atelie-passarinho-default-rtdb.firebaseio.com';
+const READ_STATE = DB_URL + '/state.json';       // app 1 (somente leitura)
+const WRITE_PATH = DB_URL + '/barro.json';        // app 2 (leitura + escrita)
+const DB_WRITE_SECRET = '109';
+
+function loadState() {                             // turmas + ausencias do app 1
+  return fetch(READ_STATE).then(r => r.json());
+}
+function loadBarro() {
+  return fetch(WRITE_PATH).then(r => r.json());
+}
+function saveBarro(data) {
+  return fetch(WRITE_PATH, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...data, _auth: DB_WRITE_SECRET })
+  });
+}
+
+// ==================== CONSTANTES DE NEGÓCIO ====================
+const PIN = '109';
+const MENSALIDADE_PADRAO = 465;          // R$ — padrão, editável por aluno/mês
+const VALOR_BARRO_KG = 10;               // R$/Kg — fixo (custo de material)
+const PCT_PEDRO_PADRAO = 0.5;            // 50% da mensalidade fica com Pedro (editável)
+const CAPACIDADE_TURMA = 7;              // para % de ocupação (potencial de arrecadação)
+
+// Barro e extras: split configurável (hoje 0% Pedro / 100% Ateliê).
+const PCT_PEDRO_BARRO = 0;               // barro é custo de material → 100% Ateliê
+const EXTRA_CATEGORIAS = [               // pctPedro configurável por categoria
+  { key: 'queima_extra',    label: 'Queima extra',    pctPedro: 0 },
+  { key: 'terceira_queima', label: 'Terceira queima', pctPedro: 0 },
+  { key: 'peca_carol',      label: 'Peça Carol',      pctPedro: 0 },
+];
+const CAT_LABEL = Object.fromEntries(EXTRA_CATEGORIAS.map(c => [c.key, c.label]));
+const CAT_PCT   = Object.fromEntries(EXTRA_CATEGORIAS.map(c => [c.key, c.pctPedro]));
+
+// Dados de transferência (mensagem WhatsApp)
+const DADOS_TRANSFERENCIA =
+`Pedro Maciel Botafogo Muniz
+CPF 15432322722
+Banco 0260 Nubank
+Agencia 0001
+Conta 85624581-0
+PIX: CPF`;
+
+// ==================== HELPERS ====================
+const DIAS_ORDER = ['segunda','terça','quarta','quinta','sexta','sábado'];
+const ABREV = { segunda:'Seg', terça:'Ter', quarta:'Qua', quinta:'Qui', sexta:'Sex', sábado:'Sáb' };
+const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+
+const n2 = v => (Number(v) || 0);
+// Formato BR com 2 casas: 465 -> "465,00", 232.5 -> "232,50", 1234.5 -> "1.234,50"
+const fmt = v => n2(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function turmaLabel(t) {
+  if (!t) return '';
+  if (!t.diaSemana || !t.horario) return t.observacao || t.id;
+  return `${ABREV[t.diaSemana] || t.diaSemana} ${String(t.horario).replace('h','h')}`;
+}
+function sortTurmas(turmas) {
+  return [...turmas].sort((a, b) => {
+    const da = DIAS_ORDER.indexOf(a.diaSemana), db = DIAS_ORDER.indexOf(b.diaSemana);
+    if (da !== db) return (da < 0 ? 99 : da) - (db < 0 ? 99 : db);
+    return String(a.horario || '').localeCompare(String(b.horario || ''));
+  });
+}
+function mesLabel(mesAno) {
+  if (!mesAno) return '';
+  const [y, m] = mesAno.split('-');
+  return `${MESES[Number(m) - 1]} ${y}`;
+}
+function mesAnoOptions() {
+  // mês atual + 12 anteriores
+  const out = [];
+  const now = new Date();
+  for (let i = 0; i < 13; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  }
+  return out;
+}
+function currentMesAno() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+const uid = () => Math.random().toString(36).slice(2, 9);
+
+// Cálculos por aluno ------------------------------------------------------
+function barroReais(a) { return n2(a.barroKg) * VALOR_BARRO_KG; }
+function extrasTotal(a) { return (a.extras || []).reduce((s, e) => s + n2(e.valor), 0); }
+function totalAluno(a) { return n2(a.mensalidade) + barroReais(a) + extrasTotal(a); }
+function repassePedroAluno(a) {
+  let p = n2(a.mensalidade) * n2(a.pctPedro);
+  p += barroReais(a) * PCT_PEDRO_BARRO;
+  (a.extras || []).forEach(e => { p += n2(e.valor) * (CAT_PCT[e.categoria] ?? 0); });
+  return p;
+}
+function repasseAtelieAluno(a) { return totalAluno(a) - repassePedroAluno(a); }
+
+// Consumo pessoal de Pedro (descontado do repasse dele) -------------------
+function pessoalTotal(mes) {
+  const p = (mes && mes.pessoal) || {};
+  return n2(p.barroKg) * VALOR_BARRO_KG + n2(p.queimaKg) * n2(p.queimaValorKg);
+}
+
+// ==================== MONTAGEM DO MÊS ====================
+// Junta o roster atual das turmas (app 1) com o que já foi salvo (app 2),
+// preservando o histórico. Aluno de férias no mês → meia mensalidade (default).
+function buildMesAlunos(turmas, ausencias, saved, mesAno) {
+  const feriasSet = new Set(
+    (ausencias || [])
+      .filter(a => a.tipo === 'ferias' && a.mesAno === mesAno)
+      .map(a => `${a.turmaId}|${a.alunoNome}`)
+  );
+  const savedByKey = {};
+  (saved || []).forEach(a => { savedByKey[`${a.turmaId}|${a.alunoNome}`] = a; });
+
+  const result = {};
+  turmas.forEach(t => {
+    const list = [];
+    const seen = new Set();
+    // alunos do roster atual da turma
+    (t.alunos || []).forEach(nome => {
+      const key = `${t.id}|${nome}`;
+      seen.add(key);
+      const isFerias = feriasSet.has(key);
+      if (savedByKey[key]) {
+        // preserva o que foi lançado; só re-sinaliza férias detectadas
+        list.push({ ...defaultAluno(t.id, nome, isFerias), ...savedByKey[key], ferias: savedByKey[key].ferias ?? isFerias });
+      } else {
+        list.push(defaultAluno(t.id, nome, isFerias));
+      }
+    });
+    // alunos que foram lançados no passado mas já saíram do roster atual: preservar
+    (saved || []).filter(a => a.turmaId === t.id && !seen.has(`${t.id}|${a.alunoNome}`))
+      .forEach(a => list.push({ ...defaultAluno(t.id, a.alunoNome, false), ...a, _removido: true }));
+    if (list.length) result[t.id] = list;
+  });
+  return result;
+}
+function defaultAluno(turmaId, nome, isFerias) {
+  return {
+    turmaId, alunoNome: nome,
+    mensalidade: isFerias ? MENSALIDADE_PADRAO / 2 : MENSALIDADE_PADRAO,
+    pctPedro: PCT_PEDRO_PADRAO,
+    ferias: !!isFerias,
+    barroKg: 0,
+    extras: [],   // { id, categoria, valor }
+    obs: '',
+  };
+}
+
+// ==================== MENSAGEM WHATSAPP ====================
+function buildMensagem(alunosTurma) {
+  const linhas = alunosTurma
+    .filter(a => totalAluno(a) > 0)
+    .map(a => {
+      const partes = [`${fmt(a.mensalidade)} (mensalidade)`];
+      if (barroReais(a) > 0) partes.push(`${fmt(barroReais(a))} (barro)`);
+      (a.extras || []).forEach(e => {
+        if (n2(e.valor) > 0) partes.push(`${fmt(e.valor)} (${CAT_LABEL[e.categoria] || 'extra'})`);
+      });
+      return `${a.alunoNome}: ${partes.join(' + ')} = ${fmt(totalAluno(a))}`;
+    });
+  return `Olá, turma!
+Tudo bem?
+
+Segue abaixo relação de barro utilizado por cada aluno e o valor final a ser pago este mês:
+
+${linhas.join('\n')}
+
+Valor do barro/kg: ${fmt(VALOR_BARRO_KG)}
+
+Dados para transferência:
+
+${DADOS_TRANSFERENCIA}
+
+Lembrando que o pagamento deverá ser feito até dia 7.
+Peço para que enviem o comprovante de pagamento por aqui para que possamos fazer o controle.
+Obrigado! ❤️`;
+}
+
+// ==================== UI PRIMITIVES ====================
+function NumInput({ value, onChange, className = '', prefix, suffix, step = 'any', ...rest }) {
+  return (
+    <div className={`inline-flex items-center rounded-lg border border-gray-300 bg-white overflow-hidden ${className}`}>
+      {prefix && <span className="px-2 text-gray-400 text-sm">{prefix}</span>}
+      <input
+        type="number" inputMode="decimal" step={step}
+        className="w-full px-2 py-1.5 text-right outline-none"
+        value={value === 0 ? '' : value}
+        placeholder="0"
+        onChange={e => onChange(e.target.value === '' ? 0 : parseFloat(e.target.value))}
+        {...rest}
+      />
+      {suffix && <span className="px-2 text-gray-400 text-sm">{suffix}</span>}
+    </div>
+  );
+}
+
+// ==================== APP ====================
+function App() {
+  const [authed, setAuthed] = useState(sessionStorage.getItem('barro_auth') === '1');
+  const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState(null);
+
+  const [state, setState] = useState(null);       // app 1: { turmas, ausencias }
+  const [barro, setBarro] = useState({ lancamentos: {} });
+  const [mesAno, setMesAno] = useState(currentMesAno());
+  const [tab, setTab] = useState('lancamento');
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState(null);
+  const dirty = useRef(false);
+
+  // Carrega dados
+  useEffect(() => {
+    if (!authed) return;
+    Promise.all([loadState(), loadBarro()])
+      .then(([st, br]) => {
+        setState({ turmas: (st && st.turmas) || [], ausencias: (st && st.ausencias) || [] });
+        setBarro(br && typeof br === 'object' ? { lancamentos: br.lancamentos || {} } : { lancamentos: {} });
+        setLoading(false);
+      })
+      .catch(e => { setErro(String(e)); setLoading(false); });
+  }, [authed]);
+
+  const turmas = useMemo(() => state ? sortTurmas(state.turmas) : [], [state]);
+
+  // Lançamento do mês atualmente selecionado (materializado)
+  const lanc = barro.lancamentos[mesAno];
+  const mesData = useMemo(() => {
+    if (!state) return null;
+    const savedAlunos = lanc ? Object.values(lanc.alunos || {}).flat() : [];
+    return {
+      alunos: buildMesAlunos(turmas, state.ausencias, savedAlunos, mesAno),
+      pessoal: (lanc && lanc.pessoal) || { barroKg: 0, queimaKg: 0, queimaValorKg: 0 },
+      obsGeral: (lanc && lanc.obsGeral) || '',
+    };
+  }, [state, turmas, lanc, mesAno]);
+
+  // ---- mutadores (gravam no estado local; salvar envia p/ Firebase) ----
+  const updateMes = useCallback((mutator) => {
+    setBarro(prev => {
+      const cur = prev.lancamentos[mesAno] || { alunos: {}, pessoal: { barroKg: 0, queimaKg: 0, queimaValorKg: 0 }, obsGeral: '' };
+      // materializa o roster atual antes de mutar (garante que edições persistam)
+      const materialAlunos = mesData ? mesData.alunos : (cur.alunos || {});
+      const base = { alunos: JSON.parse(JSON.stringify(materialAlunos)), pessoal: { ...(cur.pessoal || {}) }, obsGeral: cur.obsGeral || '' };
+      const next = mutator(base) || base;
+      dirty.current = true;
+      return { ...prev, lancamentos: { ...prev.lancamentos, [mesAno]: next } };
+    });
+  }, [mesAno, mesData]);
+
+  const setAluno = useCallback((turmaId, idx, patch) => {
+    updateMes(m => { Object.assign(m.alunos[turmaId][idx], patch); return m; });
+  }, [updateMes]);
+
+  const doSave = useCallback(() => {
+    setSaving(true);
+    // garante materialização do mês corrente
+    updateMes(m => m);
+    setTimeout(() => {
+      setBarro(prev => {
+        saveBarro(prev)
+          .then(r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status + ' — verifique as regras de escrita do Firebase p/ o path /barro');
+            dirty.current = false;
+            setSavedAt(new Date());
+            setErro(null);
+          })
+          .catch(e => setErro('Falha ao salvar: ' + e.message))
+          .finally(() => setSaving(false));
+        return prev;
+      });
+    }, 50);
+  }, [updateMes]);
+
+  // ---------------- AUTH GATE ----------------
+  if (!authed) return <AuthGate onOk={() => { sessionStorage.setItem('barro_auth', '1'); setAuthed(true); }} />;
+  if (loading) return <Centered><div className="text-gray-500">Carregando dados…</div></Centered>;
+  if (erro && !state) return <Centered><div className="text-red-600 max-w-md text-center">{erro}</div></Centered>;
+
+  return (
+    <div className="max-w-3xl mx-auto p-3 sm:p-4 pb-28">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h1 className="text-xl font-bold text-gray-800">🏺 Barro & Repasse</h1>
+          <a href="index.html" className="text-xs text-amber-700 hover:underline">← app de faltas</a>
+        </div>
+        <select value={mesAno} onChange={e => setMesAno(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 bg-white text-sm font-medium">
+          {mesAnoOptions().map(m => <option key={m} value={m}>{mesLabel(m)}</option>)}
+        </select>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 mb-4 bg-white rounded-xl p-1 shadow-sm text-sm">
+        {[['lancamento','Lançamento'],['mensagem','Mensagem'],['razao','Razão'],['stats','Estatísticas']].map(([k, l]) => (
+          <button key={k} onClick={() => setTab(k)}
+            className={`flex-1 py-2 rounded-lg font-medium ${tab === k ? 'bg-amber-500 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {erro && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">{erro}</div>}
+
+      {tab === 'lancamento' && <Lancamento turmas={turmas} mesData={mesData} setAluno={setAluno} updateMes={updateMes} />}
+      {tab === 'mensagem'   && <Mensagem turmas={turmas} mesData={mesData} />}
+      {tab === 'razao'      && <Razao turmas={turmas} mesData={mesData} mesAno={mesAno} />}
+      {tab === 'stats'      && <Stats turmas={turmas} barro={barro} state={state} mesAno={mesAno} mesData={mesData} />}
+
+      {/* Barra de salvar */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-3">
+        <div className="max-w-3xl mx-auto flex items-center justify-between gap-3">
+          <span className="text-xs text-gray-400">
+            {saving ? 'Salvando…' : savedAt ? `Salvo ${savedAt.toLocaleTimeString('pt-BR')}` : 'Alterações salvas no Firebase ao clicar'}
+          </span>
+          <button onClick={doSave} disabled={saving}
+            className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-semibold px-6 py-2.5 rounded-xl">
+            Salvar mês
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==================== AUTH ====================
+function AuthGate({ onOk }) {
+  const [pin, setPin] = useState('');
+  const [err, setErr] = useState(false);
+  const submit = () => { if (pin === PIN) onOk(); else { setErr(true); setPin(''); } };
+  return (
+    <Centered>
+      <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-xs text-center">
+        <div className="text-4xl mb-2">🏺</div>
+        <h1 className="font-bold text-gray-800 mb-1">Barro & Repasse</h1>
+        <p className="text-xs text-gray-400 mb-4">Área financeira — acesso restrito</p>
+        <input type="password" inputMode="numeric" value={pin} autoFocus
+          onChange={e => { setPin(e.target.value); setErr(false); }}
+          onKeyDown={e => e.key === 'Enter' && submit()}
+          placeholder="PIN"
+          className={`w-full text-center text-lg tracking-widest border rounded-lg px-3 py-2 mb-3 outline-none ${err ? 'border-red-400' : 'border-gray-300'}`} />
+        {err && <div className="text-xs text-red-500 mb-2">PIN incorreto</div>}
+        <button onClick={submit} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-semibold py-2 rounded-lg">Entrar</button>
+      </div>
+    </Centered>
+  );
+}
+function Centered({ children }) {
+  return <div className="min-h-screen flex items-center justify-center p-4">{children}</div>;
+}
+
+// ==================== ABA: LANÇAMENTO ====================
+function Lancamento({ turmas, mesData, setAluno, updateMes }) {
+  const [openTurma, setOpenTurma] = useState(null);
+  const turmasComAlunos = turmas.filter(t => (mesData.alunos[t.id] || []).length);
+
+  return (
+    <div className="space-y-3 fade-in">
+      {turmasComAlunos.map(t => {
+        const alunos = mesData.alunos[t.id];
+        const totalTurma = alunos.reduce((s, a) => s + totalAluno(a), 0);
+        const isOpen = openTurma === t.id;
+        return (
+          <div key={t.id} className="bg-white rounded-xl shadow-sm overflow-hidden">
+            <button onClick={() => setOpenTurma(isOpen ? null : t.id)}
+              className="w-full flex items-center justify-between p-3 text-left">
+              <div>
+                <span className="font-semibold text-gray-800">{turmaLabel(t)}</span>
+                <span className="text-xs text-gray-400 ml-2">{alunos.length} aluno(s)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-gray-600">R$ {fmt(totalTurma)}</span>
+                <span className={`text-gray-400 transition-transform ${isOpen ? 'rotate-90' : ''}`}>›</span>
+              </div>
+            </button>
+            {isOpen && (
+              <div className="border-t border-gray-100 divide-y divide-gray-100">
+                {alunos.map((a, idx) => (
+                  <AlunoRow key={t.id + a.alunoNome} a={a}
+                    onChange={patch => setAluno(t.id, idx, patch)} />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      <PessoalPanel mesData={mesData} updateMes={updateMes} />
+
+      <div className="bg-white rounded-xl shadow-sm p-3">
+        <label className="text-xs font-medium text-gray-500 block mb-1">Observação / override do mês</label>
+        <textarea value={mesData.obsGeral} rows={2}
+          onChange={e => updateMes(m => { m.obsGeral = e.target.value; return m; })}
+          placeholder="Ex.: promoção do ateliê neste mês, regra de split diferente…"
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none" />
+      </div>
+    </div>
+  );
+}
+
+function AlunoRow({ a, onChange }) {
+  const [open, setOpen] = useState(false);
+  const addExtra = () => onChange({ extras: [...(a.extras || []), { id: uid(), categoria: EXTRA_CATEGORIAS[0].key, valor: 0 }] });
+  const setExtra = (i, patch) => onChange({ extras: a.extras.map((e, j) => j === i ? { ...e, ...patch } : e) });
+  const delExtra = (i) => onChange({ extras: a.extras.filter((_, j) => j !== i) });
+
+  return (
+    <div className="p-3">
+      <div className="flex items-center justify-between gap-2">
+        <button onClick={() => setOpen(o => !o)} className="flex items-center gap-2 text-left flex-1 min-w-0">
+          <span className={`text-gray-300 transition-transform ${open ? 'rotate-90' : ''}`}>›</span>
+          <span className="font-medium text-gray-800 truncate">{a.alunoNome}</span>
+          {a.ferias && <span className="text-[10px] bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded-full shrink-0">🏖️ férias</span>}
+          {a._removido && <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full shrink-0">ex-roster</span>}
+        </button>
+        <span className="text-sm font-semibold text-gray-700 shrink-0">R$ {fmt(totalAluno(a))}</span>
+      </div>
+
+      {open && (
+        <div className="mt-3 space-y-2 pl-6">
+          <Field label="Mensalidade">
+            <NumInput value={a.mensalidade} prefix="R$" className="w-32" onChange={v => onChange({ mensalidade: v })} />
+          </Field>
+          <Field label={`Barro (${fmt(VALOR_BARRO_KG)}/Kg)`}>
+            <div className="flex items-center gap-2">
+              <NumInput value={a.barroKg} suffix="Kg" className="w-28" onChange={v => onChange({ barroKg: v })} />
+              <span className="text-sm text-gray-500">= R$ {fmt(barroReais(a))}</span>
+            </div>
+          </Field>
+          <Field label="% repasse Pedro">
+            <NumInput value={Math.round(n2(a.pctPedro) * 100)} suffix="%" className="w-24"
+              onChange={v => onChange({ pctPedro: n2(v) / 100 })} />
+          </Field>
+
+          {/* Extras */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-medium text-gray-500">Extras</span>
+              <button onClick={addExtra} className="text-xs text-amber-600 font-medium">+ adicionar</button>
+            </div>
+            {(a.extras || []).map((e, i) => (
+              <div key={e.id || i} className="flex items-center gap-2 mb-1.5">
+                <select value={e.categoria} onChange={ev => setExtra(i, { categoria: ev.target.value })}
+                  className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white flex-1">
+                  {EXTRA_CATEGORIAS.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+                </select>
+                <NumInput value={e.valor} prefix="R$" className="w-28" onChange={v => setExtra(i, { valor: v })} />
+                <button onClick={() => delExtra(i)} className="text-gray-300 hover:text-red-500 px-1">✕</button>
+              </div>
+            ))}
+          </div>
+
+          <Field label="Obs.">
+            <input value={a.obs || ''} onChange={e => onChange({ obs: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm outline-none" />
+          </Field>
+        </div>
+      )}
+    </div>
+  );
+}
+function Field({ label, children }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-xs text-gray-500">{label}</span>
+      <div>{children}</div>
+    </div>
+  );
+}
+
+function PessoalPanel({ mesData, updateMes }) {
+  const p = mesData.pessoal;
+  const set = (patch) => updateMes(m => { m.pessoal = { ...m.pessoal, ...patch }; return m; });
+  const total = pessoalTotal(mesData);
+  return (
+    <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-3">
+      <div className="font-semibold text-indigo-800 text-sm mb-2">🧑‍🎨 Meu consumo pessoal (Pedro)</div>
+      <p className="text-[11px] text-indigo-500 mb-3">Descontado do <b>meu repasse</b> — é meu custo de material, não do ateliê.</p>
+      <div className="space-y-2">
+        <Field label={`Barro pessoal (${fmt(VALOR_BARRO_KG)}/Kg)`}>
+          <div className="flex items-center gap-2">
+            <NumInput value={p.barroKg} suffix="Kg" className="w-24" onChange={v => set({ barroKg: v })} />
+            <span className="text-xs text-gray-500">R$ {fmt(n2(p.barroKg) * VALOR_BARRO_KG)}</span>
+          </div>
+        </Field>
+        <Field label="Queima pessoal">
+          <div className="flex items-center gap-2">
+            <NumInput value={p.queimaKg} suffix="Kg" className="w-20" onChange={v => set({ queimaKg: v })} />
+            <span className="text-xs text-gray-400">×</span>
+            <NumInput value={p.queimaValorKg} prefix="R$" suffix="/Kg" className="w-28" onChange={v => set({ queimaValorKg: v })} />
+          </div>
+        </Field>
+        <div className="flex justify-between pt-2 border-t border-indigo-100 text-sm">
+          <span className="text-indigo-700">Total a descontar</span>
+          <span className="font-bold text-indigo-800">R$ {fmt(total)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==================== ABA: MENSAGEM ====================
+function Mensagem({ turmas, mesData }) {
+  const turmasComAlunos = turmas.filter(t => (mesData.alunos[t.id] || []).length);
+  const [sel, setSel] = useState(turmasComAlunos[0]?.id || null);
+  const [copied, setCopied] = useState(false);
+  const alunos = sel ? mesData.alunos[sel] : [];
+  const texto = useMemo(() => alunos.length ? buildMensagem(alunos) : '', [alunos]);
+
+  const copy = () => {
+    navigator.clipboard.writeText(texto).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1800); });
+  };
+
+  return (
+    <div className="space-y-3 fade-in">
+      <select value={sel || ''} onChange={e => setSel(e.target.value)}
+        className="w-full border border-gray-300 rounded-lg px-3 py-2 bg-white text-sm font-medium">
+        {turmasComAlunos.map(t => <option key={t.id} value={t.id}>{turmaLabel(t)}</option>)}
+      </select>
+
+      {texto ? (
+        <>
+          <button onClick={copy}
+            className={`w-full py-3 rounded-xl font-semibold text-white ${copied ? 'bg-green-500' : 'bg-amber-500 hover:bg-amber-600'}`}>
+            {copied ? '✓ Copiado!' : '📋 Copiar mensagem'}
+          </button>
+          <pre className="bg-white rounded-xl shadow-sm p-4 text-sm text-gray-700 leading-relaxed">{texto}</pre>
+        </>
+      ) : <div className="text-gray-400 text-sm text-center py-8">Nenhuma turma com alunos neste mês.</div>}
+    </div>
+  );
+}
+
+// ==================== ABA: RAZÃO ====================
+function Razao({ turmas, mesData, mesAno }) {
+  const turmasComAlunos = turmas.filter(t => (mesData.alunos[t.id] || []).length);
+  const pessoal = pessoalTotal(mesData);
+
+  let gPedroBruto = 0, gAtelie = 0, gTotal = 0;
+  turmasComAlunos.forEach(t => (mesData.alunos[t.id] || []).forEach(a => {
+    gPedroBruto += repassePedroAluno(a); gAtelie += repasseAtelieAluno(a); gTotal += totalAluno(a);
+  }));
+  const pedroLiquido = gPedroBruto - pessoal;
+  const atelieComPessoal = gAtelie + pessoal; // custo pessoal migra p/ o ateliê
+
+  return (
+    <div className="space-y-4 fade-in">
+      {turmasComAlunos.map(t => {
+        const alunos = mesData.alunos[t.id];
+        return (
+          <div key={t.id} className="bg-white rounded-xl shadow-sm overflow-hidden">
+            <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 font-semibold text-sm text-gray-700">{turmaLabel(t)}</div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs whitespace-nowrap">
+                <thead className="text-gray-400">
+                  <tr className="border-b border-gray-100">
+                    <th className="text-left px-3 py-1.5 font-medium">Aluno</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Mensal.</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Barro</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Extras</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Total</th>
+                    <th className="text-right px-2 py-1.5 font-medium text-indigo-500">Pedro</th>
+                    <th className="text-right px-3 py-1.5 font-medium text-amber-600">Ateliê</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {alunos.map(a => (
+                    <tr key={a.alunoNome}>
+                      <td className="text-left px-3 py-1.5 text-gray-700">{a.alunoNome}{a.ferias ? ' 🏖️' : ''}</td>
+                      <td className="text-right px-2 py-1.5">{fmt(a.mensalidade)}</td>
+                      <td className="text-right px-2 py-1.5">{fmt(barroReais(a))}</td>
+                      <td className="text-right px-2 py-1.5">{fmt(extrasTotal(a))}</td>
+                      <td className="text-right px-2 py-1.5 font-medium">{fmt(totalAluno(a))}</td>
+                      <td className="text-right px-2 py-1.5 text-indigo-600">{fmt(repassePedroAluno(a))}</td>
+                      <td className="text-right px-3 py-1.5 text-amber-700">{fmt(repasseAtelieAluno(a))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Totais do mês */}
+      <div className="bg-white rounded-xl shadow-sm p-4 space-y-2 text-sm">
+        <div className="font-semibold text-gray-800 mb-1">Fechamento — {mesLabel(mesAno)}</div>
+        <Row l="Total arrecadado" v={gTotal} />
+        <Row l="Repasse Pedro (bruto)" v={gPedroBruto} c="text-indigo-600" />
+        <Row l="(−) Meu consumo pessoal" v={-pessoal} c="text-indigo-400" />
+        <div className="border-t border-gray-100 my-1" />
+        <Row l="Repasse Pedro (líquido)" v={pedroLiquido} c="text-indigo-700 font-bold" big />
+        <Row l="Repasse Ateliê (c/ meu consumo)" v={atelieComPessoal} c="text-amber-700 font-bold" big />
+      </div>
+    </div>
+  );
+}
+function Row({ l, v, c = 'text-gray-700', big }) {
+  return (
+    <div className="flex justify-between">
+      <span className="text-gray-500">{l}</span>
+      <span className={`${c} ${big ? 'text-base' : ''}`}>R$ {fmt(v)}</span>
+    </div>
+  );
+}
+
+// ==================== ABA: ESTATÍSTICAS ====================
+function Stats({ turmas, barro, state, mesAno, mesData }) {
+  // Ganho + ocupação por turma (mês corrente)
+  const porTurma = turmas.map(t => {
+    const alunos = mesData.alunos[t.id] || [];
+    const ganho = alunos.reduce((s, a) => s + totalAluno(a), 0);
+    const mensalArrecadada = alunos.reduce((s, a) => s + n2(a.mensalidade), 0);
+    const potencial = CAPACIDADE_TURMA * MENSALIDADE_PADRAO;
+    return { t, ganho, ocupacao: potencial ? mensalArrecadada / potencial : 0, alunos: alunos.length };
+  }).filter(x => x.alunos > 0);
+
+  const pessoal = pessoalTotal(mesData);
+  let pedroBruto = 0, atelie = 0;
+  porTurma.forEach(({ t }) => (mesData.alunos[t.id] || []).forEach(a => {
+    pedroBruto += repassePedroAluno(a); atelie += repasseAtelieAluno(a);
+  }));
+  const pedroLiquido = pedroBruto - pessoal;
+
+  // Comparação entre meses salvos
+  const historico = useMemo(() => {
+    return Object.keys(barro.lancamentos || {}).sort().map(m => {
+      const lc = barro.lancamentos[m];
+      const alunos = Object.values(lc.alunos || {}).flat();
+      let pb = 0, at = 0;
+      alunos.forEach(a => { pb += repassePedroAluno(a); at += repasseAtelieAluno(a); });
+      const pes = pessoalTotal(lc);
+      return { m, pedro: pb - pes, atelie: at + pes };
+    });
+  }, [barro]);
+  const maxHist = Math.max(1, ...historico.map(h => h.pedro + h.atelie));
+
+  return (
+    <div className="space-y-4 fade-in">
+      {/* Salário do mês */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4">
+          <div className="text-xs text-indigo-500 mb-1">Meu salário líquido</div>
+          <div className="text-2xl font-bold text-indigo-700">R$ {fmt(pedroLiquido)}</div>
+        </div>
+        <div className="bg-amber-50 border border-amber-100 rounded-xl p-4">
+          <div className="text-xs text-amber-600 mb-1">Total do Ateliê</div>
+          <div className="text-2xl font-bold text-amber-700">R$ {fmt(atelie + pessoal)}</div>
+        </div>
+      </div>
+
+      {/* Por turma */}
+      <div className="bg-white rounded-xl shadow-sm p-4">
+        <div className="font-semibold text-gray-800 text-sm mb-3">Ganho e ocupação por turma</div>
+        <div className="space-y-3">
+          {porTurma.map(({ t, ganho, ocupacao, alunos }) => (
+            <div key={t.id}>
+              <div className="flex justify-between text-sm mb-1">
+                <span className="text-gray-700">{turmaLabel(t)} <span className="text-gray-400 text-xs">({alunos})</span></span>
+                <span className="font-medium text-gray-700">R$ {fmt(ganho)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-amber-400" style={{ width: `${Math.min(100, ocupacao * 100)}%` }} />
+                </div>
+                <span className="text-xs text-gray-400 w-10 text-right">{Math.round(ocupacao * 100)}%</span>
+              </div>
+            </div>
+          ))}
+          {!porTurma.length && <div className="text-gray-400 text-sm">Nada lançado neste mês.</div>}
+        </div>
+        <div className="text-[11px] text-gray-400 mt-3">Ocupação = mensalidade arrecadada ÷ ({CAPACIDADE_TURMA} × R$ {fmt(MENSALIDADE_PADRAO)}).</div>
+      </div>
+
+      {/* Evolução */}
+      {historico.length > 1 && (
+        <div className="bg-white rounded-xl shadow-sm p-4">
+          <div className="font-semibold text-gray-800 text-sm mb-3">Evolução (meses salvos)</div>
+          <div className="space-y-2">
+            {historico.map(h => (
+              <div key={h.m}>
+                <div className="flex justify-between text-xs mb-0.5">
+                  <span className={`${h.m === mesAno ? 'font-bold text-gray-800' : 'text-gray-500'}`}>{mesLabel(h.m)}</span>
+                  <span className="text-gray-400">
+                    <span className="text-indigo-600">P {fmt(h.pedro)}</span> · <span className="text-amber-600">A {fmt(h.atelie)}</span>
+                  </span>
+                </div>
+                <div className="flex h-2.5 rounded-full overflow-hidden bg-gray-100">
+                  <div className="bg-indigo-400" style={{ width: `${(h.pedro / maxHist) * 100}%` }} />
+                  <div className="bg-amber-400" style={{ width: `${(h.atelie / maxHist) * 100}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
