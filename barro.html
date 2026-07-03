@@ -779,7 +779,7 @@ function Stats({ turmas, barro, state, mesAno, mesData, prof }) {
   // Ganho + ocupação por turma (mês corrente)
   const porTurma = turmas.map(t => {
     const alunos = mesData.alunos[t.id] || [];
-    const ganho = alunos.reduce((s, a) => s + totalAluno(a), 0);
+    const ganho = alunos.reduce((s, a) => s + aulaAluno(a), 0); // só o ganho de aula do professor
     const mensalArrecadada = alunos.reduce((s, a) => s + n2(a.mensalidade), 0);
     const potencial = CAPACIDADE_TURMA * MENSALIDADE_PADRAO;
     return { t, ganho, ocupacao: potencial ? mensalArrecadada / potencial : 0, alunos: alunos.length };
