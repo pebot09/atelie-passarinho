@@ -175,6 +175,48 @@ function pessoalTotal(mes) {
   return n2(p.barroKg) * VALOR_BARRO_KG + n2(p.queimaKg) * n2(p.queimaValorKg);
 }
 
+// ==================== REPASSE POR PROFESSOR ====================
+const PROF_KEY = { 'Pedro': 'pedro', 'Laura': 'laura', 'Carol': 'carol', 'Gláucio': 'glaucio' };
+// Fração da mensalidade que é ganho de aula do professor: 50% normal, 25% em turma compartilhada
+function fracAula(turmaId) { return TURMAS_COMPARTILHADAS.includes(turmaId) ? 0.25 : 0.5; }
+// Ganho de aula do professor logado para este aluno
+function aulaAluno(a) { return n2(a.mensalidade) * fracAula(a.turmaId); }
+// "Não é meu" — vai p/ ateliê (e co-professor), na visão do professor logado
+function atelieViewAluno(a) { return totalAluno(a) - aulaAluno(a); }
+
+// Fechamento do mês para um professor, sobre suas turmas
+function fechamentoProf(prof, turmasVis, mesData) {
+  const pk = PROF_KEY[prof] || '';
+  let arrecadado = 0, ganho = 0, aPagar = 0, aReceber = 0, deveCoprof = 0;
+  turmasVis.forEach(t => {
+    const rec = TURMA_RECEBEDOR[t.id];
+    const shared = TURMAS_COMPARTILHADAS.includes(t.id);
+    (mesData.alunos[t.id] || []).forEach(a => {
+      const aula = aulaAluno(a);
+      arrecadado += totalAluno(a);
+      ganho += aula;
+      if (rec === pk) {
+        // professor logado RECEBEU o dinheiro na conta
+        if (pk === 'carol') deveCoprof += shared ? n2(a.mensalidade) * 0.25 : 0; // Carol deve à co-profa (Laura)
+        else aPagar += totalAluno(a) - aula;                                     // deve repassar ao ateliê (Carol)
+      } else {
+        aReceber += aula; // Carol recebeu; o ateliê deve o ganho de aula ao professor
+      }
+    });
+  });
+  const pessoal = prof === 'Pedro' ? pessoalTotal(mesData) : 0;
+  const netRepasse = aPagar - aReceber - pessoal; // >0: paga à Carol; <0: recebe da Carol
+  return { arrecadado, ganho, aPagar, aReceber, deveCoprof, pessoal, netRepasse };
+}
+// Ganho de aula de um professor num mês salvo (para evolução)
+function ganhoMesProf(prof, lc) {
+  const permit = new Set(PROFESSOR_TURMAS[prof] || []);
+  return Object.entries((lc && lc.alunos) || {})
+    .filter(([tid]) => permit.has(tid))
+    .flatMap(([, arr]) => arr)
+    .reduce((s, a) => s + aulaAluno(a), 0);
+}
+
 // ==================== MONTAGEM DO MÊS ====================
 // Junta o roster atual das turmas (app 1) com o que já foi salvo (app 2),
 // preservando o histórico. Aluno de férias no mês → meia mensalidade (default).
@@ -397,8 +439,8 @@ function App() {
 
       {tab === 'lancamento' && <Lancamento turmas={turmasVisiveis} mesData={mesData} setAluno={setAluno} updateMes={updateMes} prof={prof} />}
       {tab === 'mensagem'   && <Mensagem turmas={turmasVisiveis} mesData={mesData} />}
-      {tab === 'razao'      && <Razao turmas={turmasVisiveis} mesData={mesData} mesAno={mesAno} />}
-      {tab === 'stats'      && <Stats turmas={turmasVisiveis} barro={barro} state={state} mesAno={mesAno} mesData={mesData} />}
+      {tab === 'razao'      && <Razao turmas={turmasVisiveis} mesData={mesData} mesAno={mesAno} prof={prof} />}
+      {tab === 'stats'      && <Stats turmas={turmasVisiveis} barro={barro} state={state} mesAno={mesAno} mesData={mesData} prof={prof} />}
 
       {/* Barra de salvar */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-3">
@@ -646,24 +688,21 @@ function Mensagem({ turmas, mesData }) {
 }
 
 // ==================== ABA: RAZÃO ====================
-function Razao({ turmas, mesData, mesAno }) {
+function Razao({ turmas, mesData, mesAno, prof }) {
   const turmasComAlunos = turmas.filter(t => (mesData.alunos[t.id] || []).length);
-  const pessoal = pessoalTotal(mesData);
-
-  let gPedroBruto = 0, gAtelie = 0, gTotal = 0;
-  turmasComAlunos.forEach(t => (mesData.alunos[t.id] || []).forEach(a => {
-    gPedroBruto += repassePedroAluno(a); gAtelie += repasseAtelieAluno(a); gTotal += totalAluno(a);
-  }));
-  const pedroLiquido = gPedroBruto - pessoal;
-  const atelieComPessoal = gAtelie + pessoal; // custo pessoal migra p/ o ateliê
+  const f = fechamentoProf(prof, turmasComAlunos, mesData);
 
   return (
     <div className="space-y-4 fade-in">
       {turmasComAlunos.map(t => {
         const alunos = mesData.alunos[t.id];
+        const shared = TURMAS_COMPARTILHADAS.includes(t.id);
         return (
           <div key={t.id} className="bg-white rounded-xl shadow-sm overflow-hidden">
-            <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 font-semibold text-sm text-gray-700">{turmaLabel(t)}</div>
+            <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 font-semibold text-sm text-gray-700">
+              {turmaLabel(t)}
+              {shared && <span className="ml-2 text-[10px] font-normal text-teal-600">compartilhada (aula 25%)</span>}
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs whitespace-nowrap">
                 <thead className="text-gray-400">
@@ -673,7 +712,7 @@ function Razao({ turmas, mesData, mesAno }) {
                     <th className="text-right px-2 py-1.5 font-medium">Barro</th>
                     <th className="text-right px-2 py-1.5 font-medium">Extras</th>
                     <th className="text-right px-2 py-1.5 font-medium">Total</th>
-                    <th className="text-right px-2 py-1.5 font-medium text-indigo-500">Pedro</th>
+                    <th className="text-right px-2 py-1.5 font-medium text-indigo-500">Aula</th>
                     <th className="text-right px-3 py-1.5 font-medium text-amber-600">Ateliê</th>
                   </tr>
                 </thead>
@@ -685,8 +724,8 @@ function Razao({ turmas, mesData, mesAno }) {
                       <td className="text-right px-2 py-1.5">{fmt(barroReais(a))}</td>
                       <td className="text-right px-2 py-1.5">{fmt(extrasTotal(a))}</td>
                       <td className="text-right px-2 py-1.5 font-medium">{fmt(totalAluno(a))}</td>
-                      <td className="text-right px-2 py-1.5 text-indigo-600">{fmt(repassePedroAluno(a))}</td>
-                      <td className="text-right px-3 py-1.5 text-amber-700">{fmt(repasseAtelieAluno(a))}</td>
+                      <td className="text-right px-2 py-1.5 text-indigo-600">{fmt(aulaAluno(a))}</td>
+                      <td className="text-right px-3 py-1.5 text-amber-700">{fmt(atelieViewAluno(a))}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -696,15 +735,31 @@ function Razao({ turmas, mesData, mesAno }) {
         );
       })}
 
-      {/* Totais do mês */}
+      {/* Fechamento do professor */}
       <div className="bg-white rounded-xl shadow-sm p-4 space-y-2 text-sm">
-        <div className="font-semibold text-gray-800 mb-1">Fechamento — {mesLabel(mesAno)}</div>
-        <Row l="Total arrecadado" v={gTotal} />
-        <Row l="Repasse Pedro (bruto)" v={gPedroBruto} c="text-indigo-600" />
-        <Row l="(−) Meu consumo pessoal" v={-pessoal} c="text-indigo-400" />
-        <div className="border-t border-gray-100 my-1" />
-        <Row l="Repasse Pedro (líquido)" v={pedroLiquido} c="text-indigo-700 font-bold" big />
-        <Row l="Repasse Ateliê (c/ meu consumo)" v={atelieComPessoal} c="text-amber-700 font-bold" big />
+        <div className="font-semibold text-gray-800 mb-1">Fechamento {prof} — {mesLabel(mesAno)}</div>
+        <Row l="Total arrecadado (minhas turmas)" v={f.arrecadado} />
+        <Row l="Meu ganho de aula" v={f.ganho} c="text-indigo-600" />
+
+        {prof === 'Carol' ? (
+          <>
+            <div className="border-t border-gray-100 my-1" />
+            <Row l="Você deve à Laura (compartilhadas)" v={f.deveCoprof} c="text-teal-700 font-bold" big />
+            <p className="text-[11px] text-gray-400">Você é a dona do ateliê — o restante do que entrou na sua conta fica com você.</p>
+          </>
+        ) : (
+          <>
+            {f.aPagar > 0 && <Row l="Repasse bruto ao ateliê (Carol)" v={f.aPagar} c="text-amber-600" />}
+            {prof === 'Laura' && f.aReceber > 0 &&
+              <Row l="(−) Seu ganho nas compartilhadas (Carol já tem)" v={-f.aReceber} c="text-teal-500" />}
+            {prof === 'Pedro' && f.pessoal > 0 &&
+              <Row l="(−) Seu consumo pessoal" v={-f.pessoal} c="text-indigo-400" />}
+            <div className="border-t border-gray-100 my-1" />
+            {f.netRepasse >= 0
+              ? <Row l="Você repassa à Carol (ateliê)" v={f.netRepasse} c="text-amber-700 font-bold" big />
+              : <Row l="Você recebe da Carol (ateliê)" v={-f.netRepasse} c="text-green-700 font-bold" big />}
+          </>
+        )}
       </div>
     </div>
   );
@@ -719,7 +774,7 @@ function Row({ l, v, c = 'text-gray-700', big }) {
 }
 
 // ==================== ABA: ESTATÍSTICAS ====================
-function Stats({ turmas, barro, state, mesAno, mesData }) {
+function Stats({ turmas, barro, state, mesAno, mesData, prof }) {
   // Ganho + ocupação por turma (mês corrente)
   const porTurma = turmas.map(t => {
     const alunos = mesData.alunos[t.id] || [];
@@ -729,38 +784,39 @@ function Stats({ turmas, barro, state, mesAno, mesData }) {
     return { t, ganho, ocupacao: potencial ? mensalArrecadada / potencial : 0, alunos: alunos.length };
   }).filter(x => x.alunos > 0);
 
-  const pessoal = pessoalTotal(mesData);
-  let pedroBruto = 0, atelie = 0;
-  porTurma.forEach(({ t }) => (mesData.alunos[t.id] || []).forEach(a => {
-    pedroBruto += repassePedroAluno(a); atelie += repasseAtelieAluno(a);
-  }));
-  const pedroLiquido = pedroBruto - pessoal;
+  const f = fechamentoProf(prof, porTurma.map(x => x.t), mesData);
 
-  // Comparação entre meses salvos
+  // Evolução: meu ganho de aula por mês salvo
   const historico = useMemo(() => {
-    return Object.keys(barro.lancamentos || {}).sort().map(m => {
-      const lc = barro.lancamentos[m];
-      const alunos = Object.values(lc.alunos || {}).flat();
-      let pb = 0, at = 0;
-      alunos.forEach(a => { pb += repassePedroAluno(a); at += repasseAtelieAluno(a); });
-      const pes = pessoalTotal(lc);
-      return { m, pedro: pb - pes, atelie: at + pes };
-    });
-  }, [barro]);
-  const maxHist = Math.max(1, ...historico.map(h => h.pedro + h.atelie));
+    return Object.keys(barro.lancamentos || {}).sort()
+      .map(m => ({ m, ganho: ganhoMesProf(prof, barro.lancamentos[m]) }));
+  }, [barro, prof]);
+  const maxHist = Math.max(1, ...historico.map(h => h.ganho));
 
   return (
     <div className="space-y-4 fade-in">
-      {/* Salário do mês */}
+      {/* Resumo do mês */}
       <div className="grid grid-cols-2 gap-3">
         <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4">
-          <div className="text-xs text-indigo-500 mb-1">Meu salário líquido</div>
-          <div className="text-2xl font-bold text-indigo-700">R$ {fmt(pedroLiquido)}</div>
+          <div className="text-xs text-indigo-500 mb-1">Meu ganho de aula</div>
+          <div className="text-2xl font-bold text-indigo-700">R$ {fmt(f.ganho)}</div>
         </div>
-        <div className="bg-amber-50 border border-amber-100 rounded-xl p-4">
-          <div className="text-xs text-amber-600 mb-1">Total do Ateliê</div>
-          <div className="text-2xl font-bold text-amber-700">R$ {fmt(atelie + pessoal)}</div>
-        </div>
+        {prof === 'Carol' ? (
+          <div className="bg-teal-50 border border-teal-100 rounded-xl p-4">
+            <div className="text-xs text-teal-600 mb-1">Devo à Laura (compart.)</div>
+            <div className="text-2xl font-bold text-teal-700">R$ {fmt(f.deveCoprof)}</div>
+          </div>
+        ) : f.netRepasse >= 0 ? (
+          <div className="bg-amber-50 border border-amber-100 rounded-xl p-4">
+            <div className="text-xs text-amber-600 mb-1">Repasso à Carol</div>
+            <div className="text-2xl font-bold text-amber-700">R$ {fmt(f.netRepasse)}</div>
+          </div>
+        ) : (
+          <div className="bg-green-50 border border-green-100 rounded-xl p-4">
+            <div className="text-xs text-green-600 mb-1">Recebo da Carol</div>
+            <div className="text-2xl font-bold text-green-700">R$ {fmt(-f.netRepasse)}</div>
+          </div>
+        )}
       </div>
 
       {/* Por turma */}
@@ -786,22 +842,19 @@ function Stats({ turmas, barro, state, mesAno, mesData }) {
         <div className="text-[11px] text-gray-400 mt-3">Ocupação = mensalidade arrecadada ÷ ({CAPACIDADE_TURMA} × R$ {fmt(MENSALIDADE_PADRAO)}).</div>
       </div>
 
-      {/* Evolução */}
+      {/* Evolução do meu ganho */}
       {historico.length > 1 && (
         <div className="bg-white rounded-xl shadow-sm p-4">
-          <div className="font-semibold text-gray-800 text-sm mb-3">Evolução (meses salvos)</div>
+          <div className="font-semibold text-gray-800 text-sm mb-3">Evolução do meu ganho (meses salvos)</div>
           <div className="space-y-2">
             {historico.map(h => (
               <div key={h.m}>
                 <div className="flex justify-between text-xs mb-0.5">
                   <span className={`${h.m === mesAno ? 'font-bold text-gray-800' : 'text-gray-500'}`}>{mesLabel(h.m)}</span>
-                  <span className="text-gray-400">
-                    <span className="text-indigo-600">P {fmt(h.pedro)}</span> · <span className="text-amber-600">A {fmt(h.atelie)}</span>
-                  </span>
+                  <span className="text-indigo-600">R$ {fmt(h.ganho)}</span>
                 </div>
-                <div className="flex h-2.5 rounded-full overflow-hidden bg-gray-100">
-                  <div className="bg-indigo-400" style={{ width: `${(h.pedro / maxHist) * 100}%` }} />
-                  <div className="bg-amber-400" style={{ width: `${(h.atelie / maxHist) * 100}%` }} />
+                <div className="h-2.5 rounded-full overflow-hidden bg-gray-100">
+                  <div className="h-full bg-indigo-400" style={{ width: `${(h.ganho / maxHist) * 100}%` }} />
                 </div>
               </div>
             ))}
