@@ -74,14 +74,46 @@ const EXTRA_CATEGORIAS = [               // pctPedro configurável por categoria
 const CAT_LABEL = Object.fromEntries(EXTRA_CATEGORIAS.map(c => [c.key, c.label]));
 const CAT_PCT   = Object.fromEntries(EXTRA_CATEGORIAS.map(c => [c.key, c.pctPedro]));
 
-// Dados de transferência (mensagem WhatsApp)
-const DADOS_TRANSFERENCIA =
-`Pedro Maciel Botafogo Muniz
+// ==================== PROFESSORES / TURMAS / RECEBEDORES ====================
+const PROFESSORES_LOGIN = ['Pedro', 'Gláucio', 'Laura', 'Carol'];
+
+// Turmas co-lecionadas por Carol + Laura (100% do pagamento vai p/ Carol)
+const TURMAS_COMPARTILHADAS = ['seg-09h', 'seg-11h', 'sab-09h', 'sab-11h'];
+
+// Turmas que cada professor VÊ ao logar
+const PROFESSOR_TURMAS = {
+  'Pedro':   ['seg-17h', 'seg-19h', 'qui-09h', 'qui-11h'],
+  'Gláucio': ['ter-09h', 'ter-11h', 'qua-08h', 'qua-10h'],
+  'Laura':   ['ter-17h', 'ter-19h', 'qua-17h', 'qua-19h', 'qui-17h', 'qui-19h', ...TURMAS_COMPARTILHADAS],
+  'Carol':   [...TURMAS_COMPARTILHADAS],
+};
+
+// Recebedor do pagamento por turma (define os dados bancários na mensagem)
+const TURMA_RECEBEDOR = (() => {
+  const m = {};
+  PROFESSOR_TURMAS['Pedro'].forEach(t => m[t] = 'pedro');
+  PROFESSOR_TURMAS['Gláucio'].forEach(t => m[t] = 'carol'); // turmas do Gláucio → Carol recebe
+  ['ter-17h', 'ter-19h', 'qua-17h', 'qua-19h', 'qui-17h', 'qui-19h'].forEach(t => m[t] = 'laura');
+  TURMAS_COMPARTILHADAS.forEach(t => m[t] = 'carol'); // compartilhadas → Carol recebe 100%
+  return m;
+})();
+
+// Dados bancários por recebedor (mensagem WhatsApp). laura: null = pendente
+const DADOS_BANCARIOS = {
+  pedro: `Pedro Maciel Botafogo Muniz
 CPF 15432322722
 Banco 0260 Nubank
 Agencia 0001
 Conta 85624581-0
-PIX: CPF`;
+PIX: CPF`,
+  carol: `Carolina M Q
+Itaú
+Agência 0532
+Conta 37644-9
+PIX: 27789229000103 (CNPJ)`,
+  laura: null,
+};
+const RECEBEDOR_PENDENTE = '⚠️ [FALTA CADASTRAR OS DADOS BANCÁRIOS DA LAURA]';
 
 // ==================== HELPERS ====================
 const DIAS_ORDER = ['segunda','terça','quarta','quinta','sexta','sábado'];
@@ -192,7 +224,7 @@ function defaultAluno(turmaId, nome, isFerias) {
 }
 
 // ==================== MENSAGEM WHATSAPP ====================
-function buildMensagem(alunosTurma) {
+function buildMensagem(alunosTurma, turmaId) {
   const linhas = alunosTurma
     .filter(a => totalAluno(a) > 0)
     .map(a => {
@@ -202,6 +234,8 @@ function buildMensagem(alunosTurma) {
       });
       return `${a.alunoNome}: ${partes.join(' + ')} = ${fmt(totalAluno(a))}`;
     });
+  const recebedor = TURMA_RECEBEDOR[turmaId] || 'pedro';
+  const dados = DADOS_BANCARIOS[recebedor] || RECEBEDOR_PENDENTE;
   return `Olá, turma!
 Tudo bem?
 
@@ -213,7 +247,7 @@ Valor do barro/kg: ${fmt(VALOR_BARRO_KG)}
 
 Dados para transferência:
 
-${DADOS_TRANSFERENCIA}
+${dados}
 
 Lembrando que o pagamento deverá ser feito até dia 7.
 
@@ -243,6 +277,7 @@ function NumInput({ value, onChange, className = '', prefix, suffix, step = 'any
 // ==================== APP ====================
 function App() {
   const [authed, setAuthed] = useState(sessionStorage.getItem('barro_auth') === '1');
+  const [prof, setProf] = useState(sessionStorage.getItem('barro_prof') || null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState(null);
 
@@ -267,6 +302,13 @@ function App() {
   }, [authed]);
 
   const turmas = useMemo(() => state ? sortTurmas(state.turmas) : [], [state]);
+
+  // Turmas visíveis para o professor logado
+  const turmasVisiveis = useMemo(() => {
+    if (!prof) return turmas;
+    const permitidas = PROFESSOR_TURMAS[prof] || [];
+    return turmas.filter(t => permitidas.includes(t.id));
+  }, [turmas, prof]);
 
   // Lançamento do mês atualmente selecionado (materializado)
   const lanc = barro.lancamentos[mesAno];
@@ -319,8 +361,11 @@ function App() {
 
   // ---------------- AUTH GATE ----------------
   if (!authed) return <AuthGate onOk={() => { sessionStorage.setItem('barro_auth', '1'); setAuthed(true); }} />;
+  if (!prof) return <ProfPicker onPick={p => { sessionStorage.setItem('barro_prof', p); setProf(p); }} />;
   if (loading) return <Centered><div className="text-gray-500">Carregando dados…</div></Centered>;
   if (erro && !state) return <Centered><div className="text-red-600 max-w-md text-center">{erro}</div></Centered>;
+
+  const trocarProf = () => { sessionStorage.removeItem('barro_prof'); setProf(null); };
 
   return (
     <div className="max-w-3xl mx-auto p-3 sm:p-4 pb-28">
@@ -328,7 +373,9 @@ function App() {
       <div className="flex items-center justify-between mb-3">
         <div>
           <h1 className="text-xl font-bold text-gray-800">🏺 Barro & Repasse</h1>
-          <a href="index.html" className="text-xs text-amber-700 hover:underline">← app de faltas</a>
+          <button onClick={trocarProf} className="text-xs text-amber-700 hover:underline">
+            {prof} <span className="text-gray-400">· trocar</span>
+          </button>
         </div>
         <select value={mesAno} onChange={e => setMesAno(e.target.value)}
                 className="border border-gray-300 rounded-lg px-3 py-2 bg-white text-sm font-medium">
@@ -348,10 +395,10 @@ function App() {
 
       {erro && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">{erro}</div>}
 
-      {tab === 'lancamento' && <Lancamento turmas={turmas} mesData={mesData} setAluno={setAluno} updateMes={updateMes} />}
-      {tab === 'mensagem'   && <Mensagem turmas={turmas} mesData={mesData} />}
-      {tab === 'razao'      && <Razao turmas={turmas} mesData={mesData} mesAno={mesAno} />}
-      {tab === 'stats'      && <Stats turmas={turmas} barro={barro} state={state} mesAno={mesAno} mesData={mesData} />}
+      {tab === 'lancamento' && <Lancamento turmas={turmasVisiveis} mesData={mesData} setAluno={setAluno} updateMes={updateMes} prof={prof} />}
+      {tab === 'mensagem'   && <Mensagem turmas={turmasVisiveis} mesData={mesData} />}
+      {tab === 'razao'      && <Razao turmas={turmasVisiveis} mesData={mesData} mesAno={mesAno} />}
+      {tab === 'stats'      && <Stats turmas={turmasVisiveis} barro={barro} state={state} mesAno={mesAno} mesData={mesData} />}
 
       {/* Barra de salvar */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-3">
@@ -395,8 +442,29 @@ function Centered({ children }) {
   return <div className="min-h-screen flex items-center justify-center p-4">{children}</div>;
 }
 
+// ==================== SELETOR DE PROFESSOR ====================
+function ProfPicker({ onPick }) {
+  return (
+    <Centered>
+      <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-xs text-center">
+        <div className="text-4xl mb-2">👋</div>
+        <h1 className="font-bold text-gray-800 mb-1">Quem é você?</h1>
+        <p className="text-xs text-gray-400 mb-5">Você verá apenas as suas turmas</p>
+        <div className="space-y-2">
+          {PROFESSORES_LOGIN.map(p => (
+            <button key={p} onClick={() => onPick(p)}
+              className="w-full bg-gray-50 hover:bg-amber-500 hover:text-white text-gray-800 font-semibold py-3 rounded-xl transition-colors">
+              {p}
+            </button>
+          ))}
+        </div>
+      </div>
+    </Centered>
+  );
+}
+
 // ==================== ABA: LANÇAMENTO ====================
-function Lancamento({ turmas, mesData, setAluno, updateMes }) {
+function Lancamento({ turmas, mesData, setAluno, updateMes, prof }) {
   const [openTurma, setOpenTurma] = useState(null);
   const turmasComAlunos = turmas.filter(t => (mesData.alunos[t.id] || []).length);
 
@@ -431,7 +499,7 @@ function Lancamento({ turmas, mesData, setAluno, updateMes }) {
         );
       })}
 
-      <PessoalPanel mesData={mesData} updateMes={updateMes} />
+      {prof === 'Pedro' && <PessoalPanel mesData={mesData} updateMes={updateMes} />}
 
       <div className="bg-white rounded-xl shadow-sm p-3">
         <label className="text-xs font-medium text-gray-500 block mb-1">Observação / override do mês</label>
@@ -551,7 +619,7 @@ function Mensagem({ turmas, mesData }) {
   const [sel, setSel] = useState(turmasComAlunos[0]?.id || null);
   const [copied, setCopied] = useState(false);
   const alunos = sel ? mesData.alunos[sel] : [];
-  const texto = useMemo(() => alunos.length ? buildMensagem(alunos) : '', [alunos]);
+  const texto = useMemo(() => alunos.length ? buildMensagem(alunos, sel) : '', [alunos, sel]);
 
   const copy = () => {
     navigator.clipboard.writeText(texto).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1800); });
