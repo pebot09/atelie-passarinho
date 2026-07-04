@@ -71,7 +71,6 @@ const EXTRA_CATEGORIAS = [               // pctPedro configurável por categoria
   { key: 'queima_extra',    label: 'Queima extra',    pctPedro: 0 },
   { key: 'terceira_queima', label: 'Terceira queima', pctPedro: 0 },
   { key: 'peca_carol',      label: 'Peça Carol',      pctPedro: 0 },
-  { key: 'reposicao',       label: 'Reposição',       pctPedro: 0 },
 ];
 const CAT_LABEL = Object.fromEntries(EXTRA_CATEGORIAS.map(c => [c.key, c.label]));
 const CAT_PCT   = Object.fromEntries(EXTRA_CATEGORIAS.map(c => [c.key, c.pctPedro]));
@@ -272,10 +271,22 @@ function buildMesAlunos(turmas, ausencias, saved, mesAno) {
     // alunos que foram lançados no passado mas já saíram do roster atual: preservar
     (saved || []).filter(a => a.turmaId === t.id && !seen.has(`${t.id}|${a.alunoNome}`))
       .forEach(a => list.push({ ...defaultAluno(t.id, a.alunoNome, false), ...a, _removido: true }));
+    list.forEach(migraReposicaoParaBarro);
     list.sort((a, b) => a.alunoNome.localeCompare(b.alunoNome, 'pt-BR', { sensitivity: 'base' }));
     if (list.length) result[t.id] = list;
   });
   return result;
+}
+// Migração: extras antigos de "reposição" viram barro por dia (reposição conta como barro)
+function migraReposicaoParaBarro(al) {
+  if (!al.extras || !al.extras.some(e => e.categoria === 'reposicao')) return;
+  const dias = { ...(al.barroDias || {}) };
+  al.extras.filter(e => e.categoria === 'reposicao').forEach(e => {
+    const dia = e.dia || 'repo';
+    dias[dia] = n2(dias[dia]) + n2(e.valor) / VALOR_BARRO_KG;
+  });
+  al.barroDias = dias;
+  al.extras = al.extras.filter(e => e.categoria !== 'reposicao');
 }
 function defaultAluno(turmaId, nome, isFerias) {
   return {
@@ -416,30 +427,17 @@ function App() {
     updateMes(m => {
       Object.keys(draft).forEach(key => {
         const d = draft[key];
-        if (key.startsWith('repo|')) {
-          // Reposição: barro entra como extra "Reposição" na conta do aluno (turma de origem)
-          const [, homeTurmaId, nome] = key.split('|');
-          const arr = m.alunos[homeTurmaId];
-          const al = arr && arr.find(a => a.alunoNome === nome);
-          if (!al) return;
-          al.extras = al.extras || [];
-          const valor = n2(d.kg) * VALOR_BARRO_KG;
-          const ex = al.extras.find(e => e.categoria === 'reposicao' && e.dia === date);
-          if (valor > 0) {
-            if (ex) ex.valor = valor;
-            else al.extras.push({ id: uid(), categoria: 'reposicao', valor, dia: date });
-          } else if (ex) {
-            al.extras = al.extras.filter(e => e !== ex);
-          }
-        } else {
-          const [turmaId, nome] = key.split('|');
-          const arr = m.alunos[turmaId];
-          const al = arr && arr.find(a => a.alunoNome === nome);
-          if (!al) return;
-          al.barroDias = al.barroDias || {};
-          if (n2(d.kg) > 0) al.barroDias[date] = n2(d.kg);
-          else delete al.barroDias[date];
-          // extras novos adicionados no rápido (append)
+        // Reposição grava barro na turma de origem; regular na própria turma. Ambos = barro por dia.
+        const isRepo = key.startsWith('repo|');
+        const [turmaId, nome] = isRepo ? [key.split('|')[1], key.split('|')[2]] : key.split('|');
+        const arr = m.alunos[turmaId];
+        const al = arr && arr.find(a => a.alunoNome === nome);
+        if (!al) return;
+        al.barroDias = al.barroDias || {};
+        if (n2(d.kg) > 0) al.barroDias[date] = n2(d.kg);
+        else delete al.barroDias[date];
+        // extras novos adicionados no rápido (append) — só p/ aluno regular
+        if (!isRepo) {
           (d.extras || []).filter(e => n2(e.valor) > 0).forEach(e =>
             al.extras = [...(al.extras || []), { id: uid(), categoria: e.categoria, valor: n2(e.valor), dia: date }]);
         }
@@ -621,13 +619,8 @@ function BarroRapido({ prof, turmasVisiveis, mesData, state, onCommit, saving, o
   useEffect(() => { setI(0); setDraft({}); }, [date]);
 
   function seedKg(p) {
-    if (p.isRepo) {
-      const al = (mesData.alunos[p.homeTurmaId] || []).find(a => a.alunoNome === p.nome);
-      const ex = al && (al.extras || []).find(e => e.categoria === 'reposicao' && e.dia === date);
-      return ex ? n2(ex.valor) / VALOR_BARRO_KG : 0;
-    }
-    const [turmaId, nome] = p.key.split('|');
-    const al = (mesData.alunos[turmaId] || []).find(a => a.alunoNome === nome);
+    const turmaId = p.isRepo ? p.homeTurmaId : p.key.split('|')[0];
+    const al = (mesData.alunos[turmaId] || []).find(a => a.alunoNome === p.nome);
     return al && al.barroDias ? n2(al.barroDias[date]) : 0;
   }
 
@@ -679,7 +672,7 @@ function BarroRapido({ prof, turmasVisiveis, mesData, state, onCommit, saving, o
                 <div className="text-2xl font-bold text-gray-800">{p.nome}</div>
                 <div className="text-xs text-gray-400 mt-1">
                   {p.classe}
-                  {p.isRepo && <span className="ml-2 bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full">🔄 reposição → extra</span>}
+                  {p.isRepo && <span className="ml-2 bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full">🔄 reposição</span>}
                 </div>
               </div>
 
@@ -687,7 +680,7 @@ function BarroRapido({ prof, turmasVisiveis, mesData, state, onCommit, saving, o
 
               {p.isRepo && (
                 <div className="text-center text-[11px] text-teal-600 mt-2">
-                  Vira extra "Reposição" (R$ {fmt(n2(cur.kg) * VALOR_BARRO_KG)}) na conta do aluno.
+                  Conta como barro (R$ {fmt(n2(cur.kg) * VALOR_BARRO_KG)}) na conta do aluno na turma dele.
                 </div>
               )}
 
