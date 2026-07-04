@@ -71,6 +71,7 @@ const EXTRA_CATEGORIAS = [               // pctPedro configurável por categoria
   { key: 'queima_extra',    label: 'Queima extra',    pctPedro: 0 },
   { key: 'terceira_queima', label: 'Terceira queima', pctPedro: 0 },
   { key: 'peca_carol',      label: 'Peça Carol',      pctPedro: 0 },
+  { key: 'reposicao',       label: 'Reposição',       pctPedro: 0 },
 ];
 const CAT_LABEL = Object.fromEntries(EXTRA_CATEGORIAS.map(c => [c.key, c.label]));
 const CAT_PCT   = Object.fromEntries(EXTRA_CATEGORIAS.map(c => [c.key, c.pctPedro]));
@@ -123,6 +124,7 @@ const RECEBEDOR_PENDENTE = '⚠️ [FALTA CADASTRAR OS DADOS BANCÁRIOS DA LAURA
 // ==================== HELPERS ====================
 const DIAS_ORDER = ['segunda','terça','quarta','quinta','sexta','sábado'];
 const ABREV = { segunda:'Seg', terça:'Ter', quarta:'Qua', quinta:'Qui', sexta:'Sex', sábado:'Sáb' };
+const EXTENSO_DIA = { domingo:'Domingo', segunda:'Segunda', terça:'Terça', quarta:'Quarta', quinta:'Quinta', sexta:'Sexta', sábado:'Sábado' };
 const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 
 const n2 = v => (Number(v) || 0);
@@ -162,8 +164,25 @@ function currentMesAno() {
 }
 const uid = () => Math.random().toString(36).slice(2, 9);
 
+// Data local YYYY-MM-DD e dia da semana
+function hojeISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function dateToDia(dateStr) {
+  const [y, mo, d] = dateStr.split('-').map(Number);
+  const wd = new Date(y, mo - 1, d).getDay(); // 0=domingo
+  return ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'][wd];
+}
+function mesAnoDe(dateStr) { return dateStr.slice(0, 7); }
+function fmtDataBR(dateStr) { const [y, m, d] = dateStr.split('-'); return `${d}/${m}`; }
+// Kg com 1 casa: 0.8 -> "0,8"
+const fmt1 = v => n2(v).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
 // Cálculos por aluno ------------------------------------------------------
-function barroReais(a) { return n2(a.barroKg) * VALOR_BARRO_KG; }
+function barroDiasTotal(a) { return Object.values(a.barroDias || {}).reduce((s, v) => s + n2(v), 0); }
+function barroKgTotal(a) { return n2(a.barroKg) + barroDiasTotal(a); } // manual + por aula
+function barroReais(a) { return barroKgTotal(a) * VALOR_BARRO_KG; }
 function extrasTotal(a) { return (a.extras || []).reduce((s, e) => s + n2(e.valor), 0); }
 function totalAluno(a) { return n2(a.mensalidade) + barroReais(a) + extrasTotal(a); }
 function repassePedroAluno(a) {
@@ -264,8 +283,9 @@ function defaultAluno(turmaId, nome, isFerias) {
     mensalidade: isFerias ? MENSALIDADE_PADRAO / 2 : MENSALIDADE_PADRAO,
     pctPedro: PCT_PEDRO_PADRAO,
     ferias: !!isFerias,
-    barroKg: 0,
-    extras: [],   // { id, categoria, valor }
+    barroKg: 0,          // barro manual (ajuste no "Barro do mês")
+    barroDias: {},       // barro por aula (Barro rápido): { 'YYYY-MM-DD': kg }
+    extras: [],          // { id, categoria, valor, dia? }
     obs: '',
   };
 }
@@ -331,7 +351,7 @@ function App() {
   const [state, setState] = useState(null);       // app 1: { turmas, ausencias }
   const [barro, setBarro] = useState({ lancamentos: {} });
   const [mesAno, setMesAno] = useState(currentMesAno());
-  const [tab, setTab] = useState('lancamento');
+  const [tab, setTab] = useState('menu');
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
   const dirty = useRef(false);
@@ -341,7 +361,12 @@ function App() {
     if (!authed) return;
     Promise.all([loadState(), loadBarro()])
       .then(([st, br]) => {
-        setState({ turmas: (st && st.turmas) || [], ausencias: (st && st.ausencias) || [] });
+        setState({
+          turmas: (st && st.turmas) || [],
+          ausencias: (st && st.ausencias) || [],
+          faltas: (st && st.faltas) || [],
+          reposicoes: (st && st.reposicoes) || [],
+        });
         setBarro(br && typeof br === 'object' ? { lancamentos: br.lancamentos || {} } : { lancamentos: {} });
         setLoading(false);
       })
@@ -386,6 +411,44 @@ function App() {
     updateMes(m => { Object.assign(m.alunos[turmaId][idx], patch); return m; });
   }, [updateMes]);
 
+  // Aplica o rascunho do "Barro rápido" (barro por data + extras + reposições) e salva
+  const commitRapido = useCallback((draft, date) => {
+    updateMes(m => {
+      Object.keys(draft).forEach(key => {
+        const d = draft[key];
+        if (key.startsWith('repo|')) {
+          // Reposição: barro entra como extra "Reposição" na conta do aluno (turma de origem)
+          const [, homeTurmaId, nome] = key.split('|');
+          const arr = m.alunos[homeTurmaId];
+          const al = arr && arr.find(a => a.alunoNome === nome);
+          if (!al) return;
+          al.extras = al.extras || [];
+          const valor = n2(d.kg) * VALOR_BARRO_KG;
+          const ex = al.extras.find(e => e.categoria === 'reposicao' && e.dia === date);
+          if (valor > 0) {
+            if (ex) ex.valor = valor;
+            else al.extras.push({ id: uid(), categoria: 'reposicao', valor, dia: date });
+          } else if (ex) {
+            al.extras = al.extras.filter(e => e !== ex);
+          }
+        } else {
+          const [turmaId, nome] = key.split('|');
+          const arr = m.alunos[turmaId];
+          const al = arr && arr.find(a => a.alunoNome === nome);
+          if (!al) return;
+          al.barroDias = al.barroDias || {};
+          if (n2(d.kg) > 0) al.barroDias[date] = n2(d.kg);
+          else delete al.barroDias[date];
+          // extras novos adicionados no rápido (append)
+          (d.extras || []).filter(e => n2(e.valor) > 0).forEach(e =>
+            al.extras = [...(al.extras || []), { id: uid(), categoria: e.categoria, valor: n2(e.valor), dia: date }]);
+        }
+      });
+      return m;
+    });
+    doSave();
+  }, [updateMes, doSave]);
+
   const doSave = useCallback(() => {
     setSaving(true);
     // garante materialização do mês corrente
@@ -414,30 +477,32 @@ function App() {
 
   const trocarProf = () => { sessionStorage.removeItem('barro_prof'); setProf(null); };
 
+  // ---- MENU INICIAL ----
+  if (tab === 'menu')
+    return <MenuScreen prof={prof} mesAno={mesAno} setMesAno={setMesAno} onPick={setTab} onTrocarProf={trocarProf} erro={erro} />;
+
+  // ---- BARRO RÁPIDO (tela própria) ----
+  if (tab === 'rapido')
+    return <BarroRapido prof={prof} turmasVisiveis={turmasVisiveis} mesData={mesData} state={state}
+              onCommit={commitRapido} saving={saving} onVoltar={() => setTab('menu')} />;
+
+  const TITULOS = { lancamento: 'Barro do mês', mensagem: 'Mensagem', razao: 'Razão', stats: 'Estatísticas' };
+
   return (
     <div className="max-w-3xl mx-auto p-3 sm:p-4 pb-28">
       {/* Header */}
-      <div className="flex items-center justify-between mb-3">
-        <div>
-          <h1 className="text-xl font-bold text-gray-800">🏺 Barro & Repasse</h1>
-          <button onClick={trocarProf} className="text-xs text-amber-700 hover:underline">
-            {prof} <span className="text-gray-400">· trocar</span>
-          </button>
-        </div>
+      <div className="flex items-center justify-between mb-4">
+        <button onClick={() => setTab('menu')} className="flex items-center gap-2 text-left">
+          <span className="text-amber-500 text-xl">‹</span>
+          <div>
+            <div className="font-bold text-gray-800">{TITULOS[tab]}</div>
+            <div className="text-xs text-gray-400">{prof} · menu</div>
+          </div>
+        </button>
         <select value={mesAno} onChange={e => setMesAno(e.target.value)}
                 className="border border-gray-300 rounded-lg px-3 py-2 bg-white text-sm font-medium">
           {mesAnoOptions().map(m => <option key={m} value={m}>{mesLabel(m)}</option>)}
         </select>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex gap-1 mb-4 bg-white rounded-xl p-1 shadow-sm text-sm">
-        {[['lancamento','Lançamento'],['mensagem','Mensagem'],['razao','Razão'],['stats','Estatísticas']].map(([k, l]) => (
-          <button key={k} onClick={() => setTab(k)}
-            className={`flex-1 py-2 rounded-lg font-medium ${tab === k ? 'bg-amber-500 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>
-            {l}
-          </button>
-        ))}
       </div>
 
       {erro && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">{erro}</div>}
@@ -459,6 +524,205 @@ function App() {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ==================== MENU INICIAL ====================
+function MenuScreen({ prof, mesAno, setMesAno, onPick, onTrocarProf, erro }) {
+  const itens = [
+    { k: 'rapido',     icon: '⚡', titulo: 'Barro rápido',   desc: 'Lançar o barro da aula do dia', cor: 'bg-amber-500' },
+    { k: 'lancamento', icon: '🏺', titulo: 'Barro do mês',   desc: 'Lançamento completo: mensalidade, barro e extras', cor: 'bg-orange-400' },
+    { k: 'mensagem',   icon: '💬', titulo: 'Mensagem',       desc: 'Gerar a cobrança do WhatsApp', cor: 'bg-emerald-500' },
+    { k: 'razao',      icon: '📒', titulo: 'Razão',          desc: 'Registro financeiro por turma', cor: 'bg-indigo-500' },
+    { k: 'stats',      icon: '📊', titulo: 'Estatísticas',   desc: 'Ganhos, ocupação e evolução', cor: 'bg-rose-500' },
+  ];
+  return (
+    <div className="max-w-3xl mx-auto p-3 sm:p-4">
+      <div className="flex items-center justify-between mb-5 mt-1">
+        <div className="flex items-center gap-2">
+          <img src={document.getElementById('favicon').href} alt="" className="w-9 h-9 rounded-lg" />
+          <div>
+            <h1 className="text-xl font-bold text-gray-800 leading-tight">Barro & Repasse</h1>
+            <button onClick={onTrocarProf} className="text-xs text-amber-700 hover:underline">{prof} <span className="text-gray-400">· trocar</span></button>
+          </div>
+        </div>
+        <select value={mesAno} onChange={e => setMesAno(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 bg-white text-sm font-medium">
+          {mesAnoOptions().map(m => <option key={m} value={m}>{mesLabel(m)}</option>)}
+        </select>
+      </div>
+
+      {erro && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">{erro}</div>}
+
+      <div className="space-y-3">
+        {itens.map(it => (
+          <button key={it.k} onClick={() => onPick(it.k)}
+            className="w-full flex items-center gap-4 bg-white rounded-2xl shadow-sm hover:shadow-md p-4 text-left transition-shadow">
+            <div className={`${it.cor} text-white text-2xl w-14 h-14 rounded-xl flex items-center justify-center shrink-0`}>{it.icon}</div>
+            <div className="min-w-0">
+              <div className="font-bold text-gray-800">{it.titulo}</div>
+              <div className="text-xs text-gray-400">{it.desc}</div>
+            </div>
+            <span className="ml-auto text-gray-300 text-xl">›</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ==================== BARRO RÁPIDO ====================
+function KgStepInput({ kg, onChange }) {
+  const [digits, setDigits] = useState(kg ? String(Math.round(kg * 10)) : '');
+  return (
+    <div>
+      <input
+        autoFocus type="text" inputMode="numeric" pattern="[0-9]*" value={digits}
+        onChange={e => {
+          const dg = e.target.value.replace(/\D/g, '').slice(0, 4);
+          setDigits(dg);
+          onChange(dg === '' ? 0 : parseInt(dg, 10) / 10);
+        }}
+        placeholder="0"
+        className="w-full text-center text-6xl font-bold text-gray-800 outline-none bg-transparent tabular-nums" />
+      <div className="text-center text-lg text-gray-500 mt-1">= {fmt1(kg)} Kg de barro</div>
+    </div>
+  );
+}
+
+function BarroRapido({ prof, turmasVisiveis, mesData, state, onCommit, saving, onVoltar }) {
+  const [date, setDate] = useState(hojeISO());
+  const [i, setI] = useState(0);
+  const [draft, setDraft] = useState({});
+  const dia = dateToDia(date);
+
+  const participantes = useMemo(() => {
+    const faltas = (state && state.faltas) || [];
+    const reposicoes = (state && state.reposicoes) || [];
+    const diaTurmas = turmasVisiveis.filter(t => t.diaSemana === dia);
+    const out = [];
+    diaTurmas.forEach(t => {
+      const roster = mesData.alunos[t.id] || [];
+      const faltosos = new Set(faltas.filter(f => f.turmaId === t.id && (f.datas || []).includes(date)).map(f => f.alunoNome));
+      roster.forEach(a => {
+        if (faltosos.has(a.alunoNome)) return;
+        out.push({ key: `${t.id}|${a.alunoNome}`, nome: a.alunoNome, isRepo: false, classe: turmaLabel(t), homeTurmaId: t.id });
+      });
+      reposicoes.filter(r => r.turmaReposicaoId === t.id && r.dataReposicao === date).forEach(r => {
+        out.push({ key: `repo|${r.turmaOrigemId}|${r.alunoNome}`, nome: r.alunoNome, isRepo: true, classe: turmaLabel(t), homeTurmaId: r.turmaOrigemId });
+      });
+    });
+    const seen = new Set();
+    return out.filter(p => (seen.has(p.key) ? false : (seen.add(p.key), true)))
+              .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }));
+  }, [turmasVisiveis, mesData, state, date, dia]);
+
+  useEffect(() => { setI(0); setDraft({}); }, [date]);
+
+  function seedKg(p) {
+    if (p.isRepo) {
+      const al = (mesData.alunos[p.homeTurmaId] || []).find(a => a.alunoNome === p.nome);
+      const ex = al && (al.extras || []).find(e => e.categoria === 'reposicao' && e.dia === date);
+      return ex ? n2(ex.valor) / VALOR_BARRO_KG : 0;
+    }
+    const [turmaId, nome] = p.key.split('|');
+    const al = (mesData.alunos[turmaId] || []).find(a => a.alunoNome === nome);
+    return al && al.barroDias ? n2(al.barroDias[date]) : 0;
+  }
+
+  const total = participantes.length;
+  const p = participantes[i];
+  const cur = p ? (draft[p.key] || { kg: seedKg(p), extras: [] }) : null;
+  const setCur = (patch) => setDraft(d => ({ ...d, [p.key]: { ...(d[p.key] || { kg: seedKg(p), extras: [] }), ...patch } }));
+  const lancados = Object.values(draft).filter(v => n2(v.kg) > 0 || (v.extras || []).some(e => n2(e.valor) > 0)).length;
+
+  const concluir = () => { onCommit(draft, date); onVoltar(); };
+
+  return (
+    <div className="max-w-lg mx-auto min-h-screen flex flex-col p-4">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-3">
+        <button onClick={onVoltar} className="flex items-center gap-2 text-left">
+          <span className="text-amber-500 text-xl">‹</span>
+          <div>
+            <div className="font-bold text-gray-800">⚡ Barro rápido</div>
+            <div className="text-xs text-gray-400">{prof} · menu</div>
+          </div>
+        </button>
+        {lancados > 0 && (
+          <button onClick={concluir} disabled={saving}
+            className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-sm font-semibold px-4 py-2 rounded-xl">
+            Concluir ({lancados})
+          </button>
+        )}
+      </div>
+
+      {/* Data */}
+      <div className="flex items-center gap-2 mb-4">
+        <input type="date" value={date} onChange={e => setDate(e.target.value)}
+          className="border border-gray-300 rounded-lg px-3 py-2 bg-white text-sm font-medium" />
+        <span className="text-sm text-gray-500 capitalize">{EXTENSO_DIA[dia] || dia}</span>
+      </div>
+
+      {total === 0 ? (
+        <div className="flex-1 flex items-center justify-center text-center text-gray-400 text-sm px-6">
+          Nenhuma aula sua com alunos presentes neste dia.<br />Troque a data acima.
+        </div>
+      ) : (
+        <>
+          {/* Card do aluno */}
+          <div className="flex-1 flex flex-col justify-center">
+            <div className="text-center text-xs text-gray-400 mb-1">Aluno {i + 1} de {total}</div>
+            <div className="bg-white rounded-2xl shadow-sm p-6">
+              <div className="text-center mb-5">
+                <div className="text-2xl font-bold text-gray-800">{p.nome}</div>
+                <div className="text-xs text-gray-400 mt-1">
+                  {p.classe}
+                  {p.isRepo && <span className="ml-2 bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full">🔄 reposição → extra</span>}
+                </div>
+              </div>
+
+              <KgStepInput key={p.key} kg={cur.kg} onChange={v => setCur({ kg: v })} />
+
+              {p.isRepo && (
+                <div className="text-center text-[11px] text-teal-600 mt-2">
+                  Vira extra "Reposição" (R$ {fmt(n2(cur.kg) * VALOR_BARRO_KG)}) na conta do aluno.
+                </div>
+              )}
+
+              {/* Extras (só para aluno regular) */}
+              {!p.isRepo && (
+                <div className="mt-5 pt-4 border-t border-gray-100">
+                  {(cur.extras || []).map((e, idx) => (
+                    <div key={idx} className="flex items-center gap-2 mb-2">
+                      <select value={e.categoria} onChange={ev => setCur({ extras: cur.extras.map((x, j) => j === idx ? { ...x, categoria: ev.target.value } : x) })}
+                        className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white flex-1">
+                        {EXTRA_CATEGORIAS.filter(c => c.key !== 'reposicao').map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+                      </select>
+                      <NumInput value={e.valor} prefix="R$" className="w-28" onChange={v => setCur({ extras: cur.extras.map((x, j) => j === idx ? { ...x, valor: v } : x) })} />
+                      <button onClick={() => setCur({ extras: cur.extras.filter((_, j) => j !== idx) })} className="text-gray-300 hover:text-red-500 px-1">✕</button>
+                    </div>
+                  ))}
+                  <button onClick={() => setCur({ extras: [...(cur.extras || []), { categoria: EXTRA_CATEGORIAS[0].key, valor: 0 }] })}
+                    className="text-xs text-amber-600 font-medium">+ adicionar extra</button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Navegação */}
+          <div className="flex items-center gap-3 mt-4">
+            <button onClick={() => setI(Math.max(0, i - 1))} disabled={i === 0}
+              className="px-5 py-3 rounded-xl bg-gray-100 text-gray-600 font-semibold disabled:opacity-40">‹ Anterior</button>
+            {i < total - 1 ? (
+              <button onClick={() => setI(i + 1)} className="flex-1 py-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-semibold">Próximo ›</button>
+            ) : (
+              <button onClick={concluir} disabled={saving} className="flex-1 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-semibold">✓ Concluir e salvar</button>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -582,12 +846,14 @@ function AlunoRow({ a, onChange }) {
           <Field label="Mensalidade">
             <NumInput value={a.mensalidade} prefix="R$" className="w-32" onChange={v => onChange({ mensalidade: v })} />
           </Field>
-          <Field label={`Barro (${fmt(VALOR_BARRO_KG)}/Kg)`}>
+          <Field label={`Barro manual (${fmt(VALOR_BARRO_KG)}/Kg)`}>
             <div className="flex items-center gap-2">
               <NumInput value={a.barroKg} suffix="Kg" className="w-28" onChange={v => onChange({ barroKg: v })} />
-              <span className="text-sm text-gray-500">= R$ {fmt(barroReais(a))}</span>
+              <span className="text-sm text-gray-500">Total: R$ {fmt(barroReais(a))}</span>
             </div>
           </Field>
+          {barroDiasTotal(a) > 0 &&
+            <div className="text-[11px] text-gray-400 -mt-1">+ {fmt1(barroDiasTotal(a))} Kg lançados por aula (Barro rápido)</div>}
           <Field label="% repasse Pedro">
             <NumInput value={Math.round(n2(a.pctPedro) * 100)} suffix="%" className="w-24"
               onChange={v => onChange({ pctPedro: n2(v) / 100 })} />
