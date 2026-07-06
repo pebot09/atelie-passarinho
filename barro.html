@@ -599,42 +599,40 @@ function ExtrasEditor({ extras, onChange }) {
   );
 }
 
-// Barro total do mês (modo completo) com calculadora que soma aulas
-function CompletoBarro({ kg, onChange }) {
+// Entrada de barro com teclado próprio. completo=true: total do mês + R$ + calculadora de aulas.
+function BarroInput({ kg, onChange, completo }) {
+  const [ver, setVer] = useState(0);       // força re-seed do teclado quando a calculadora define o valor
   const [calc, setCalc] = useState(false);
-  const [txt, setTxt] = useState(kg ? String(kg) : '');
   const [vals, setVals] = useState(['', '']);
-  const soma = vals.reduce((s, v) => s + (parseFloat(v) || 0), 0);
-  const setNum = (t) => { setTxt(t); const nv = parseFloat(t.replace(',', '.')); onChange(isNaN(nv) ? 0 : nv); };
+  const soma = vals.reduce((s, v) => s + (parseFloat(String(v).replace(',', '.')) || 0), 0);
+  const usar = () => { onChange(soma); setVer(v => v + 1); setCalc(false); };
   return (
     <div>
-      <div className="flex items-center justify-center gap-2">
-        <input type="text" inputMode="decimal" value={txt} placeholder="0"
-          onChange={e => setNum(e.target.value.replace(/[^0-9.,]/g, ''))}
-          className="w-36 text-center text-5xl font-bold text-gray-800 outline-none bg-transparent" />
-        <span className="text-xl text-gray-400">Kg</span>
-      </div>
-      <div className="text-center text-sm text-gray-500 mt-1">= R$ {fmt(n2(kg) * VALOR_BARRO_KG)} · total do mês</div>
-      <div className="text-center mt-3">
-        <button onClick={() => setCalc(c => !c)} className="text-xs text-amber-600 font-medium">🧮 {calc ? 'fechar' : 'calcular (somar aulas)'}</button>
-      </div>
-      {calc && (
-        <div className="mt-3 bg-amber-50 rounded-xl p-3">
-          {vals.map((v, i) => (
-            <div key={i} className="flex items-center gap-2 mb-2">
-              <input type="number" inputMode="decimal" step="any" value={v} placeholder="0"
-                onChange={e => setVals(vs => vs.map((x, j) => j === i ? e.target.value : x))}
-                className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right outline-none" />
-              <span className="text-xs text-gray-400">Kg</span>
-              <button onClick={() => setVals(vs => vs.filter((_, j) => j !== i))} className="text-gray-300 px-1">✕</button>
-            </div>
-          ))}
-          <div className="flex items-center justify-between">
-            <button onClick={() => setVals(vs => [...vs, ''])} className="text-xs text-amber-600 font-medium">+ campo</button>
-            <button onClick={() => { setNum(String(soma)); setCalc(false); }}
-              className="text-xs bg-amber-500 text-white px-3 py-1.5 rounded-lg font-medium">Usar soma: {fmt1(soma)} Kg</button>
+      <KgKeypad key={ver} kg={kg} onChange={onChange} />
+      {completo && (
+        <>
+          <div className="text-center text-sm text-gray-500 mt-1">= R$ {fmt(n2(kg) * VALOR_BARRO_KG)} · total do mês</div>
+          <div className="text-center mt-3">
+            <button onClick={() => setCalc(c => !c)} className="text-xs text-amber-600 font-medium">🧮 {calc ? 'fechar' : 'calcular (somar aulas)'}</button>
           </div>
-        </div>
+          {calc && (
+            <div className="mt-3 bg-amber-50 rounded-xl p-3 max-w-xs mx-auto">
+              {vals.map((v, i) => (
+                <div key={i} className="flex items-center gap-2 mb-2">
+                  <input type="text" inputMode="decimal" value={v} placeholder="0"
+                    onChange={e => setVals(vs => vs.map((x, j) => j === i ? e.target.value.replace(/[^0-9.,]/g, '') : x))}
+                    className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right outline-none" />
+                  <span className="text-xs text-gray-400">Kg</span>
+                  <button onClick={() => setVals(vs => vs.filter((_, j) => j !== i))} className="text-gray-300 px-1">✕</button>
+                </div>
+              ))}
+              <div className="flex items-center justify-between">
+                <button onClick={() => setVals(vs => [...vs, ''])} className="text-xs text-amber-600 font-medium">+ campo</button>
+                <button onClick={usar} className="text-xs bg-amber-500 text-white px-3 py-1.5 rounded-lg font-medium">Usar soma: {fmt1(soma)} Kg</button>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -783,9 +781,7 @@ function LancarBarro({ prof, turmasVisiveis, mesData, state, patchAluno, doSave,
           <div className="text-2xl font-bold text-gray-800">{p.nome}</div>
           {p.isRepo && <div className="text-xs text-teal-600 mt-1">🔄 reposição — conta como barro na conta dele</div>}
         </div>
-        {modo === 'rapido'
-          ? <KgKeypad key={p.turmaId + p.nome} kg={kgDe(p)} onChange={v => setKg(p, v)} />
-          : <CompletoBarro key={p.turmaId + p.nome} kg={kgDe(p)} onChange={v => setKg(p, v)} />}
+        <BarroInput key={p.turmaId + p.nome} kg={kgDe(p)} onChange={v => setKg(p, v)} completo={modo === 'completo'} />
         {!p.isRepo && <ExtrasEditor extras={extrasDe(p)} onChange={ex => setExtras(p, ex)} />}
       </div>
       <div className="flex items-center gap-2 mt-3">
