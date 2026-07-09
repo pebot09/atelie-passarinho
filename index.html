@@ -1531,6 +1531,7 @@ function GerarLinkModal({ state, dispatch, onClose }) {
   const [turmaId, setTurmaId] = useState('');
   const [alunoNome, setAlunoNome] = useState('');
   const [copied, setCopied] = useState(false);
+  const [showQR, setShowQR] = useState(false);
   const sorted = useMemo(() => sortTurmas(state.turmas), [state.turmas]);
   const turma = state.turmas.find(t => t.id === turmaId);
   const alunos = turma ? [...turma.alunos].sort((a,b) => a.localeCompare(b,'pt')) : [];
@@ -1551,7 +1552,7 @@ function GerarLinkModal({ state, dispatch, onClose }) {
       <div className="space-y-3 text-sm">
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Turma</label>
-          <select value={turmaId} onChange={e => { setTurmaId(e.target.value); setAlunoNome(''); }}
+          <select value={turmaId} onChange={e => { setTurmaId(e.target.value); setAlunoNome(''); setShowQR(false); }}
             className="w-full border border-gray-300 rounded-lg px-3 py-2">
             <option value="">— Selecione —</option>
             {sorted.map(t => <option key={t.id} value={t.id}>{getTurmaLabel(state.turmas, t.id)}</option>)}
@@ -1560,7 +1561,7 @@ function GerarLinkModal({ state, dispatch, onClose }) {
         {turmaId && (
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Aluno</label>
-            <select value={alunoNome} onChange={e => setAlunoNome(e.target.value)}
+            <select value={alunoNome} onChange={e => { setAlunoNome(e.target.value); setShowQR(false); }}
               className="w-full border border-gray-300 rounded-lg px-3 py-2">
               <option value="">— Selecione —</option>
               {alunos.map(a => <option key={a} value={a}>{a}</option>)}
@@ -1578,8 +1579,28 @@ function GerarLinkModal({ state, dispatch, onClose }) {
             <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-xs text-gray-600 break-all">{link}</div>
             <button onClick={handleCopy}
               className={`w-full py-2 rounded-lg font-medium text-sm transition-colors ${copied ? 'bg-green-600 text-white' : 'bg-gray-800 text-white hover:bg-gray-900'}`}>
-              {copied ? '✓ Copiado!' : 'Copiar link'}
+              {copied ? '✓ Copiado!' : '📋 Copiar link'}
             </button>
+            <div className="flex gap-2">
+              <button onClick={() => window.open(link, '_blank')}
+                className="flex-1 py-2 rounded-lg font-medium text-sm bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors">
+                ↗ Abrir link
+              </button>
+              <button onClick={() => setShowQR(v => !v)}
+                className="flex-1 py-2 rounded-lg font-medium text-sm bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors">
+                {showQR ? '✕ Ocultar QR' : '▦ QR code'}
+              </button>
+            </div>
+            {showQR && (
+              <div className="flex flex-col items-center gap-1 pt-1">
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(link)}`}
+                  alt={`QR code do link de ${alunoNome}`}
+                  className="w-52 h-52 rounded-lg border border-gray-200 bg-white"
+                />
+                <p className="text-xs text-gray-400 text-center">Peça para {alunoNome} escanear com a câmera.</p>
+              </div>
+            )}
             <p className="text-xs text-gray-400 text-center">Este link é permanente para {alunoNome}.</p>
           </div>
         )}
