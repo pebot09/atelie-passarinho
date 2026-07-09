@@ -576,6 +576,10 @@ function reducer(state, action) {
       const newVagasMov = state.vagas.map(v =>
         v.faltaId && faltasMovidasIds.has(v.faltaId) ? { ...v, turmaId: newTurmaId } : v
       );
+      // Créditos extras do aluno acompanham a nova turma (senão somem da lista dele)
+      const newCreditosMov = arr(state.creditos).map(c =>
+        c.turmaId === oldTurmaId && c.alunoNome === movNome ? { ...c, turmaId: newTurmaId } : c
+      );
       const td_mov = todayStr();
       next = {
         ...state,
@@ -584,6 +588,7 @@ function reducer(state, action) {
         reposicoes: newReposMov,
         ausencias: newAusenciasMov,
         acessos: newAcessosMov,
+        creditos: newCreditosMov,
         vagas: computeVagasExtras(newTurmasMov, newFaltasMov, newReposMov, newVagasMov, td_mov, newAusenciasMov),
       };
       {
@@ -1367,6 +1372,19 @@ function normalizeState(s) {
       }
     };
   }
+
+  // Migration one-time: reassocia créditos órfãos de alunos que foram trocados de turma
+  // ANTES de a ferramenta de troca migrar créditos (jul/2026). Keyed por ID do crédito
+  // (sem heurística → zero risco de homônimo; idempotente: após ajustar, não recasa).
+  var creditReassign = {
+    'cred-1781108998678-be186r': 'qui-11h',      // Gabriela: seg-11h -> qui-11h
+    'cred-1781109004892-sfbpeo': 'qui-11h',      // Simone: seg-11h -> qui-11h
+    'cred-1781109014645-y37x6t': 'turma-extra',  // Isadora: qui-11h -> Extra
+    'cred-1783534015299-lntfn2': 'turma-extra'   // Michelle: ter-17h -> Extra
+  };
+  afterFaltaMig = { ...afterFaltaMig, creditos: arr(afterFaltaMig.creditos).map(function(c) {
+    return creditReassign[c.id] ? { ...c, turmaId: creditReassign[c.id] } : c;
+  }) };
 
   // Migration: ensure ausencias in recesso months (7, 12, 1) have no credit
   afterFaltaMig = { ...afterFaltaMig, ausencias: afterFaltaMig.ausencias.map(function(a) {
