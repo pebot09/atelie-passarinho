@@ -4677,6 +4677,7 @@ function ResumoDia({ state }) {
           className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-gray-200 text-gray-600 text-lg" aria-label="Próximo dia">›</button>
       </div>
 
+      <div className="h-96 overflow-y-auto">
       {isRecesso(viewDate) ? (
         <div className="px-6 py-8 text-center text-amber-600 text-sm font-medium">🏠 Recesso do ateliê</div>
       ) : FERIADOS_SET.has(viewDate) ? (
@@ -4721,6 +4722,7 @@ function ResumoDia({ state }) {
           })}
         </div>
       )}
+      </div>
     </div>
   );
 }
