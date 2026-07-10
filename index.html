@@ -530,8 +530,8 @@ function reducer(state, action) {
       const existentes = (state.resumosDiarios && typeof state.resumosDiarios === 'object') ? state.resumosDiarios : {};
       const novos = { ...existentes };
       let mudou = false;
-      // Congela dias faltantes na janela [hoje-14, ontem]
-      const ini = parseDate(fzTd); ini.setDate(ini.getDate() - 14);
+      // Congela dias faltantes na janela [hoje-15, ontem]
+      const ini = parseDate(fzTd); ini.setDate(ini.getDate() - 15);
       const fim = parseDate(fzTd);
       for (const d = new Date(ini); d < fim; d.setDate(d.getDate() + 1)) {
         const ds = dateToStr(d);
@@ -4669,7 +4669,11 @@ function ResumoDia({ state }) {
           className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-gray-200 text-gray-600 text-lg" aria-label="Próximo dia">›</button>
       </div>
 
-      {resumo === null ? (
+      {isRecesso(viewDate) ? (
+        <div className="px-6 py-8 text-center text-amber-600 text-sm font-medium">🏠 Recesso do ateliê</div>
+      ) : FERIADOS_SET.has(viewDate) ? (
+        <div className="px-6 py-8 text-center text-amber-600 text-sm font-medium">🎉 Feriado</div>
+      ) : resumo === null ? (
         <div className="px-6 py-8 text-center text-gray-400 text-sm">Sem registro deste dia.</div>
       ) : resumo.length === 0 ? (
         <div className="px-6 py-8 text-center text-gray-400 text-sm">Sem aulas neste dia.</div>
