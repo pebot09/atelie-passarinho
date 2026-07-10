@@ -161,7 +161,8 @@ const SEED = {
   log: [],
   acessos: [],
   creditos: [],
-  aulasCanceladas: []
+  aulasCanceladas: [],
+  resumosDiarios: {}
 };
 
 // ==================== HELPERS ====================
@@ -520,6 +521,33 @@ function reducer(state, action) {
         const tLbl = getTurmaLabel(state.turmas, caEntry.turmaId);
         next.log = addLog(state.log, action.professor, `Reativou aula de ${tLbl} em ${fmtBRFull(caEntry.data)}`, action.origem);
       }
+      break;
+    }
+
+    case 'FREEZE_RESUMOS': {
+      // Congela o resumo de dias passados (imutável). Mantém só os últimos 3 meses.
+      const fzTd = todayStr();
+      const existentes = (state.resumosDiarios && typeof state.resumosDiarios === 'object') ? state.resumosDiarios : {};
+      const novos = { ...existentes };
+      let mudou = false;
+      // Congela dias faltantes na janela [hoje-14, ontem]
+      const ini = parseDate(fzTd); ini.setDate(ini.getDate() - 14);
+      const fim = parseDate(fzTd);
+      for (const d = new Date(ini); d < fim; d.setDate(d.getDate() + 1)) {
+        const ds = dateToStr(d);
+        if (novos[ds]) continue;
+        const turmasDia = computeResumoDia(state, ds);
+        if (turmasDia.length) {
+          novos[ds] = { data: ds, geradoEm: new Date().toISOString(), turmas: turmasDia };
+          mudou = true;
+        }
+      }
+      // Poda: remove snapshots com mais de 3 meses
+      const corte = parseDate(fzTd); corte.setDate(corte.getDate() - 92);
+      const corteStr = dateToStr(corte);
+      Object.keys(novos).forEach(k => { if (k < corteStr) { delete novos[k]; mudou = true; } });
+      if (!mudou) { next = state; break; }
+      next = { ...state, resumosDiarios: novos };
       break;
     }
 
@@ -1273,6 +1301,7 @@ function normalizeState(s) {
     creditos:   arr(s.creditos),
     notas:      arr(s.notas),
     aulasCanceladas: arr(s.aulasCanceladas),
+    resumosDiarios: (s.resumosDiarios && typeof s.resumosDiarios === 'object' && !Array.isArray(s.resumosDiarios)) ? s.resumosDiarios : {},
     estatisticas: { faltasExpiradas: arr((s.estatisticas || {}).faltasExpiradas), reposCanceladas: arr((s.estatisticas || {}).reposCanceladas) },
   };
   var afterFaltaMig = migrateFaltas(base);
@@ -3656,9 +3685,9 @@ function SectionPainel({ state, dispatch }) {
         onClick={() => setShowResumo(r => !r)}
         className="w-full bg-white rounded-xl shadow-sm border border-gray-200 px-6 py-5 text-center font-bold text-gray-800 text-base tracking-widest hover:bg-gray-50 active:bg-gray-100 transition-colors"
       >
-        {showResumo ? '▲' : '▼'} RESUMO DE HOJE
+        {showResumo ? '▲' : '▼'} RESUMO DO DIA
       </button>
-      {showResumo && <ResumoHoje state={state} />}
+      {showResumo && <ResumoDia state={state} />}
     </div>
   );
 }
@@ -4567,71 +4596,112 @@ function ProfessorModal({ onSelect }) {
   );
 }
 
-// ==================== RESUMO DE HOJE ====================
-function ResumoHoje({ state }) {
-  const td = todayStr();
-  const hoje = parseDate(td);
-  const diaNome = ['domingo','segunda','terça','quarta','quinta','sexta','sábado'][hoje.getDay()];
-  const mesHoje = td.slice(0, 7);
+// Calcula o resumo (por turma) de um dia a partir dos dados vivos.
+// Usado ao vivo (hoje/futuro) e para congelar snapshots de dias passados.
+function computeResumoDia(state, date) {
+  if (FERIADOS_SET.has(date) || isRecesso(date)) return [];
+  const diaNome = ['domingo','segunda','terça','quarta','quinta','sexta','sábado'][parseDate(date).getDay()];
+  const mes = date.slice(0, 7);
+  const canceladas = new Set(arr(state.aulasCanceladas).filter(a => a.data === date).map(a => a.turmaId));
+  return sortTurmas(state.turmas)
+    .filter(t => t.id !== TURMA_EXTRA_ID && t.alunos.length > 0 && t.diaSemana === diaNome)
+    .map(turma => {
+      const faltaram = state.faltas
+        .filter(f => f.turmaId === turma.id && f.datas.includes(date) && (f.status === 'pendente' || f.status === 'marcada'))
+        .map(f => f.alunoNome);
+      const repos = state.reposicoes.filter(r => r.turmaReposicaoId === turma.id && r.dataReposicao === date);
+      const visitantes = repos.filter(r => r.turmaOrigemId !== turma.id);
+      const ferias = state.ausencias
+        .filter(a => a.turmaId === turma.id && a.mesAno === mes)
+        .map(a => a.alunoNome);
+      const presentes = turma.alunos.filter(a => !faltaram.includes(a) && !ferias.includes(a));
+      return {
+        turmaId: turma.id,
+        cancelada: canceladas.has(turma.id),
+        presentes,
+        faltaram,
+        repondo: repos.map(r => ({ nome: r.alunoNome, origemTurmaId: r.turmaOrigemId })),
+        esperados: presentes.length + visitantes.length,
+      };
+    });
+}
 
-  const turmasHoje = sortTurmas(state.turmas).filter(t =>
-    t.id !== TURMA_EXTRA_ID && t.alunos.length > 0 && t.diaSemana === diaNome && !FERIADOS_SET.has(td) && !isRecesso(td)
-  );
+// ==================== RESUMO DO DIA ====================
+function ResumoDia({ state }) {
+  const td = todayStr();
+  const [viewDate, setViewDate] = useState(td);
+
+  const shiftDate = (base, delta) => { const d = parseDate(base); d.setDate(d.getDate() + delta); return dateToStr(d); };
+
+  const isHoje = viewDate === td;
+  const isFuturo = viewDate > td;
+  const isPassado = viewDate < td;
+
+  // Fonte: hoje/futuro = ao vivo; passado = snapshot congelado (imutável)
+  const snap = isPassado ? (state.resumosDiarios || {})[viewDate] : null;
+  const resumo = isPassado ? (snap ? snap.turmas : null) : computeResumoDia(state, viewDate);
+
+  const diaNome = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'][parseDate(viewDate).getDay()];
+
+  const repondoLabel = (r) => {
+    const tOrig = state.turmas.find(t => t.id === r.origemTurmaId);
+    return tOrig ? `${r.nome} (${ABREV[tOrig.diaSemana]} ${tOrig.horario})` : r.nome;
+  };
 
   return (
     <div className="mt-2 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden fade-in">
-      {turmasHoje.length === 0 ? (
-        <div className="px-6 py-8 text-center text-gray-400 text-sm">Sem aulas hoje.</div>
+      {/* Navegação de dias */}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-gray-50">
+        <button onClick={() => setViewDate(v => shiftDate(v, -1))}
+          className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-gray-200 text-gray-600 text-lg" aria-label="Dia anterior">‹</button>
+        <div className="flex flex-col items-center">
+          <div className="relative">
+            <span className="text-sm font-semibold text-gray-800">{diaNome}, {fmtBRFull(viewDate)}</span>
+            <input type="date" value={viewDate} min={shiftDate(td, -100)} max={shiftDate(td, 60)}
+              onChange={e => { if (e.target.value) setViewDate(e.target.value); }}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" aria-label="Escolher data" />
+          </div>
+          {!isHoje && (
+            <button onClick={() => setViewDate(td)} className="text-xs text-blue-600 hover:underline mt-0.5">Voltar para hoje</button>
+          )}
+        </div>
+        <button onClick={() => setViewDate(v => shiftDate(v, 1))}
+          className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-gray-200 text-gray-600 text-lg" aria-label="Próximo dia">›</button>
+      </div>
+
+      {resumo === null ? (
+        <div className="px-6 py-8 text-center text-gray-400 text-sm">Sem registro deste dia.</div>
+      ) : resumo.length === 0 ? (
+        <div className="px-6 py-8 text-center text-gray-400 text-sm">Sem aulas neste dia.</div>
       ) : (
         <div className="divide-y divide-gray-100">
-          {turmasHoje.map(turma => {
-            const faltasHoje = state.faltas.filter(f =>
-              f.turmaId === turma.id && f.datas.includes(td) &&
-              (f.status === 'pendente' || f.status === 'marcada')
-            );
-            const faltandoNomes = faltasHoje.map(f => f.alunoNome);
-
-            const reposHoje = state.reposicoes.filter(r =>
-              r.turmaReposicaoId === turma.id && r.dataReposicao === td && !r.realizada
-            );
-            const reposVisitantes = reposHoje.filter(r => r.turmaOrigemId !== turma.id);
-
-            const ausentesFerias = state.ausencias
-              .filter(a => a.turmaId === turma.id && a.mesAno === mesHoje)
-              .map(a => a.alunoNome);
-
-            const presentes = turma.alunos.filter(a =>
-              !faltandoNomes.includes(a) && !ausentesFerias.includes(a)
-            );
-
-            const esperados = presentes.length + reposVisitantes.length;
-
+          {isFuturo && (
+            <div className="px-4 py-2 text-xs text-amber-600 bg-amber-50">Dia futuro — mostra o que já está marcado até agora.</div>
+          )}
+          {resumo.map(item => {
+            const turma = state.turmas.find(t => t.id === item.turmaId);
+            const titulo = turma ? `${ABREV[turma.diaSemana]} ${turma.horario}` : getTurmaLabel(state.turmas, item.turmaId);
             return (
-              <div key={turma.id} className="px-4 py-3 space-y-0.5">
+              <div key={item.turmaId} className="px-4 py-3 space-y-0.5">
                 <div className="font-semibold text-gray-800 text-sm mb-1">
-                  {ABREV[turma.diaSemana]} {turma.horario} <span className="text-gray-400 font-normal">({esperados})</span>
+                  {titulo} {item.cancelada ? <span className="text-red-500 font-normal">🚫 aula cancelada</span> : <span className="text-gray-400 font-normal">({item.esperados})</span>}
                 </div>
-                {presentes.length > 0 && (
+                {!item.cancelada && item.presentes.length > 0 && (
                   <div className="text-sm text-gray-600">
                     <span className="text-gray-400 text-xs">Presentes  </span>
-                    {presentes.join(', ')}
+                    {item.presentes.join(', ')}
                   </div>
                 )}
-                {faltandoNomes.length > 0 && (
+                {item.faltaram.length > 0 && (
                   <div className="text-sm text-red-600">
                     <span className="text-red-400 text-xs">Faltam  </span>
-                    {faltandoNomes.join(', ')}
+                    {item.faltaram.join(', ')}
                   </div>
                 )}
-                {reposHoje.length > 0 && (
+                {item.repondo.length > 0 && (
                   <div className="text-sm text-blue-600">
                     <span className="text-blue-400 text-xs">Repondo  </span>
-                    {reposHoje.map(r => {
-                      const tOrig = state.turmas.find(t => t.id === r.turmaOrigemId);
-                      return tOrig
-                        ? `${r.alunoNome} (${ABREV[tOrig.diaSemana]} ${tOrig.horario})`
-                        : r.alunoNome;
-                    }).join(', ')}
+                    {item.repondo.map(repondoLabel).join(', ')}
                   </div>
                 )}
               </div>
@@ -4684,6 +4754,7 @@ function App() {
         }
         initialised.current = true;
         baseDispatch({ type: 'CLEANUP' }); // roda após sync e após initialised=true, para que vagasExtras sejam salvas
+        baseDispatch({ type: 'FREEZE_RESUMOS' }); // congela o resumo dos dias passados (imutável, 3 meses)
         setSyncStatus('ok');
       })
       .catch(function() { setSyncStatus('erro'); });
