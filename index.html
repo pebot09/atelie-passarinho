@@ -1235,12 +1235,20 @@ function reducer(state, action) {
       );
       const vagasFiltradas = inc.vagas.filter(v => v.data >= td);
       const vagasComExtras = stripVagasCanceladas(computeVagasExtras(inc.turmas, cleanFaltas, reposSynced, vagasFiltradas, td, inc.ausencias), inc.aulasCanceladas);
+      // Mescla resumosDiarios: mantém os snapshots locais (recém-congelados, ainda não
+      // salvos no Firebase) + os que vierem do servidor. Sem isso, o sync apagaria os
+      // snapshots criados localmente antes de persistirem. Poda os de mais de 3 meses.
+      const mergedResumos = { ...(inc.resumosDiarios || {}), ...(state.resumosDiarios || {}) };
+      const corteR = parseDate(td); corteR.setDate(corteR.getDate() - 92);
+      const corteRStr = dateToStr(corteR);
+      Object.keys(mergedResumos).forEach(k => { if (k < corteRStr) delete mergedResumos[k]; });
       next = {
         ...inc,
         faltas:     cleanFaltas,
         vagas:      vagasComExtras,
         reposicoes: reposSynced,
         estatisticas,
+        resumosDiarios: mergedResumos,
       };
       break;
     }
