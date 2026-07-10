@@ -160,7 +160,8 @@ const SEED = {
   estatisticas: { faltasExpiradas: [] },
   log: [],
   acessos: [],
-  creditos: []
+  creditos: [],
+  aulasCanceladas: []
 };
 
 // ==================== HELPERS ====================
@@ -255,6 +256,14 @@ function getCancelFaltaStatus(falta, state) {
     }
   }
   return { canCancel: true, reason: null };
+}
+
+// Remove vagas de aulas canceladas (turma+data marcadas em aulasCanceladas)
+function stripVagasCanceladas(vagas, aulasCanceladas) {
+  if (!aulasCanceladas || !aulasCanceladas.length) return vagas;
+  var canc = {};
+  aulasCanceladas.forEach(function(a) { canc[a.turmaId + '|' + a.data] = true; });
+  return vagas.filter(function(v) { return !canc[v.turmaId + '|' + v.data]; });
 }
 
 function computeVagasExtras(turmas, faltas, reposicoes, vagasBase, td, ausencias) {
@@ -426,6 +435,90 @@ function reducer(state, action) {
       if (credDel) {
         const tLbl = getTurmaLabel(state.turmas, credDel.turmaId);
         next.log = addLog(state.log, action.professor, `Removeu crédito extra de ${credDel.alunoNome} (${tLbl})`, action.origem);
+      }
+      break;
+    }
+
+    case 'CANCEL_AULA': {
+      const { turmaId: caTurma, data: caData } = action;
+      const caT = state.turmas.find(t => t.id === caTurma);
+      if (!caT || !caData) { next = state; break; }
+      const cancelamentoId = genId('cancaula');
+      const caMes = caData.slice(0, 7);
+      // Alunos de férias no mês (não recebem falta — já estão ausentes)
+      const caFerias = new Set(arr(state.ausencias)
+        .filter(a => a.turmaId === caTurma && a.mesAno === caMes)
+        .map(a => a.alunoNome));
+      // Alunos que já têm falta pendente/marcada nesse dia (não duplica)
+      const caJaFaltam = new Set(state.faltas
+        .filter(f => f.turmaId === caTurma && f.datas.includes(caData) && (f.status === 'pendente' || f.status === 'marcada'))
+        .map(f => f.alunoNome));
+      const caNovasFaltas = [];
+      caT.alunos.forEach(nome => {
+        if (caFerias.has(nome) || caJaFaltam.has(nome)) return;
+        caNovasFaltas.push({
+          id: genId('f'), alunoNome: nome, turmaId: caTurma, datas: [caData],
+          status: 'pendente', semAntecedencia: false, cancelamentoId,
+          criadoPor: action.professor || null, criadoEm: new Date().toISOString()
+        });
+      });
+      // Reposições marcadas PARA esta aula (visitantes) — canceladas SEM punição
+      const caReposAfetadas = state.reposicoes.filter(r =>
+        r.turmaReposicaoId === caTurma && r.dataReposicao === caData && !r.realizada
+      );
+      let caFaltas = [...state.faltas, ...caNovasFaltas];
+      let caRepos = state.reposicoes;
+      let caAusencias = state.ausencias;
+      let caCreditos = state.creditos;
+      caReposAfetadas.forEach(repo => {
+        caRepos = caRepos.filter(r => r.id !== repo.id);
+        if (repo.tipo === 'reposicao_ferias' && repo.ausenciaId) {
+          caAusencias = caAusencias.map(a => a.id === repo.ausenciaId ? { ...a, creditoUsado: false } : a);
+        } else if (repo.tipo === 'reposicao_credito' && repo.creditoId) {
+          caCreditos = arr(caCreditos).map(c => c.id === repo.creditoId ? { ...c, usado: false } : c);
+        } else if (repo.faltaId) {
+          caFaltas = caFaltas.map(f => f.id === repo.faltaId ? { ...f, status: 'pendente', reposicaoId: undefined } : f);
+        }
+      });
+      // Remove todas as vagas desta turma+data (ninguém repõe numa aula cancelada)
+      let caVagas = state.vagas.filter(v => !(v.turmaId === caTurma && v.data === caData));
+      const caAulas = [...arr(state.aulasCanceladas), {
+        id: cancelamentoId, turmaId: caTurma, data: caData,
+        ts: new Date().toISOString(), professor: action.professor || null
+      }];
+      const caTd = todayStr();
+      caVagas = stripVagasCanceladas(
+        computeVagasExtras(state.turmas, caFaltas, caRepos, caVagas, caTd, caAusencias),
+        caAulas
+      );
+      next = { ...state, faltas: caFaltas, reposicoes: caRepos, ausencias: caAusencias, creditos: caCreditos, vagas: caVagas, aulasCanceladas: caAulas };
+      {
+        const tLbl = getTurmaLabel(state.turmas, caTurma);
+        const extra = caReposAfetadas.length ? `, ${caReposAfetadas.length} reposição(ões) desfeita(s)` : '';
+        next.log = addLog(state.log, action.professor, `Cancelou aula de ${tLbl} em ${fmtBRFull(caData)} — ${caNovasFaltas.length} aluno(s) marcado(s) como falta${extra}`, action.origem);
+      }
+      break;
+    }
+
+    case 'REVERT_AULA_CANCELADA': {
+      const caEntry = arr(state.aulasCanceladas).find(a => a.id === action.id);
+      if (!caEntry) { next = state; break; }
+      // Remove só as faltas geradas por este cancelamento que ainda estão pendentes e sem reposição
+      const caRemovidasIds = new Set(state.faltas
+        .filter(f => f.cancelamentoId === action.id && f.status === 'pendente' && !f.reposicaoId)
+        .map(f => f.id));
+      const caFaltas2 = state.faltas.filter(f => !caRemovidasIds.has(f.id));
+      const caAulas2 = arr(state.aulasCanceladas).filter(a => a.id !== action.id);
+      let caVagas2 = state.vagas.filter(v => !(v.faltaId && caRemovidasIds.has(v.faltaId)));
+      const caTd2 = todayStr();
+      caVagas2 = stripVagasCanceladas(
+        computeVagasExtras(state.turmas, caFaltas2, state.reposicoes, caVagas2, caTd2, state.ausencias),
+        caAulas2
+      );
+      next = { ...state, faltas: caFaltas2, aulasCanceladas: caAulas2, vagas: caVagas2 };
+      {
+        const tLbl = getTurmaLabel(state.turmas, caEntry.turmaId);
+        next.log = addLog(state.log, action.professor, `Reativou aula de ${tLbl} em ${fmtBRFull(caEntry.data)}`, action.origem);
       }
       break;
     }
@@ -1084,7 +1177,7 @@ function reducer(state, action) {
         ...(state.estatisticas || {}),
         faltasExpiradas: [...arr((state.estatisticas || {}).faltasExpiradas), ...newExpStats]
       };
-      const vagasComExtras = computeVagasExtras(state.turmas, state.faltas, reposicoes, vagas, td, state.ausencias);
+      const vagasComExtras = stripVagasCanceladas(computeVagasExtras(state.turmas, state.faltas, reposicoes, vagas, td, state.ausencias), state.aulasCanceladas);
       next = { ...state, vagas: vagasComExtras, reposicoes, faltas: activeFaltas, estatisticas };
       break;
     }
@@ -1113,7 +1206,7 @@ function reducer(state, action) {
         !(f.status === 'marcada' && f.reposicaoId && realizadasIdsSynced.has(f.reposicaoId) && f.datas.every(d => d < td))
       );
       const vagasFiltradas = inc.vagas.filter(v => v.data >= td);
-      const vagasComExtras = computeVagasExtras(inc.turmas, cleanFaltas, reposSynced, vagasFiltradas, td, inc.ausencias);
+      const vagasComExtras = stripVagasCanceladas(computeVagasExtras(inc.turmas, cleanFaltas, reposSynced, vagasFiltradas, td, inc.ausencias), inc.aulasCanceladas);
       next = {
         ...inc,
         faltas:     cleanFaltas,
@@ -1179,6 +1272,7 @@ function normalizeState(s) {
     acessos:    arr(s.acessos),
     creditos:   arr(s.creditos),
     notas:      arr(s.notas),
+    aulasCanceladas: arr(s.aulasCanceladas),
     estatisticas: { faltasExpiradas: arr((s.estatisticas || {}).faltasExpiradas), reposCanceladas: arr((s.estatisticas || {}).reposCanceladas) },
   };
   var afterFaltaMig = migrateFaltas(base);
@@ -1408,6 +1502,8 @@ function normalizeState(s) {
   var tdNorm = todayStr();
   var vagasNormFiltradas = afterFaltaMig.vagas.filter(function(v) { return v.data >= tdNorm; });
   afterFaltaMig = { ...afterFaltaMig, vagas: computeVagasExtras(afterFaltaMig.turmas, afterFaltaMig.faltas, afterFaltaMig.reposicoes, vagasNormFiltradas, tdNorm, afterFaltaMig.ausencias) };
+  // Nenhuma vaga em aulas canceladas (à prova de falhas caso um aluno entre na turma depois)
+  afterFaltaMig = { ...afterFaltaMig, vagas: stripVagasCanceladas(afterFaltaMig.vagas, afterFaltaMig.aulasCanceladas) };
   return afterFaltaMig;
 }
 
@@ -3093,6 +3189,116 @@ function TabCreditoExtra({ state, dispatch }) {
   );
 }
 
+// ==================== TAB: CANCELAR AULA ====================
+function TabCancelarAula({ state, dispatch }) {
+  const [turmaId, setTurmaId] = useState('');
+  const [data, setData] = useState('');
+  const [confirm, setConfirm] = useState(false);
+  const td = todayStr();
+
+  const sorted = useMemo(() => sortTurmas(state.turmas), [state.turmas]);
+  const turma = state.turmas.find(t => t.id === turmaId);
+
+  // Próximas datas de aula da turma (hoje em diante, 60 dias), sem feriado/recesso e ainda não canceladas
+  const proximasDatas = useMemo(() => {
+    if (!turma || turma.id === TURMA_EXTRA_ID) return [];
+    const end = new Date(); end.setDate(end.getDate() + 60);
+    const jaCanc = new Set(arr(state.aulasCanceladas).filter(a => a.turmaId === turmaId).map(a => a.data));
+    return getClassDatesInRange(turma, td, dateToStr(end))
+      .filter(d => !FERIADOS_SET.has(d) && !isRecesso(d) && !jaCanc.has(d));
+  }, [turma, turmaId, state.aulasCanceladas, td]);
+
+  // Prévia: quantos alunos serão marcados e quantas reposições desfeitas
+  const previa = useMemo(() => {
+    if (!turma || !data) return null;
+    const mes = data.slice(0, 7);
+    const ferias = new Set(arr(state.ausencias).filter(a => a.turmaId === turmaId && a.mesAno === mes).map(a => a.alunoNome));
+    const jaFaltam = new Set(state.faltas.filter(f => f.turmaId === turmaId && f.datas.includes(data) && (f.status === 'pendente' || f.status === 'marcada')).map(f => f.alunoNome));
+    const marcar = turma.alunos.filter(n => !ferias.has(n) && !jaFaltam.has(n));
+    const repos = state.reposicoes.filter(r => r.turmaReposicaoId === turmaId && r.dataReposicao === data && !r.realizada);
+    return { marcar, repos };
+  }, [turma, turmaId, data, state.ausencias, state.faltas, state.reposicoes]);
+
+  const handleCancelar = () => {
+    if (!turmaId || !data) return;
+    dispatch({ type: 'CANCEL_AULA', turmaId, data, professor: localStorage.getItem(PROFESSOR_KEY) || '' });
+    setConfirm(false); setData(''); setTurmaId('');
+  };
+
+  const canceladas = useMemo(() =>
+    [...arr(state.aulasCanceladas)].sort((a, b) => b.data.localeCompare(a.data)),
+    [state.aulasCanceladas]);
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+        Cancela uma aula inteira (quando nenhum professor pôde dar). Todos os alunos presentes viram falta regular, nenhuma vaga é aberta e reposições marcadas para essa aula são desfeitas sem punição.
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Turma</label>
+        <select value={turmaId} onChange={e => { setTurmaId(e.target.value); setData(''); }} className="w-full border border-gray-300 rounded-lg px-3 py-2">
+          <option value="">— Selecione a turma —</option>
+          {sorted.filter(t => t.id !== TURMA_EXTRA_ID).map(t => <option key={t.id} value={t.id}>{`${EXTENSO[t.diaSemana]} ${t.horario}`}</option>)}
+        </select>
+      </div>
+
+      {turma && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Data da aula</label>
+          <select value={data} onChange={e => setData(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2">
+            <option value="">— Selecione a data —</option>
+            {proximasDatas.map(d => <option key={d} value={d}>{fmtBRFull(d)}</option>)}
+          </select>
+          {proximasDatas.length === 0 && <p className="text-xs text-gray-400 mt-1">Nenhuma aula futura disponível para cancelar.</p>}
+        </div>
+      )}
+
+      {previa && (
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm text-gray-700">
+          <div><strong>{previa.marcar.length}</strong> aluno(s) serão marcados como falta.</div>
+          {previa.repos.length > 0 && <div className="mt-1">{previa.repos.length} reposição(ões) marcada(s) para esta aula serão desfeitas (sem punição).</div>}
+        </div>
+      )}
+
+      {!confirm ? (
+        <button onClick={() => setConfirm(true)} disabled={!turmaId || !data}
+          className="w-full py-2.5 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed">
+          Cancelar aula
+        </button>
+      ) : (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 space-y-2">
+          <p className="text-sm text-red-700 font-medium">Confirmar cancelamento de {getTurmaLabel(state.turmas, turmaId)} em {fmtBRFull(data)}?</p>
+          <div className="flex gap-2">
+            <button onClick={handleCancelar} className="flex-1 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700">Confirmar</button>
+            <button onClick={() => setConfirm(false)} className="flex-1 py-2 border border-gray-300 rounded-lg text-sm">Voltar</button>
+          </div>
+        </div>
+      )}
+
+      {canceladas.length > 0 && (
+        <div className="mt-4 border-t border-gray-200 pt-4">
+          <h4 className="text-sm font-semibold text-gray-600 mb-2">Aulas canceladas</h4>
+          <div className="space-y-2">
+            {canceladas.map(a => (
+              <div key={a.id} className="bg-gray-50 rounded-lg p-3 text-sm flex justify-between items-center gap-2">
+                <div>
+                  <span className="font-medium">{getTurmaLabel(state.turmas, a.turmaId)}</span>
+                  <div className="text-gray-500 mt-0.5">{fmtBRFull(a.data)}</div>
+                </div>
+                <button onClick={() => dispatch({ type: 'REVERT_AULA_CANCELADA', id: a.id, professor: localStorage.getItem(PROFESSOR_KEY) || '' })}
+                  className="text-xs px-2.5 py-1.5 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 shrink-0">
+                  Reativar
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ==================== SECTION 2: FALTAS & REPOSIÇÕES ====================
 function SectionFaltasReposicoes({ state, dispatch }) {
   const [openGroup, setOpenGroup] = useState(null);
@@ -3141,6 +3347,15 @@ function SectionFaltasReposicoes({ state, dispatch }) {
         <TabCreditoExtra state={state} dispatch={dispatch} />,
       ]
     },
+    {
+      key: 'cancelarAula',
+      label: 'Cancelar Aula',
+      color: 'red',
+      tabs: ['Cancelar Aula'],
+      content: [
+        <TabCancelarAula state={state} dispatch={dispatch} />,
+      ]
+    },
   ];
 
   const colorMap = {
@@ -3148,6 +3363,7 @@ function SectionFaltasReposicoes({ state, dispatch }) {
     blue:   { header: 'bg-blue-50 border-blue-200 text-blue-800',      tab: 'border-blue-600 text-blue-700 bg-blue-50',      btn: 'bg-blue-500'   },
     green:  { header: 'bg-green-50 border-green-200 text-green-800',   tab: 'border-green-600 text-green-700 bg-green-50',   btn: 'bg-green-500'  },
     purple: { header: 'bg-purple-50 border-purple-200 text-purple-800',tab: 'border-purple-600 text-purple-700 bg-purple-50',btn: 'bg-purple-500' },
+    red:    { header: 'bg-red-50 border-red-200 text-red-800',         tab: 'border-red-600 text-red-700 bg-red-50',         btn: 'bg-red-500'    },
   };
 
   return (
