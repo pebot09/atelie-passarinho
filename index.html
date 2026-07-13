@@ -4691,30 +4691,33 @@ function ResumoDia({ state }) {
           {isFuturo && (
             <div className="px-4 py-2 text-xs text-amber-600 bg-amber-50">Dia futuro — mostra o que já está marcado até agora.</div>
           )}
-          {resumo.map(item => {
+          {resumo.map((item, idx) => {
             const turma = state.turmas.find(t => t.id === item.turmaId);
             const titulo = turma ? `${ABREV[turma.diaSemana]} ${turma.horario}` : getTurmaLabel(state.turmas, item.turmaId);
+            const presentes = item.presentes || [];
+            const faltaram = item.faltaram || [];
+            const repondo = item.repondo || [];
             return (
-              <div key={item.turmaId} className="px-4 py-3 space-y-0.5">
+              <div key={item.turmaId || idx} className="px-4 py-3 space-y-0.5">
                 <div className="font-semibold text-gray-800 text-sm mb-1">
                   {titulo} {item.cancelada ? <span className="text-red-500 font-normal">🚫 aula cancelada</span> : <span className="text-gray-400 font-normal">({item.esperados})</span>}
                 </div>
-                {!item.cancelada && item.presentes.length > 0 && (
+                {!item.cancelada && presentes.length > 0 && (
                   <div className="text-sm text-gray-600">
                     <span className="text-gray-400 text-xs">Presentes  </span>
-                    {item.presentes.join(', ')}
+                    {presentes.join(', ')}
                   </div>
                 )}
-                {item.faltaram.length > 0 && (
+                {faltaram.length > 0 && (
                   <div className="text-sm text-red-600">
                     <span className="text-red-400 text-xs">Faltam  </span>
-                    {item.faltaram.join(', ')}
+                    {faltaram.join(', ')}
                   </div>
                 )}
-                {item.repondo.length > 0 && (
+                {repondo.length > 0 && (
                   <div className="text-sm text-blue-600">
                     <span className="text-blue-400 text-xs">Repondo  </span>
-                    {item.repondo.map(repondoLabel).join(', ')}
+                    {repondo.map(repondoLabel).join(', ')}
                   </div>
                 )}
               </div>
