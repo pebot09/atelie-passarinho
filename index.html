@@ -370,6 +370,13 @@ function getTurmaLabel(turmas, id) {
   return `${ABREV[t.diaSemana]} ${t.horario}`;
 }
 
+// Label curto a partir do objeto turma (trata Turma Extra, que não tem dia/horário)
+function turmaShortLabel(t) {
+  if (!t) return '?';
+  if (t.id === TURMA_EXTRA_ID) return 'Extra';
+  return `${ABREV[t.diaSemana]} ${t.horario}`;
+}
+
 function pruneLog(log) {
   const cutoff = new Date(Date.now() - LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
   return arr(log).filter(e => e.ts && e.ts >= cutoff).slice(0, MAX_LOG);
@@ -1868,7 +1875,7 @@ function NotasTurmaModal({ turma, state, dispatch, onClose }) {
   };
 
   return (
-    <Modal title={`📋 Notas — ${ABREV[turma.diaSemana]} ${turma.horario}`} onClose={onClose}>
+    <Modal title={`📋 Notas — ${turmaShortLabel(turma)}`} onClose={onClose}>
       <div className="space-y-3">
         <div className="flex gap-2">
           <input
@@ -1970,7 +1977,7 @@ function SectionTurmas({ state, dispatch }) {
               <div className="flex items-center gap-3">
                 <div>
                   <div className="font-semibold text-gray-800 flex items-center gap-2">
-                    {ABREV[turma.diaSemana]} {turma.horario}
+                    {turmaShortLabel(turma)}
                     {turma.observacao && <span className="text-gray-400 font-normal text-sm">({turma.observacao})</span>}
                   </div>
                   <div className="text-sm text-gray-500 mt-0.5">
@@ -2585,7 +2592,7 @@ function TabRegistrarReposicao({ state, dispatch }) {
               const dia = getDiaSemanaFromDateStr(v.data);
               return (
                 <option key={v.id} value={v.id}>
-                  {fmtBRFull(v.data)} ({ABREV[dia]}) — {t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?'}{v.vagaExtra ? ' ✦ vaga extra' : ''}
+                  {fmtBRFull(v.data)} ({ABREV[dia]}) — {turmaShortLabel(t)}{v.vagaExtra ? ' ✦ vaga extra' : ''}
                 </option>
               );
             })}
@@ -3026,7 +3033,7 @@ function GerenciarAlunoModal({ turma, state, dispatch, onClose }) {
   const sorted = useMemo(() => [...turma.alunos].sort((a,b) => a.localeCompare(b,'pt')), [turma.alunos]);
 
   return (
-    <Modal title={`Gerenciar alunos — ${ABREV[turma.diaSemana]} ${turma.horario}`} onClose={onClose}>
+    <Modal title={`Gerenciar alunos — ${turmaShortLabel(turma)}`} onClose={onClose}>
       {confirmRemove && (
         <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm space-y-2">
           <p className="text-red-700 font-medium">Remover <strong>{confirmRemove}</strong> da turma?</p>
@@ -3501,7 +3508,7 @@ function generatePainelText(state) {
   if (combined.length) faltasText += '\n';
   combined.forEach(({ tipo, obj }) => {
     const t = state.turmas.find(x => x.id === obj.turmaId);
-    const tLabel = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
+    const tLabel = turmaShortLabel(t);
     if (tipo === 'falta') {
       const datasOrdenadas = [...obj.datas].sort();
       faltasText += `${obj.alunoNome} (${tLabel})\nFalta: *${fmtDatesText(datasOrdenadas)}*\n\n`;
@@ -3514,7 +3521,7 @@ function generatePainelText(state) {
     faltasText += '*JÁ MARCADAS*\n\n';
     marcadas.forEach(f => {
       const t = state.turmas.find(x => x.id === f.turmaId);
-      const tLabel = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
+      const tLabel = turmaShortLabel(t);
       faltasText += `${f.alunoNome} (${tLabel})\nFalta: ${fmtDatesText(f.datas)}\n\n`;
     });
   }
@@ -3582,7 +3589,7 @@ function generatePainelText(state) {
   let turmasText = '*TURMAS*\n\n';
   sorted.forEach(t => {
     const obs = t.observacao ? ` (${t.observacao})` : '';
-    turmasText += `${ABREV[t.diaSemana]} ${t.horario} - ${t.alunos.length} aluno${t.alunos.length !== 1 ? 's' : ''}${obs}\n`;
+    turmasText += `${turmaShortLabel(t)} - ${t.alunos.length} aluno${t.alunos.length !== 1 ? 's' : ''}${obs}\n`;
   });
 
   // ---- OBSERVAÇÕES ----
@@ -3598,7 +3605,7 @@ function generatePainelText(state) {
     return exp >= today && exp <= in7Days;
   }).forEach(f => {
     const t = state.turmas.find(x => x.id === f.turmaId);
-    obs.push(`⚠️ Falta expirando em ${fmtBRFull(getFaltaExpiry(f))}: ${f.alunoNome} (${t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?'})`);
+    obs.push(`⚠️ Falta expirando em ${fmtBRFull(getFaltaExpiry(f))}: ${f.alunoNome} (${turmaShortLabel(t)})`);
   });
 
   // Recently expired faltas (last 2 days) from statistics
@@ -3606,7 +3613,7 @@ function generatePainelText(state) {
     .filter(e => e.expiradaEm >= twoDaysAgo && e.expiradaEm < today)
     .forEach(e => {
       const t = state.turmas.find(x => x.id === e.turmaId);
-      obs.push(`🔴 Falta expirada: ${e.alunoNome} (${t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?'}) — ${fmtBR(e.data)}`);
+      obs.push(`🔴 Falta expirada: ${e.alunoNome} (${turmaShortLabel(t)}) — ${fmtBR(e.data)}`);
     });
 
   // Aulas extra sem falta
@@ -3773,14 +3780,14 @@ function PainelVisual({ state, dispatch }) {
   state.faltas.filter(f => f.status==='pendente').forEach(f => {
     const exp = getFaltaExpiry(f);
     const t = state.turmas.find(x => x.id===f.turmaId);
-    const lbl = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
+    const lbl = turmaShortLabel(t);
     if (exp >= td && exp <= in7) obs.push({ level:'amber', text:`Falta expirando em ${fmtBRFull(exp)}: ${f.alunoNome} (${lbl})` });
   });
   arr((state.estatisticas || {}).faltasExpiradas)
     .filter(e => e.expiradaEm >= twoDaysAgo && e.expiradaEm < td)
     .forEach(e => {
       const t = state.turmas.find(x => x.id===e.turmaId);
-      obs.push({ level:'red', text:`Falta expirada: ${e.alunoNome} (${t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?'}) — ${fmtBR(e.data)}` });
+      obs.push({ level:'red', text:`Falta expirada: ${e.alunoNome} (${turmaShortLabel(t)}) — ${fmtBR(e.data)}` });
     });
   state.ausencias.filter(a => !a.creditoUsado).forEach(a => {
     const exp = getAusenciaExpiry(a);
@@ -3797,13 +3804,13 @@ function PainelVisual({ state, dispatch }) {
     });
     Object.values(porTurmaData).sort((a,b) => a.data.localeCompare(b.data)).forEach(({ turmaId, data, count }) => {
       const t = state.turmas.find(x => x.id === turmaId);
-      const lbl = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
+      const lbl = turmaShortLabel(t);
       obs.push({ level:'teal', text:`${count} vaga${count>1?'s':''} extra${count>1?'s':''} disponíve${count>1?'is':'l'}: ${lbl} — ${fmtBRFull(data)}` });
     });
   }
   state.faltas.filter(f => f.status === 'pendente' && f.semAntecedencia).forEach(f => {
     const t = state.turmas.find(x => x.id === f.turmaId);
-    const lbl = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
+    const lbl = turmaShortLabel(t);
     obs.push({ level:'orange', text:`Falta sem antecedência: ${f.alunoNome} (${lbl}) — ${fmtBR(f.datas[0])}` });
   });
   state.reposicoes.filter(r => !r.realizada && r.tipo==='aula_extra').forEach(r => {
@@ -3854,7 +3861,7 @@ function PainelVisual({ state, dispatch }) {
 
     if (tipo === 'falta') {
       const t = state.turmas.find(x => x.id === obj.turmaId);
-      const lbl = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
+      const lbl = turmaShortLabel(t);
       title = `${obj.alunoNome} — ${lbl}`;
       body = (
         <div className="space-y-2">
@@ -3880,7 +3887,7 @@ function PainelVisual({ state, dispatch }) {
 
     if (tipo === 'marcada') {
       const t = state.turmas.find(x => x.id === obj.turmaId);
-      const lbl = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
+      const lbl = turmaShortLabel(t);
       // Find linked reposição
       const repo = obj.faltas[0]?.reposicaoId ? state.reposicoes.find(r => r.id === obj.faltas[0].reposicaoId) : null;
       const tRepo = repo ? state.turmas.find(x => x.id === repo.turmaReposicaoId) : null;
@@ -3998,7 +4005,7 @@ function PainelVisual({ state, dispatch }) {
         }
         return vg.vagaExtra ? 'vaga extra' : null;
       }).filter(Boolean);
-      title = `Vagas — ${t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?'}`;
+      title = `Vagas — ${turmaShortLabel(t)}`;
       body = (
         <div className="space-y-2 text-sm">
           <div className="bg-gray-50 rounded-lg px-3 py-2">
@@ -4044,7 +4051,7 @@ function PainelVisual({ state, dispatch }) {
             <div className="divide-y divide-gray-100">
               {combined.map(({ tipo, obj }, i) => {
                 const t = state.turmas.find(x => x.id === obj.turmaId);
-                const lbl = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
+                const lbl = turmaShortLabel(t);
                 if (tipo === 'falta') {
                   const datasOrdenadas = [...obj.datas].sort();
                   const nearestExp = datasOrdenadas.map(d => { const dt = parseDate(d); dt.setDate(dt.getDate()+30); return dateToStr(dt); }).sort()[0];
@@ -4085,7 +4092,7 @@ function PainelVisual({ state, dispatch }) {
                 <div className="divide-y divide-gray-100">
                   {marcadasGrupos.map((g, i) => {
                     const t = state.turmas.find(x => x.id === g.turmaId);
-                    const lbl = t ? `${ABREV[t.diaSemana]} ${t.horario}` : '?';
+                    const lbl = turmaShortLabel(t);
                     return (
                       <div key={i} onClick={() => setDet({ tipo:'marcada', obj: g })}
                         className="px-4 py-3 bg-white cursor-pointer hover:bg-gray-50 transition-colors">
@@ -4210,7 +4217,7 @@ function PainelVisual({ state, dispatch }) {
               return (
                 <div key={i} className="px-4 py-2.5 bg-white flex justify-between items-center">
                   <div className="flex items-center gap-2">
-                    <span className="font-medium text-gray-700">{ABREV[t.diaSemana]} {t.horario}</span>
+                    <span className="font-medium text-gray-700">{turmaShortLabel(t)}</span>
                     {t.observacao && <span className="text-xs text-gray-400">({t.observacao})</span>}
                   </div>
                   <span className={`text-sm font-medium ${over ? 'text-red-600' : full ? 'text-amber-600' : 'text-gray-500'}`}>
@@ -4621,7 +4628,7 @@ function ResumoDia({ state }) {
 
   const repondoLabel = (r) => {
     const tOrig = state.turmas.find(t => t.id === r.origemTurmaId);
-    return tOrig ? `${r.nome} (${ABREV[tOrig.diaSemana]} ${tOrig.horario})` : r.nome;
+    return tOrig ? `${r.nome} (${turmaShortLabel(tOrig)})` : r.nome;
   };
 
   return (
@@ -4661,7 +4668,7 @@ function ResumoDia({ state }) {
           )}
           {resumo.map((item, idx) => {
             const turma = state.turmas.find(t => t.id === item.turmaId);
-            const titulo = turma ? `${ABREV[turma.diaSemana]} ${turma.horario}` : getTurmaLabel(state.turmas, item.turmaId);
+            const titulo = turma ? turmaShortLabel(turma) : getTurmaLabel(state.turmas, item.turmaId);
             const presentes = item.presentes || [];
             const faltaram = item.faltaram || [];
             const repondo = item.repondo || [];
