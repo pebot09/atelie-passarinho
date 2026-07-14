@@ -271,8 +271,8 @@ function buildMesAlunos(turmas, ausencias, saved, mesAno) {
         list.push(defaultAluno(t.id, nome, isFerias));
       }
     });
-    // alunos que foram lançados no passado mas já saíram do roster atual: preservar
-    (saved || []).filter(a => a.turmaId === t.id && !seen.has(`${t.id}|${a.alunoNome}`))
+    // alunos que saíram do roster: só preserva quem tem lançamento real no mês (barro/extra/obs)
+    (saved || []).filter(a => a.turmaId === t.id && !seen.has(`${t.id}|${a.alunoNome}`) && temLancamento(a))
       .forEach(a => list.push({ ...defaultAluno(t.id, a.alunoNome, false), ...a, _removido: true }));
     list.forEach(migraReposicaoParaBarro);
     list.sort((a, b) => a.alunoNome.localeCompare(b.alunoNome, 'pt-BR', { sensitivity: 'base' }));
@@ -280,6 +280,14 @@ function buildMesAlunos(turmas, ausencias, saved, mesAno) {
   });
   return result;
 }
+// Tem lançamento de verdade no mês? (barro, extra com valor, ou observação)
+function temLancamento(a) {
+  return n2(a.barroKg) > 0
+    || Object.values(a.barroDias || {}).some(v => n2(v) > 0)
+    || (a.extras || []).some(e => n2(e.valor) > 0)
+    || !!(a.obs && String(a.obs).trim());
+}
+
 // Migração: extras antigos de "reposição" viram barro por dia (reposição conta como barro)
 function migraReposicaoParaBarro(al) {
   if (!al.extras || !al.extras.some(e => e.categoria === 'reposicao')) return;
