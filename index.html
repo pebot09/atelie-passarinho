@@ -2088,7 +2088,20 @@ function SectionTurmas({ state, dispatch }) {
                 </div>
                 <div className="text-sm text-gray-400 mt-0.5">{turmaExtra.alunos.length} aluno(s)</div>
               </div>
-              <span className="text-gray-400 text-lg">{exp ? '▲' : '▼'}</span>
+              <div className="flex items-center gap-2">
+                <button onClick={e => { e.stopPropagation(); setNotasTurma(turmaExtra); }}
+                  className="relative text-xs font-medium px-2 py-1 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
+                  title="Notas da turma">
+                  📋{turmaHasUnseenNotas(TURMA_EXTRA_ID, state.notas, localStorage.getItem(PROFESSOR_KEY) || '') && (
+                    <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">!</span>
+                  )}
+                </button>
+                <button onClick={e => { e.stopPropagation(); setGerenciandoTurma(turmaExtra); }}
+                  className="text-xs font-medium px-2.5 py-1 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors">
+                  Gerenciar
+                </button>
+                <span className="text-gray-400 text-lg">{exp ? '▲' : '▼'}</span>
+              </div>
             </div>
             {exp && (
               <div className="border-t border-dashed border-gray-200 p-4 fade-in">
