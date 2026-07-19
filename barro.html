@@ -474,12 +474,19 @@ function App() {
   }, [barro, doSave]);
 
   // Tempo real (SSE): reflete na hora mudanças do app 1 e saves de outros aparelhos no app 2
+  const [sseKey, setSseKey] = useState(0);
+  const aplicaState = useCallback((st) => st && setState({
+    turmas: st.turmas || [], ausencias: st.ausencias || [],
+    faltas: st.faltas || [], reposicoes: st.reposicoes || [],
+  }), []);
+  const aplicaBarro = useCallback((br) => {
+    if (dirty.current || savingRef.current) return;                              // não sobrescrever edição em andamento
+    if (br && br._updatedAt && br._updatedAt === myStampRef.current) return;     // eco do nosso próprio save
+    setBarro(br && typeof br === 'object' ? { lancamentos: br.lancamentos || {} } : { lancamentos: {} });
+  }, []);
+
   useEffect(() => {
     if (!authed) return;
-    const aplicaState = (st) => st && setState({
-      turmas: st.turmas || [], ausencias: st.ausencias || [],
-      faltas: st.faltas || [], reposicoes: st.reposicoes || [],
-    });
     const es1 = new EventSource(DB_URL + '/state.json');
     const h1 = (e) => {
       try {
@@ -491,24 +498,37 @@ function App() {
     es1.addEventListener('put', h1); es1.addEventListener('patch', h1);
 
     const es2 = new EventSource(WRITE_PATH);
-    const aplicaBarro = (br) => setBarro(br && typeof br === 'object' ? { lancamentos: br.lancamentos || {} } : { lancamentos: {} });
     const h2 = (e) => {
       try {
-        if (dirty.current || savingRef.current) return; // não sobrescrever edição em andamento
         const { path, data } = JSON.parse(e.data);
-        if (path === '/') {
-          if (data && data._updatedAt && data._updatedAt === myStampRef.current) return; // eco do nosso save
-          aplicaBarro(data);
-        } else {
-          loadBarro().then(br => {
-            if (!dirty.current && !(br && br._updatedAt === myStampRef.current)) aplicaBarro(br);
-          }).catch(() => {});
-        }
+        if (path === '/') aplicaBarro(data);
+        else loadBarro().then(aplicaBarro).catch(() => {});
       } catch (_) {}
     };
     es2.addEventListener('put', h2); es2.addEventListener('patch', h2);
     return () => { es1.close(); es2.close(); };
-  }, [authed]);
+  }, [authed, sseKey, aplicaState, aplicaBarro]);
+
+  // iOS/Safari mata SSE em segundo plano: ao voltar pro app, re-busca tudo e reabre as conexões
+  useEffect(() => {
+    if (!authed) return;
+    let last = 0;
+    const revive = () => {
+      if (document.visibilityState === 'hidden') return;
+      const now = Date.now(); if (now - last < 1500) return; last = now;
+      loadState().then(aplicaState).catch(() => {});
+      loadBarro().then(aplicaBarro).catch(() => {});
+      setSseKey(k => k + 1); // reabre o SSE
+    };
+    document.addEventListener('visibilitychange', revive);
+    window.addEventListener('focus', revive);
+    window.addEventListener('pageshow', revive);
+    return () => {
+      document.removeEventListener('visibilitychange', revive);
+      window.removeEventListener('focus', revive);
+      window.removeEventListener('pageshow', revive);
+    };
+  }, [authed, aplicaState, aplicaBarro]);
 
   // Aviso do navegador se fechar com alteração ainda não salva
   useEffect(() => {
@@ -607,6 +627,8 @@ function MenuScreen({ prof, mesAno, setMesAno, onPick, onTrocarProf, erro, turma
   const tCom = turmasVisiveis.filter(t => (mesData.alunos[t.id] || []).length);
   const f = fechamentoProf(prof, tCom, mesData);
   const kgMes = tCom.reduce((s, t) => s + (mesData.alunos[t.id] || []).reduce((x, a) => x + barroKgTotal(a), 0), 0);
+  const [verValores, setVerValores] = useState(sessionStorage.getItem('barro_vervalores') === '1');
+  const toggleValores = () => setVerValores(v => { sessionStorage.setItem('barro_vervalores', v ? '0' : '1'); return !v; });
   const itens = [
     { k: 'lancar',   icon: '🏺', titulo: 'Lançar barro',    desc: 'Barro e extras — rápido (do dia) ou completo (do mês)', cor: 'bg-amber-500' },
     { k: 'ajustes',  icon: '✏️', titulo: 'Ajustes do aluno', desc: 'Mensalidade, % de repasse e férias', cor: 'bg-orange-400' },
@@ -632,25 +654,26 @@ function MenuScreen({ prof, mesAno, setMesAno, onPick, onTrocarProf, erro, turma
 
       {erro && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">{erro}</div>}
 
-      {/* Resumo do mês */}
+      {/* Resumo do mês — discreto, valores ocultos por padrão */}
       {tCom.length > 0 && (
-        <div className="bg-white rounded-2xl shadow-sm p-4 mb-4 flex items-center text-center fade-in">
+        <div className="bg-white/60 rounded-xl px-3 py-2 mb-4 flex items-center text-center fade-in">
           <div className="flex-1 min-w-0">
-            <div className="text-[11px] text-gray-400">Meu ganho</div>
-            <div className="font-bold text-indigo-600 truncate">R$ {fmt(f.ganho)}</div>
+            <div className="text-[10px] text-gray-400">Meu ganho</div>
+            <div className="text-sm font-semibold text-gray-600 truncate">{verValores ? `R$ ${fmt(f.ganho)}` : 'R$ ••••'}</div>
           </div>
-          <div className="w-px h-8 bg-gray-100" />
+          <div className="w-px h-7 bg-gray-200/70" />
           <div className="flex-1 min-w-0">
-            <div className="text-[11px] text-gray-400">{prof === 'Carol' ? 'Devo à Laura' : f.netRepasse >= 0 ? 'Repasso à Carol' : 'Recebo da Carol'}</div>
-            <div className={`font-bold truncate ${prof === 'Carol' ? 'text-teal-600' : f.netRepasse >= 0 ? 'text-amber-600' : 'text-green-600'}`}>
-              R$ {fmt(prof === 'Carol' ? f.deveCoprof : Math.abs(f.netRepasse))}
-            </div>
+            <div className="text-[10px] text-gray-400">{prof === 'Carol' ? 'Devo à Laura' : f.netRepasse >= 0 ? 'Repasso à Carol' : 'Recebo da Carol'}</div>
+            <div className="text-sm font-semibold text-gray-600 truncate">{verValores ? `R$ ${fmt(prof === 'Carol' ? f.deveCoprof : Math.abs(f.netRepasse))}` : 'R$ ••••'}</div>
           </div>
-          <div className="w-px h-8 bg-gray-100" />
+          <div className="w-px h-7 bg-gray-200/70" />
           <div className="flex-1 min-w-0">
-            <div className="text-[11px] text-gray-400">Barro lançado</div>
-            <div className="font-bold text-gray-700 truncate">{fmt1(kgMes)} Kg</div>
+            <div className="text-[10px] text-gray-400">Barro</div>
+            <div className="text-sm font-semibold text-gray-600 truncate">{verValores ? `${fmt1(kgMes)} Kg` : '••••'}</div>
           </div>
+          <button onClick={toggleValores} className="ml-2 text-gray-400 text-base px-1" aria-label="mostrar/ocultar valores">
+            {verValores ? '🙈' : '👁️'}
+          </button>
         </div>
       )}
 
@@ -1055,6 +1078,12 @@ function AlunoRow({ a, onChange }) {
             <input value={a.obs || ''} onChange={e => onChange({ obs: e.target.value })}
               className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm outline-none" />
           </Field>
+          {a._removido && (
+            <button onClick={() => onChange({ barroKg: 0, barroDias: {}, extras: [], obs: '' })}
+              className="text-xs text-red-500 font-medium">
+              🗑 Remover do mês (saiu da turma — zera os lançamentos e ele some)
+            </button>
+          )}
         </div>
       )}
     </div>
