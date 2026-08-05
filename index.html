@@ -162,7 +162,8 @@ const SEED = {
   acessos: [],
   creditos: [],
   aulasCanceladas: [],
-  resumosDiarios: {}
+  resumosDiarios: {},
+  manutencao: null
 };
 
 // ==================== HELPERS ====================
@@ -370,6 +371,18 @@ function getTurmaLabel(turmas, id) {
   return `${ABREV[t.diaSemana]} ${t.horario}`;
 }
 
+// Manutenção: expira sozinha após MANUTENCAO_MAX_HORAS, para nunca travar o app
+// caso alguém esqueça ligada ou perca o acesso.
+const MANUTENCAO_MAX_HORAS = 6;
+const MANUTENCAO_ADMIN = 'Pedro'; // único professor que continua trabalhando durante a manutenção
+function isManutencaoAtiva(state) {
+  const m = state && state.manutencao;
+  if (!m || !m.ativo) return false;
+  if (!m.ligadoEm) return true;
+  const decorrido = Date.now() - new Date(m.ligadoEm).getTime();
+  return decorrido < MANUTENCAO_MAX_HORAS * 60 * 60 * 1000;
+}
+
 // Label curto a partir do objeto turma (trata Turma Extra, que não tem dia/horário)
 function turmaShortLabel(t) {
   if (!t) return '?';
@@ -555,6 +568,18 @@ function reducer(state, action) {
       Object.keys(novos).forEach(k => { if (k < corteStr) { delete novos[k]; mudou = true; } });
       if (!mudou) { next = state; break; }
       next = { ...state, resumosDiarios: novos };
+      break;
+    }
+
+    case 'SET_MANUTENCAO': {
+      const ativar = !!action.ativo;
+      next = {
+        ...state,
+        manutencao: ativar
+          ? { ativo: true, ligadoEm: new Date().toISOString(), ligadoPor: action.professor || null }
+          : null
+      };
+      next.log = addLog(state.log, action.professor, ativar ? '🔧 Ativou o modo manutenção' : '✅ Desativou o modo manutenção', action.origem);
       break;
     }
 
@@ -1317,6 +1342,7 @@ function normalizeState(s) {
     notas:      arr(s.notas),
     aulasCanceladas: arr(s.aulasCanceladas),
     resumosDiarios: (s.resumosDiarios && typeof s.resumosDiarios === 'object' && !Array.isArray(s.resumosDiarios)) ? s.resumosDiarios : {},
+    manutencao: (s.manutencao && typeof s.manutencao === 'object') ? s.manutencao : null,
     estatisticas: { faltasExpiradas: arr((s.estatisticas || {}).faltasExpiradas), reposCanceladas: arr((s.estatisticas || {}).reposCanceladas) },
   };
   var afterFaltaMig = migrateFaltas(base);
@@ -2168,6 +2194,52 @@ function SectionTurmas({ state, dispatch }) {
           </div>
         );
       })()}
+
+      {/* Modo manutenção — só o admin vê e opera */}
+      {(localStorage.getItem(PROFESSOR_KEY) || '') === MANUTENCAO_ADMIN && (() => {
+        const ativa = isManutencaoAtiva(state);
+        return (
+          <div className="mt-6 pt-4 border-t border-gray-200">
+            {ativa ? (
+              <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-semibold text-amber-800 text-sm">🔧 Manutenção ativa</div>
+                  <div className="text-xs text-amber-700 mt-0.5">Alunos e demais professores estão bloqueados. Desliga sozinha em {MANUTENCAO_MAX_HORAS}h.</div>
+                </div>
+                <button onClick={() => setConfirm({ type: 'desativarManutencao' })}
+                  className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 shrink-0">
+                  Encerrar
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => setConfirm({ type: 'ativarManutencao' })}
+                className="w-full py-2.5 border border-amber-300 text-amber-700 rounded-lg text-sm font-medium hover:bg-amber-50 transition-colors">
+                🔧 Ativar modo manutenção
+              </button>
+            )}
+          </div>
+        );
+      })()}
+
+      {confirm?.type === 'ativarManutencao' && (
+        <ConfirmModal
+          title="Ativar modo manutenção?"
+          message={`Alunos e os demais professores verão a tela de manutenção e não poderão registrar nada. Só você continua trabalhando. Desliga sozinha após ${MANUTENCAO_MAX_HORAS} horas.`}
+          onConfirm={() => { dispatch({ type:'SET_MANUTENCAO', ativo: true, professor: localStorage.getItem(PROFESSOR_KEY) || '' }); setConfirm(null); }}
+          onCancel={() => setConfirm(null)}
+          confirmLabel="Ativar"
+        />
+      )}
+
+      {confirm?.type === 'desativarManutencao' && (
+        <ConfirmModal
+          title="Encerrar manutenção?"
+          message="O app volta ao normal para todos os alunos e professores."
+          onConfirm={() => { dispatch({ type:'SET_MANUTENCAO', ativo: false, professor: localStorage.getItem(PROFESSOR_KEY) || '' }); setConfirm(null); }}
+          onCancel={() => setConfirm(null)}
+          confirmLabel="Encerrar"
+        />
+      )}
 
       {showNewTurma && (
         <Modal title="Nova Turma" onClose={() => setShowNewTurma(false)}>
@@ -4718,6 +4790,26 @@ function ResumoDia({ state }) {
   );
 }
 
+// ==================== TELA DE MANUTENÇÃO ====================
+function ManutencaoScreen({ onSairProfessor }) {
+  return (
+    <div className="min-h-screen bg-amber-50 flex items-center justify-center p-6">
+      <div className="bg-white rounded-xl shadow-sm border border-amber-200 p-8 max-w-sm text-center space-y-3">
+        <div className="text-4xl">🔧</div>
+        <div className="font-bold text-gray-800">Em manutenção</div>
+        <div className="text-sm text-gray-500">
+          Estamos fazendo ajustes no sistema. Volte em alguns minutos — nenhuma marcação pode ser feita agora.
+        </div>
+        {onSairProfessor && (
+          <button onClick={onSairProfessor} className="text-xs text-gray-400 hover:text-gray-600 underline">
+            Trocar de professor
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ==================== APP ====================
 function App() {
   const [state, baseDispatch] = useReducer(reducer, null, loadState);
@@ -4815,6 +4907,9 @@ function App() {
   //    re-puxa o estado do servidor (evita perda de dados por cache antigo).
   useEffect(function() {
     if (!initialised.current) return;
+    // Modo manutenção: só o admin grava. Impede que aluno/professor com o app
+    // já aberto registre qualquer coisa durante as mudanças.
+    if (isManutencaoAtiva(state) && professor !== MANUTENCAO_ADMIN) return;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(function() {
       // 1) Confere o _updatedAt atual do servidor antes de gravar
@@ -4846,7 +4941,7 @@ function App() {
         })
         .catch(function() { setSyncStatus('erro'); });
     }, 600);
-  }, [state]);
+  }, [state, professor]);
 
   const nav = [
     { label: 'Turmas', icon: '👥' },
@@ -4881,6 +4976,7 @@ function App() {
         </div>
       );
     }
+    if (isManutencaoAtiva(state)) return <ManutencaoScreen />;
     return <AlunoView state={state} dispatch={baseDispatch} acesso={acessoAluno} />;
   }
 
@@ -4892,6 +4988,11 @@ function App() {
   // Tela de seleção de professor — renderização condicional DENTRO do return
   if (!professor) {
     return <ProfessorModal onSelect={handleSelectProfessor} />;
+  }
+
+  // Modo manutenção: só o admin continua trabalhando
+  if (isManutencaoAtiva(state) && professor !== MANUTENCAO_ADMIN) {
+    return <ManutencaoScreen onSairProfessor={handleChangeProfessor} />;
   }
 
   return (
