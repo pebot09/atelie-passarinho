@@ -579,7 +579,6 @@ function reducer(state, action) {
           ? { ativo: true, ligadoEm: new Date().toISOString(), ligadoPor: action.professor || null }
           : null
       };
-      next.log = addLog(state.log, action.professor, ativar ? '🔧 Ativou o modo manutenção' : '✅ Desativou o modo manutenção', action.origem);
       break;
     }
 
