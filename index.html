@@ -582,6 +582,13 @@ function reducer(state, action) {
       break;
     }
 
+    case 'RESTORE_STATE': {
+      // Desfazer: restaura o estado anterior a uma ação (snapshot completo).
+      if (!action.snapshot || typeof action.snapshot !== 'object') return state;
+      next = action.snapshot;
+      break;
+    }
+
     case 'DISMISS_SEED_WARNING':
       next = {...state, _seedWarning: false};
       break;
@@ -4809,6 +4816,55 @@ function ManutencaoScreen({ onSairProfessor }) {
   );
 }
 
+// ==================== TOAST DE DESFAZER ====================
+// Ações que geram o balão "Desfazer". Desfazer restaura o estado anterior
+// (snapshot), sem passar pelas políticas de cancelamento — é um "voltar atrás".
+const UNDOABLE_ACTIONS = new Set([
+  'ADD_FALTA','CANCEL_FALTA','ADD_REPOSICAO','CANCEL_REPOSICAO','CANCEL_REPOSICAO_SEM_CREDITO',
+  'ADD_AUSENCIA','DELETE_AUSENCIA','USE_AUSENCIA_CREDITO','ADD_CREDITO','DELETE_CREDITO',
+  'ADD_ALUNO','REMOVE_ALUNO','RENAME_ALUNO','CHANGE_TURMA_ALUNO','ADD_TURMA','DELETE_TURMA',
+  'ADD_NOTA','DELETE_NOTA','CANCEL_AULA','REVERT_AULA_CANCELADA','DELETE_LOG_ENTRY'
+]);
+function describeAction(action) {
+  switch (action.type) {
+    case 'ADD_FALTA': return 'Falta registrada';
+    case 'CANCEL_FALTA': return 'Falta cancelada';
+    case 'ADD_REPOSICAO': return 'Reposição marcada';
+    case 'CANCEL_REPOSICAO':
+    case 'CANCEL_REPOSICAO_SEM_CREDITO': return 'Reposição cancelada';
+    case 'ADD_AUSENCIA': return 'Férias registradas';
+    case 'DELETE_AUSENCIA': return 'Férias removidas';
+    case 'USE_AUSENCIA_CREDITO': return 'Crédito de férias usado';
+    case 'ADD_CREDITO': return 'Crédito extra adicionado';
+    case 'DELETE_CREDITO': return 'Crédito extra removido';
+    case 'ADD_ALUNO': return 'Aluno adicionado';
+    case 'REMOVE_ALUNO': return 'Aluno removido';
+    case 'RENAME_ALUNO': return 'Aluno renomeado';
+    case 'CHANGE_TURMA_ALUNO': return 'Aluno movido de turma';
+    case 'ADD_TURMA': return 'Turma criada';
+    case 'DELETE_TURMA': return 'Turma excluída';
+    case 'ADD_NOTA': return 'Nota adicionada';
+    case 'DELETE_NOTA': return 'Nota removida';
+    case 'CANCEL_AULA': return 'Aula cancelada';
+    case 'REVERT_AULA_CANCELADA': return 'Aula reativada';
+    case 'DELETE_LOG_ENTRY': return 'Registro removido';
+    default: return 'Ação realizada';
+  }
+}
+function UndoToast({ toast, onUndo, onDismiss }) {
+  return (
+    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[60] w-[calc(100%-2rem)] max-w-sm fade-in">
+      <div className="bg-gray-900 text-white rounded-xl shadow-lg px-4 py-3 flex items-center justify-between gap-3">
+        <span className="text-sm">{toast.description}</span>
+        <div className="flex items-center gap-3 shrink-0">
+          <button onClick={onUndo} className="text-sm font-bold text-blue-300 hover:text-blue-200">Desfazer</button>
+          <button onClick={onDismiss} className="text-gray-400 hover:text-white text-lg leading-none" aria-label="Fechar">×</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ==================== APP ====================
 function App() {
   const [state, baseDispatch] = useReducer(reducer, null, loadState);
@@ -4823,10 +4879,46 @@ function App() {
   const syncedUpdatedAt = useRef(0); // _updatedAt do último estado recebido do Firebase (controle de concorrência)
   const prevVagasRef = useRef(null);
 
-  // Wrapper que injeta o professor em toda ação
+  // --- Toast de desfazer ---
+  const [toast, setToast] = useState(null); // { id, description, snapshot }
+  const stateRef = useRef(state); stateRef.current = state;
+  const toastRef = useRef(null); toastRef.current = toast;
+  const toastTimer = useRef(null);
+  const toastIdRef = useRef(0);
+
+  const dismissToast = useCallback(() => {
+    clearTimeout(toastTimer.current);
+    setToast(null);
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    clearTimeout(toastTimer.current);
+    const t = toastRef.current;
+    if (t && t.snapshot) baseDispatch({ type: 'RESTORE_STATE', snapshot: t.snapshot });
+    setToast(null);
+  }, []);
+
+  // Dispatch com captura de snapshot para desfazer. Só ações "de dados" geram toast.
+  const dispatchU = useCallback((action) => {
+    if (UNDOABLE_ACTIONS.has(action.type)) {
+      const snapshot = stateRef.current;
+      const description = describeAction(action);
+      baseDispatch(action);
+      clearTimeout(toastTimer.current);
+      const id = ++toastIdRef.current;
+      setToast({ id, description, snapshot });
+      toastTimer.current = setTimeout(() => {
+        setToast(prev => (prev && prev.id === id) ? null : prev);
+      }, 5000);
+    } else {
+      baseDispatch(action);
+    }
+  }, []);
+
+  // Wrapper que injeta o professor em toda ação (passa pelo dispatchU)
   const dispatch = useCallback((action) => {
-    baseDispatch({ ...action, professor });
-  }, [professor]);
+    dispatchU({ ...action, professor });
+  }, [professor, dispatchU]);
 
   const handleSelectProfessor = (p) => {
     localStorage.setItem(PROFESSOR_KEY, p);
@@ -4864,6 +4956,7 @@ function App() {
         if (data._updatedAt && data._updatedAt <= lastOwnSave.current + 3000) return;
         var { _auth: _a, ...cleanData } = data;
         syncedUpdatedAt.current = data._updatedAt || syncedUpdatedAt.current;
+        dismissToast(); // mudança externa chegou: snapshot ficaria desatualizado
         baseDispatch({ type: 'SYNC_FROM_FIREBASE', data: normalizeState(cleanData) });
       } catch(err) { console.error('[atelie] erro ao processar evento SSE:', err); }
     });
@@ -4923,6 +5016,7 @@ function App() {
             return fetchFromFirebase().then(function(data) {
               if (data && typeof data === 'object' && Object.keys(data).length > 0) {
                 syncedUpdatedAt.current = data._updatedAt || serverTs;
+                dismissToast(); // mudança externa: fecha a janela de desfazer
                 baseDispatch({ type: 'SYNC_FROM_FIREBASE', data: normalizeState(data) });
               }
               setSyncStatus('ok');
@@ -4976,7 +5070,12 @@ function App() {
       );
     }
     if (isManutencaoAtiva(state)) return <ManutencaoScreen />;
-    return <AlunoView state={state} dispatch={baseDispatch} acesso={acessoAluno} />;
+    return (
+      <>
+        <AlunoView state={state} dispatch={dispatchU} acesso={acessoAluno} />
+        {toast && <UndoToast toast={toast} onUndo={handleUndo} onDismiss={dismissToast} />}
+      </>
+    );
   }
 
   // PIN guard — bloqueia acesso ao painel sem PIN verificado
@@ -5063,6 +5162,8 @@ function App() {
         {section === 1 && <SectionFaltasReposicoes state={state} dispatch={dispatch} />}
         {section === 2 && <SectionPainel state={state} dispatch={dispatch} />}
       </div>
+
+      {toast && <UndoToast toast={toast} onUndo={handleUndo} onDismiss={dismissToast} />}
     </div>
   );
 }
