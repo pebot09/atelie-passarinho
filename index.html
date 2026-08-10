@@ -401,6 +401,34 @@ function addLog(currentLog, professor, descricao, origem) {
   return pruneLog([entry, ...arr(currentLog)]);
 }
 
+// Expira automaticamente: férias (ausências) cujo crédito venceu (getAusenciaExpiry < hoje)
+// e créditos extras NÃO usados vencidos há mais de 7 dias. Retorna as listas ativas, as
+// entradas de estatística e as descrições de log. Usado no CLEANUP e no SYNC —
+// expirar = remover, então nunca duplica no fluxo normal.
+const CREDITO_EXPIRA_GRACE_DIAS = 7;
+function expireStaleItems(st, td) {
+  const ausencias = arr(st.ausencias);
+  const creditos = arr(st.creditos);
+  const reposicoes = arr(st.reposicoes);
+  // Segurança: nunca expira algo ainda vinculado a uma reposição PENDENTE (não realizada),
+  // senão a reposição ficaria órfã e o aluno perderia o direito de remarcar ao cancelar.
+  const ausRefPendente = new Set(reposicoes.filter(r => !r.realizada && r.ausenciaId).map(r => r.ausenciaId));
+  const credRefPendente = new Set(reposicoes.filter(r => !r.realizada && r.creditoId).map(r => r.creditoId));
+  const credCutoff = (function(){ const d = parseDate(td); d.setDate(d.getDate() - CREDITO_EXPIRA_GRACE_DIAS); return dateToStr(d); })();
+  const feriasExp = ausencias.filter(a => getAusenciaExpiry(a) < td && !ausRefPendente.has(a.id));
+  const feriasExpIds = new Set(feriasExp.map(a => a.id));
+  const ausenciasAtivas = ausencias.filter(a => !feriasExpIds.has(a.id));
+  const credExp = creditos.filter(c => !c.usado && c.dataExpiracao && c.dataExpiracao < credCutoff && !credRefPendente.has(c.id));
+  const credExpIds = new Set(credExp.map(c => c.id));
+  const creditosAtivos = creditos.filter(c => !credExpIds.has(c.id));
+  const feriasExpStats = feriasExp.map(a => ({ alunoNome: a.alunoNome, turmaId: a.turmaId, mesAno: a.mesAno, expiradaEm: getAusenciaExpiry(a) }));
+  const credExpStats = credExp.map(c => ({ alunoNome: c.alunoNome, turmaId: c.turmaId, dataExpiracao: c.dataExpiracao, expiradoEm: td }));
+  const logs = [];
+  feriasExp.forEach(a => logs.push(`⏰ Expirou: férias de ${a.alunoNome} (${getTurmaLabel(st.turmas, a.turmaId)}) — ${getMesNome(a.mesAno)}`));
+  credExp.forEach(c => logs.push(`⏰ Expirou: crédito extra de ${c.alunoNome} (${getTurmaLabel(st.turmas, c.turmaId)})`));
+  return { ausenciasAtivas, creditosAtivos, feriasExpStats, credExpStats, logs };
+}
+
 function sortTurmas(turmas) {
   return [...turmas].sort((a,b) => {
     if (a.id === TURMA_EXTRA_ID) return 1;
@@ -1239,12 +1267,21 @@ function reducer(state, action) {
         alunoNome: f.alunoNome, turmaId: f.turmaId,
         data: f.datas[0], expiradaEm: getFaltaExpiry(f)
       }));
+      const expCU = expireStaleItems(state, td);
       const estatisticas = {
         ...(state.estatisticas || {}),
-        faltasExpiradas: [...arr((state.estatisticas || {}).faltasExpiradas), ...newExpStats]
+        faltasExpiradas: [...arr((state.estatisticas || {}).faltasExpiradas), ...newExpStats],
+        feriasExpiradas: [...arr((state.estatisticas || {}).feriasExpiradas), ...expCU.feriasExpStats],
+        creditosExpirados: [...arr((state.estatisticas || {}).creditosExpirados), ...expCU.credExpStats],
       };
-      const vagasComExtras = stripVagasCanceladas(computeVagasExtras(state.turmas, state.faltas, reposicoes, vagas, td, state.ausencias), state.aulasCanceladas);
-      next = { ...state, vagas: vagasComExtras, reposicoes, faltas: activeFaltas, estatisticas };
+      const vagasComExtras = stripVagasCanceladas(computeVagasExtras(state.turmas, state.faltas, reposicoes, vagas, td, expCU.ausenciasAtivas), state.aulasCanceladas);
+      next = { ...state, vagas: vagasComExtras, reposicoes, faltas: activeFaltas, ausencias: expCU.ausenciasAtivas, creditos: expCU.creditosAtivos, estatisticas };
+      {
+        const faltasLogsCU = expiredFaltas.map(f => `⏰ Expirou: falta pendente de ${f.alunoNome} (${getTurmaLabel(state.turmas, f.turmaId)}) — ${fmtBR(f.datas[0])}`);
+        let logCU = state.log;
+        [...faltasLogsCU, ...expCU.logs].forEach(desc => { logCU = addLog(logCU, 'Sistema', desc, 'sistema'); });
+        next.log = logCU;
+      }
       break;
     }
 
@@ -1262,9 +1299,12 @@ function reducer(state, action) {
         alunoNome: f.alunoNome, turmaId: f.turmaId,
         data: f.datas[0], expiradaEm: getFaltaExpiry(f)
       }));
+      const expSync = expireStaleItems(inc, td);
       const estatisticas = {
         ...(inc.estatisticas || {}),
-        faltasExpiradas: [...arr((inc.estatisticas || {}).faltasExpiradas), ...newExpStats]
+        faltasExpiradas: [...arr((inc.estatisticas || {}).faltasExpiradas), ...newExpStats],
+        feriasExpiradas: [...arr((inc.estatisticas || {}).feriasExpiradas), ...expSync.feriasExpStats],
+        creditosExpirados: [...arr((inc.estatisticas || {}).creditosExpirados), ...expSync.credExpStats],
       };
       const reposSynced = inc.reposicoes.map(r => r.dataReposicao < td ? {...r, realizada: true} : r);
       const realizadasIdsSynced = new Set(reposSynced.filter(r => r.realizada).map(r => r.id));
@@ -1272,7 +1312,7 @@ function reducer(state, action) {
         !(f.status === 'marcada' && f.reposicaoId && realizadasIdsSynced.has(f.reposicaoId) && f.datas.every(d => d < td))
       );
       const vagasFiltradas = inc.vagas.filter(v => v.data >= td);
-      const vagasComExtras = stripVagasCanceladas(computeVagasExtras(inc.turmas, cleanFaltas, reposSynced, vagasFiltradas, td, inc.ausencias), inc.aulasCanceladas);
+      const vagasComExtras = stripVagasCanceladas(computeVagasExtras(inc.turmas, cleanFaltas, reposSynced, vagasFiltradas, td, expSync.ausenciasAtivas), inc.aulasCanceladas);
       // Mescla resumosDiarios: mantém os snapshots locais (recém-congelados, ainda não
       // salvos no Firebase) + os que vierem do servidor. Sem isso, o sync apagaria os
       // snapshots criados localmente antes de persistirem. Poda os de mais de 3 meses.
@@ -1285,9 +1325,17 @@ function reducer(state, action) {
         faltas:     cleanFaltas,
         vagas:      vagasComExtras,
         reposicoes: reposSynced,
+        ausencias:  expSync.ausenciasAtivas,
+        creditos:   expSync.creditosAtivos,
         estatisticas,
         resumosDiarios: mergedResumos,
       };
+      {
+        const faltasLogsSync = expiredFaltas.map(f => `⏰ Expirou: falta pendente de ${f.alunoNome} (${getTurmaLabel(inc.turmas, f.turmaId)}) — ${fmtBR(f.datas[0])}`);
+        let logSync = inc.log;
+        [...faltasLogsSync, ...expSync.logs].forEach(desc => { logSync = addLog(logSync, 'Sistema', desc, 'sistema'); });
+        next.log = logSync;
+      }
       break;
     }
 
@@ -1349,7 +1397,7 @@ function normalizeState(s) {
     aulasCanceladas: arr(s.aulasCanceladas),
     resumosDiarios: (s.resumosDiarios && typeof s.resumosDiarios === 'object' && !Array.isArray(s.resumosDiarios)) ? s.resumosDiarios : {},
     manutencao: (s.manutencao && typeof s.manutencao === 'object') ? s.manutencao : null,
-    estatisticas: { faltasExpiradas: arr((s.estatisticas || {}).faltasExpiradas), reposCanceladas: arr((s.estatisticas || {}).reposCanceladas) },
+    estatisticas: { faltasExpiradas: arr((s.estatisticas || {}).faltasExpiradas), reposCanceladas: arr((s.estatisticas || {}).reposCanceladas), feriasExpiradas: arr((s.estatisticas || {}).feriasExpiradas), creditosExpirados: arr((s.estatisticas || {}).creditosExpirados) },
   };
   var afterFaltaMig = migrateFaltas(base);
   // Migration: create vacation vagas for existing ausencias that don't have them yet
