@@ -877,11 +877,12 @@ function reducer(state, action) {
         const tRLbl = getTurmaLabel(state.turmas, turmaReposicaoId);
         next.log = addLog(state.log, action.professor, `Agendou reposição (crédito extra) de ${alunoNome} (${tOLbl}) → ${tRLbl}, ${fmtBRFull(dataReposicao)}`, action.origem);
       } else if (tipo === 'aula_extra') {
-        const turmaOrigem = state.turmas.find(t => t.alunos.includes(alunoNome));
+        // Usa a turma de origem que veio na ação (evita pegar a turma errada de um homônimo)
+        const turmaOrigemId = action.turmaOrigemId || (state.turmas.find(t => t.alunos.includes(alunoNome)) || {}).id || null;
         next = { ...state,
           reposicoes: [...state.reposicoes, {
             id: repoId, alunoNome,
-            turmaOrigemId: turmaOrigem?.id || null,
+            turmaOrigemId,
             faltaId: null, dataReposicao, turmaReposicaoId,
             tipo: 'aula_extra', realizada: false, semVagaOficial, pago: false,
             vagaConsumedFaltaId, vagaExtra: isVagaExtra,
@@ -889,7 +890,7 @@ function reducer(state, action) {
           }],
           vagas: removeVagaSel(state.vagas)
         };
-        const tOLbl = getTurmaLabel(state.turmas, turmaOrigem?.id);
+        const tOLbl = getTurmaLabel(state.turmas, turmaOrigemId);
         const tRLbl = getTurmaLabel(state.turmas, turmaReposicaoId);
         next.log = addLog(state.log, action.professor, `Agendou aula extra de ${alunoNome} (${tOLbl}) → ${tRLbl}, ${fmtBRFull(dataReposicao)}`, action.origem);
       } else {
@@ -917,11 +918,12 @@ function reducer(state, action) {
           next.log = addLog(state.log, action.professor, `Agendou reposição de ${alunoNome} (${tOLbl}) → ${tRLbl}, ${fmtBRFull(dataReposicao)}`, action.origem);
         } else {
           // Reposição sem falta vinculada
-          const turmaOrigem = state.turmas.find(t => t.alunos.includes(alunoNome));
+          // Usa a turma de origem que veio na ação (evita pegar a turma errada de um homônimo)
+          const turmaOrigemId = action.turmaOrigemId || (state.turmas.find(t => t.alunos.includes(alunoNome)) || {}).id || null;
           next = { ...state,
             reposicoes: [...state.reposicoes, {
               id: repoId, alunoNome,
-              turmaOrigemId: turmaOrigem?.id || null,
+              turmaOrigemId,
               faltaId: null, dataReposicao, turmaReposicaoId,
               tipo: 'reposicao', realizada: false, semVagaOficial,
               vagaConsumedFaltaId, vagaExtra: isVagaExtra,
@@ -931,7 +933,7 @@ function reducer(state, action) {
             }],
             vagas: removeVagaSel(state.vagas)
           };
-          const tOLbl = getTurmaLabel(state.turmas, turmaOrigem?.id);
+          const tOLbl = getTurmaLabel(state.turmas, turmaOrigemId);
           const tRLbl = getTurmaLabel(state.turmas, turmaReposicaoId);
           next.log = addLog(state.log, action.professor, `Agendou reposição de ${alunoNome} (${tOLbl}) → ${tRLbl}, ${fmtBRFull(dataReposicao)}`, action.origem);
         }
@@ -6389,9 +6391,17 @@ function PainelRegistro({ state, dispatch }) {
   const [historicoModal, setHistoricoModal] = useState(null); // { nome, turmaId }
 
   const abrirHistorico = (nome, descricao) => {
-    const turmasDoAluno = state.turmas.filter(t => t.alunos.includes(nome));
-    const turmaEncontrada = turmasDoAluno.find(t => descricao.includes(getTurmaLabel(state.turmas, t.id)));
-    const turmaId = turmaEncontrada?.id || (turmasDoAluno.length === 1 ? turmasDoAluno[0].id : null);
+    // Turmas do aluno = roster atual + turmas de origem de faltas/reposições (cobre
+    // ex-alunos que saíram do roster). Só turmas próprias (origem), nunca a de destino
+    // de uma reposição. Desambigua pelo rótulo embutido na descrição do registro —
+    // assim homônimos em turmas diferentes vão para o histórico certo.
+    const turmaIds = new Set();
+    state.turmas.forEach(t => { if (t.alunos.includes(nome)) turmaIds.add(t.id); });
+    state.faltas.forEach(f => { if (f.alunoNome === nome) turmaIds.add(f.turmaId); });
+    state.reposicoes.forEach(r => { if (r.alunoNome === nome && r.turmaOrigemId) turmaIds.add(r.turmaOrigemId); });
+    const turmasDoAluno = [...turmaIds];
+    const turmaEncontrada = turmasDoAluno.find(id => descricao.includes(getTurmaLabel(state.turmas, id)));
+    const turmaId = turmaEncontrada || (turmasDoAluno.length === 1 ? turmasDoAluno[0] : null);
     setHistoricoModal({ nome, turmaId });
   };
 
