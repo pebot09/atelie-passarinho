@@ -350,6 +350,37 @@ function getAusenciaExpiry(aus) {
   return dateToStr(last);
 }
 
+// Lista os "direitos de reposição" do aluno numa turma, cada um com sua data de expiração.
+// Tipos: falta pendente, crédito de férias, crédito extra. A prioridade de consumo é por
+// expiração (usa primeiro o que vence antes), independente do tipo.
+function reposicaoRights(state, alunoNome, turmaOrigemId, td) {
+  const rights = [];
+  arr(state.faltas)
+    .filter(f => f.alunoNome === alunoNome && f.turmaId === turmaOrigemId && f.status === 'pendente')
+    .forEach(f => rights.push({ kind: 'falta', id: f.id, expiry: getFaltaExpiry(f), semAntecedencia: !!f.semAntecedencia }));
+  arr(state.ausencias)
+    .filter(a => a.alunoNome === alunoNome && a.turmaId === turmaOrigemId && !a.creditoUsado && a.creditoReposicao > 0)
+    .forEach(a => rights.push({ kind: 'ferias', id: a.id, expiry: getAusenciaExpiry(a) }));
+  arr(state.creditos)
+    .filter(c => c.alunoNome === alunoNome && c.turmaId === turmaOrigemId && !c.usado && c.dataExpiracao >= td)
+    .forEach(c => rights.push({ kind: 'credito', id: c.id, expiry: c.dataExpiracao }));
+  return rights;
+}
+// Escolhe o direito a consumir (o que vence antes). Faltas sem antecedência só valem
+// dentro de 2h da aula. Retorna null se não há direito elegível → aula extra.
+function pickReposicaoRight(rights, within2h) {
+  const elegiveis = rights.filter(r => !(r.kind === 'falta' && r.semAntecedencia) || within2h);
+  if (!elegiveis.length) return null;
+  return elegiveis.slice().sort((a, b) => a.expiry.localeCompare(b.expiry))[0];
+}
+// Converte o direito escolhido nos campos da ação ADD_REPOSICAO.
+function rightToActionFields(right) {
+  if (!right) return { tipo: 'aula_extra' };
+  if (right.kind === 'falta') return { faltaId: right.id, tipo: 'reposicao' };
+  if (right.kind === 'ferias') return { ausenciaId: right.id };
+  return { creditoId: right.id, tipo: 'reposicao' };
+}
+
 function getLastDayOfMonth(mesAno) {
   const [y,m] = mesAno.split('-').map(Number);
   return dateToStr(new Date(y, m, 0));
@@ -2586,7 +2617,6 @@ function TabRegistrarReposicao({ state, dispatch }) {
   const [extraData, setExtraData]         = useState('');
   const [extraTurma, setExtraTurma]       = useState('');
   const [tipoManual, setTipoManual]       = useState('reposicao'); // quando !hasPending + isManual
-  const [creditoId, setCreditoId]         = useState('');
   const [success, setSuccess]             = useState('');
 
   const td     = todayStr();
@@ -2612,16 +2642,25 @@ function TabRegistrarReposicao({ state, dispatch }) {
       });
   }, [state.vagas, state.turmas, td]);
 
-  const hasPending  = alunoNome ? state.faltas.some(f => f.alunoNome === alunoNome && f.status === 'pendente') : false;
   const isManual    = vagaSel === 'livre';
   const vagaObj     = !isManual && vagaSel ? state.vagas.find(v => v.id === vagaSel) : null;
   const dataRepo    = isManual ? extraData   : (vagaObj?.data || '');
   const turmaRepoId = isManual ? extraTurma  : (vagaObj?.turmaId || '');
   const turmaRepo   = state.turmas.find(t => t.id === turmaRepoId);
 
-  // Tipo: com falta pendente → sempre reposicao
-  //       sem falta → tipoManual (escolha explícita, tanto vaga oficial quanto manual)
-  const tipo = hasPending ? 'reposicao' : tipoManual;
+  // Direitos de reposição do aluno (falta/férias/crédito), priorizados por expiração.
+  const rights = useMemo(() =>
+    (alunoNome && turmaOrigemId) ? reposicaoRights(state, alunoNome, turmaOrigemId, td) : [],
+    [state, alunoNome, turmaOrigemId, td]);
+  const within2h = useMemo(() => {
+    const dt = getClassDatetime(turmaRepoId, dataRepo, state.turmas);
+    if (!dt) return false;
+    const h = (dt - Date.now()) / 3600000;
+    return h >= 0 && h <= 2;
+  }, [turmaRepoId, dataRepo, state.turmas]);
+  const picked = useMemo(() => pickReposicaoRight(rights, within2h), [rights, within2h]);
+  // Falta normal pendente força reposição (sem opção de aula extra).
+  const hasPending = rights.some(r => r.kind === 'falta' && !r.semAntecedencia);
 
   const faltaInfo = useMemo(() => {
     if (!alunoNome) return null;
@@ -2632,13 +2671,6 @@ function TabRegistrarReposicao({ state, dispatch }) {
     const oldest = pending[0];
     return { turmaId: oldest.turmaId, datas: oldest.datas, expiry: getFaltaExpiry(oldest) };
   }, [alunoNome, state.faltas]);
-
-  const creditosDisponiveis = useMemo(() => {
-    if (!alunoNome || !turmaOrigemId) return [];
-    return arr(state.creditos).filter(c =>
-      c.alunoNome === alunoNome && c.turmaId === turmaOrigemId && !c.usado && c.dataExpiracao >= td
-    );
-  }, [alunoNome, turmaOrigemId, state.creditos, td]);
 
   const occupancy = useMemo(() => {
     if (!turmaRepoId || !dataRepo) return null;
@@ -2653,16 +2685,31 @@ function TabRegistrarReposicao({ state, dispatch }) {
 
   const canSubmit = turmaOrigemId && alunoNome && vagaSel && dataRepo && turmaRepoId && !jaTemReposicao;
 
+  // Descreve o direito que será consumido (para o professor ver antes de confirmar).
+  const pickedLabel = (r) => {
+    if (!r) return null;
+    if (r.kind === 'falta') return `falta pendente (vence ${fmtBRFull(r.expiry)})`;
+    if (r.kind === 'ferias') return `crédito de férias (vence ${fmtBRFull(r.expiry)})`;
+    return `crédito extra (vence ${fmtBRFull(r.expiry)})`;
+  };
+
   const handleSubmit = () => {
     if (!canSubmit) return;
+    // Sem falta pendente, o professor pode forçar aula extra; senão consome o direito
+    // que vence antes (falta/férias/crédito), automaticamente. Sem nenhum direito e sem
+    // forçar aula extra, cria reposição sem falta vinculada (comportamento antigo).
+    const forcarAulaExtra = !hasPending && tipoManual === 'aula_extra';
+    const actionFields = forcarAulaExtra ? { tipo: 'aula_extra' }
+      : picked ? rightToActionFields(picked)
+      : { tipo: 'reposicao' };
     dispatch({
       type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId,
       dataReposicao: dataRepo, turmaReposicaoId: turmaRepoId,
-      tipo, semVagaOficial: isManual, vagaSelId: vagaObj?.id || null,
-      creditoId: (!faltaInfo && creditoId) ? creditoId : null
+      semVagaOficial: isManual, vagaSelId: vagaObj?.id || null,
+      ...actionFields
     });
-    setSuccess(`${tipo === 'aula_extra' ? 'Aula extra' : 'Reposição'} de ${alunoNome} agendada para ${fmtBRFull(dataRepo)}.`);
-    setAlunoNome(''); setVagaSel(''); setExtraData(''); setExtraTurma(''); setTipoManual('reposicao'); setCreditoId('');
+    setSuccess(`${forcarAulaExtra ? 'Aula extra' : 'Reposição'} de ${alunoNome} agendada para ${fmtBRFull(dataRepo)}.`);
+    setAlunoNome(''); setVagaSel(''); setExtraData(''); setExtraTurma(''); setTipoManual('reposicao');
     setTimeout(() => setSuccess(''), 4000);
   };
 
@@ -2708,18 +2755,6 @@ function TabRegistrarReposicao({ state, dispatch }) {
         </div>
       )}
 
-      {/* Info: crédito extra disponível */}
-      {alunoNome && !faltaInfo && creditosDisponiveis.length > 0 && (
-        <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 text-sm">
-          <div className="font-medium text-purple-800">Crédito extra disponível:</div>
-          {creditosDisponiveis.map(c => (
-            <label key={c.id} className="flex items-center gap-2 mt-1 cursor-pointer">
-              <input type="radio" name="creditoSel" value={c.id} checked={creditoId === c.id} onChange={() => setCreditoId(c.id)} />
-              <span className="text-purple-700">Expira {fmtBRFull(c.dataExpiracao)}</span>
-            </label>
-          ))}
-        </div>
-      )}
 
       {/* 3. Vaga */}
       {alunoNome && (
@@ -2773,13 +2808,20 @@ function TabRegistrarReposicao({ state, dispatch }) {
           <div className="flex gap-3">
             <label className={`flex-1 flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors ${tipoManual === 'reposicao' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}>
               <input type="radio" name="tipoManual" value="reposicao" checked={tipoManual === 'reposicao'} onChange={() => setTipoManual('reposicao')} />
-              <span className="text-sm font-medium">Reposição sem falta vinculada</span>
+              <span className="text-sm font-medium">{picked ? 'Reposição (usa crédito)' : 'Reposição sem falta vinculada'}</span>
             </label>
             <label className={`flex-1 flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors ${tipoManual === 'aula_extra' ? 'border-purple-500 bg-purple-50' : 'border-gray-200'}`}>
               <input type="radio" name="tipoManual" value="aula_extra" checked={tipoManual === 'aula_extra'} onChange={() => setTipoManual('aula_extra')} />
               <span className="text-sm font-medium">Aula extra</span>
             </label>
           </div>
+        </div>
+      )}
+
+      {/* Direito que será consumido automaticamente (o que vence antes) */}
+      {vagaSel && picked && !(!hasPending && tipoManual === 'aula_extra') && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-sm text-blue-700">
+          Vai consumir: <strong>{pickedLabel(picked)}</strong>
         </div>
       )}
 
@@ -5384,6 +5426,10 @@ function AlunoView({ state, dispatch, acesso }) {
       .sort((a,b) => a.datas[0].localeCompare(b.datas[0])),
     [state.faltas, alunoNome, turmaId]);
   const hasPending = pendingNormal.length > 0;
+  // Direitos de reposição do aluno (falta/férias/crédito), priorizados por expiração.
+  const reposRights = useMemo(() =>
+    reposicaoRights(state, alunoNome, turmaId, td),
+    [state, alunoNome, turmaId, td]);
   const handleMarcarRepo = () => {
     if (!vagaSel || jaTemReposicao) return;
     alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: dataRepo, turmaReposicaoId: turmaRepoId, tipo: hasPending ? 'reposicao' : 'aula_extra', semVagaOficial: false, vagaSelId: vagaObj?.id || null });
@@ -5823,30 +5869,24 @@ function AlunoView({ state, dispatch, acesso }) {
                         const dt = getClassDatetime(v.turmaId, v.data, state.turmas);
                         const horasAte = dt ? (dt - Date.now()) / 3600000 : null;
                         const within2h = horasAte !== null && horasAte >= 0 && horasAte <= 2;
-                        const allPending = [...pendingNormal, ...pendingSemAnt].sort((a,b) => a.datas[0].localeCompare(b.datas[0]));
-                        const eligibleFaltas = within2h ? allPending : pendingNormal;
-                        const canRepor = eligibleFaltas.length > 0;
-                        const canUseFerias = !canRepor && !!ausenciaCredito;
-                        const canUseCredito = !canRepor && !canUseFerias && creditosExtras.length > 0;
-                        const needsChoice = within2h && pendingNormal.length > 0 && pendingSemAnt.length > 0
-                          && pendingNormal[0].datas[0] < pendingSemAnt[0].datas[0];
+                        // Direito a consumir nesta vaga: o que vence antes (falta/férias/crédito).
+                        const picked = pickReposicaoRight(reposRights, within2h);
+                        const canRepor = picked?.kind === 'falta';
+                        const canUseFerias = picked?.kind === 'ferias';
+                        const canUseCredito = picked?.kind === 'credito';
+                        const semAntEsperando = !picked && reposRights.some(r => r.kind === 'falta' && r.semAntecedencia) && !within2h;
                         const isMyFeriasVaga = v.ausenciaId && ausenciasAtivas.some(a => a.id === v.ausenciaId);
                         const handleClick = () => {
                           if (jaOcupada) return;
                           if (canRepor) {
-                            if (needsChoice) {
-                              setConfirmEscolhaFalta({ vaga: v, opcoes: [pendingNormal[0], pendingSemAnt[0]] });
-                              return;
-                            }
-                            const faltaId = eligibleFaltas[0].id;
-                            alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: v.data, turmaReposicaoId: v.turmaId, tipo: 'reposicao', semVagaOficial: false, vagaSelId: v.id, faltaId });
+                            alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: v.data, turmaReposicaoId: v.turmaId, tipo: 'reposicao', semVagaOficial: false, vagaSelId: v.id, faltaId: picked.id });
                             setSuccessRepo('Reposição marcada com sucesso!');
                             setOpen(o => ({ ...o, reposicao: false }));
                             setTimeout(() => setSuccessRepo(''), 4000);
                           } else if (canUseFerias) {
-                            setConfirmFeriasRepo(v);
+                            setConfirmFeriasRepo({ ...v, ausenciaId: picked.id });
                           } else if (canUseCredito) {
-                            setConfirmCreditoRepo(v);
+                            setConfirmCreditoRepo({ ...v, creditoId: picked.id });
                           } else {
                             setConfirmAulaExtra(v);
                           }
@@ -5860,7 +5900,7 @@ function AlunoView({ state, dispatch, acesso }) {
                                 {isMyFeriasVaga && <span className="ml-1 text-teal-600">· vaga das suas férias</span>}
                               </div>
                               {jaOcupada && <div className="text-xs text-red-500 mt-0.5">Você já tem reposição nesse horário</div>}
-                              {!jaOcupada && !canRepor && !canUseFerias && pendingSemAnt.length > 0 && !within2h && (
+                              {!jaOcupada && semAntEsperando && (
                                 <div className="text-xs text-orange-500 mt-0.5">Disponível para reposição 2h antes da aula começar, caso a vaga continue disponível</div>
                               )}
                             </div>
@@ -5888,13 +5928,14 @@ function AlunoView({ state, dispatch, acesso }) {
         {/* Confirm usar crédito de férias */}
         {confirmFeriasRepo && (() => {
           const tV = state.turmas.find(t => t.id === confirmFeriasRepo.turmaId);
+          const ausSel = arr(state.ausencias).find(a => a.id === confirmFeriasRepo.ausenciaId);
           return (
             <ConfirmModal
               title="Usar crédito de férias?"
-              message={`Usar seu crédito de reposição de férias (${getMesNome(ausenciaCredito?.mesAno || '')}) para repor em ${fmtBRFull(confirmFeriasRepo.data)}${tV ? ` (${ABREV[tV.diaSemana]} ${tV.horario})` : ''}?`}
+              message={`Usar seu crédito de reposição de férias (${getMesNome(ausSel?.mesAno || '')}) para repor em ${fmtBRFull(confirmFeriasRepo.data)}${tV ? ` (${ABREV[tV.diaSemana]} ${tV.horario})` : ''}?`}
               confirmLabel="Confirmar reposição"
               onConfirm={() => {
-                alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: confirmFeriasRepo.data, turmaReposicaoId: confirmFeriasRepo.turmaId, semVagaOficial: false, vagaSelId: confirmFeriasRepo.id, ausenciaId: ausenciaCredito?.id });
+                alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: confirmFeriasRepo.data, turmaReposicaoId: confirmFeriasRepo.turmaId, semVagaOficial: false, vagaSelId: confirmFeriasRepo.id, ausenciaId: confirmFeriasRepo.ausenciaId });
                 setSuccessRepo('Reposição marcada com crédito de férias!');
                 setOpen(o => ({ ...o, reposicao: false }));
                 setConfirmFeriasRepo(null);
@@ -5908,14 +5949,14 @@ function AlunoView({ state, dispatch, acesso }) {
         {/* Confirm usar crédito extra */}
         {confirmCreditoRepo && (() => {
           const tV = state.turmas.find(t => t.id === confirmCreditoRepo.turmaId);
-          const credito = creditosExtras[0];
+          const credito = arr(state.creditos).find(c => c.id === confirmCreditoRepo.creditoId);
           return (
             <ConfirmModal
               title="Usar crédito extra?"
               message={`Usar seu crédito de reposição extra (expira em ${fmtBRFull(credito?.dataExpiracao || '')}) para repor em ${fmtBRFull(confirmCreditoRepo.data)}${tV ? ` (${ABREV[tV.diaSemana]} ${tV.horario})` : ''}?`}
               confirmLabel="Confirmar reposição"
               onConfirm={() => {
-                alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: confirmCreditoRepo.data, turmaReposicaoId: confirmCreditoRepo.turmaId, semVagaOficial: false, vagaSelId: confirmCreditoRepo.id, creditoId: credito?.id, tipo: 'reposicao_credito' });
+                alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: confirmCreditoRepo.data, turmaReposicaoId: confirmCreditoRepo.turmaId, semVagaOficial: false, vagaSelId: confirmCreditoRepo.id, creditoId: confirmCreditoRepo.creditoId, tipo: 'reposicao_credito' });
                 setSuccessRepo('Reposição marcada com crédito extra!');
                 setOpen(o => ({ ...o, reposicao: false }));
                 setConfirmCreditoRepo(null);
