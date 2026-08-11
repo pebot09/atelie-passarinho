@@ -768,6 +768,9 @@ function reducer(state, action) {
     case 'CHANGE_TURMA_ALUNO': {
       const { oldTurmaId, newTurmaId, alunoNome: movNome } = action;
       if (!oldTurmaId || !newTurmaId || oldTurmaId === newTurmaId) { next = state; break; }
+      // Nunca mover para uma turma que já tem alguém com esse exato nome (evita fundir homônimos)
+      const destinoMov = state.turmas.find(t => t.id === newTurmaId);
+      if (destinoMov && destinoMov.alunos.includes(movNome)) { next = state; break; }
       // Move o aluno: remove da turma antiga, adiciona na nova (sem duplicar)
       const newTurmasMov = state.turmas.map(t => {
         if (t.id === oldTurmaId) return { ...t, alunos: t.alunos.filter(a => a !== movNome) };
@@ -2056,6 +2059,22 @@ function SectionTurmas({ state, dispatch }) {
   const [historicoAberto, setHistoricoAberto] = useState({}); // { 'turmaId|nome': bool }
   const [renamingAluno, setRenamingAluno] = useState(null); // { turmaId, nome } — usado na turma extra
   const [renameValue, setRenameValue] = useState('');
+  const [addAlunoErro, setAddAlunoErro] = useState(null); // { turmaId, msg }
+
+  // Adiciona aluno bloqueando nome repetido na mesma turma (retorna true se adicionou)
+  const tryAddAluno = (turmaId, rawNome) => {
+    const nome = (rawNome || '').trim();
+    if (!nome) return false;
+    const t = state.turmas.find(x => x.id === turmaId);
+    if (t && t.alunos.includes(nome)) {
+      setAddAlunoErro({ turmaId, msg: `Já existe um aluno chamado "${nome}" nesta turma. Use um nome diferente (ex: sobrenome ou inicial).` });
+      return false;
+    }
+    dispatch({ type: 'ADD_ALUNO', turmaId, nome });
+    setNewNome(prev => ({ ...prev, [turmaId]: '' }));
+    setAddAlunoErro(null);
+    return true;
+  };
 
   const sorted = useMemo(() => sortTurmas(state.turmas).filter(t => t.id !== TURMA_EXTRA_ID), [state.turmas]);
   const turmaExtra = useMemo(() => state.turmas.find(t => t.id === TURMA_EXTRA_ID), [state.turmas]);
@@ -2164,25 +2183,24 @@ function SectionTurmas({ state, dispatch }) {
                       className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
                       placeholder="Nome do aluno"
                       value={newNome[turma.id] || ''}
-                      onChange={e => setNewNome(prev => ({...prev, [turma.id]: e.target.value}))}
+                      onChange={e => { setNewNome(prev => ({...prev, [turma.id]: e.target.value})); if (addAlunoErro) setAddAlunoErro(null); }}
                       onKeyDown={e => {
                         if (e.key === 'Enter') {
-                          const n = (newNome[turma.id]||'').trim();
-                          if (n) { dispatch({type:'ADD_ALUNO', turmaId: turma.id, nome: n}); setNewNome(prev => ({...prev, [turma.id]: ''})); setAddingAluno(null); }
+                          if (tryAddAluno(turma.id, newNome[turma.id])) setAddingAluno(null);
                         }
-                        if (e.key === 'Escape') setAddingAluno(null);
+                        if (e.key === 'Escape') { setAddingAluno(null); setAddAlunoErro(null); }
                       }}
                       autoFocus
                     />
-                    <button onClick={() => {
-                      const n = (newNome[turma.id]||'').trim();
-                      if (n) { dispatch({type:'ADD_ALUNO', turmaId: turma.id, nome: n}); setNewNome(prev => ({...prev, [turma.id]: ''})); }
-                      setAddingAluno(null);
-                    }} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">OK</button>
-                    <button onClick={() => setAddingAluno(null)} className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm">✕</button>
+                    <button onClick={() => { if (tryAddAluno(turma.id, newNome[turma.id])) setAddingAluno(null); }}
+                      className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">OK</button>
+                    <button onClick={() => { setAddingAluno(null); setAddAlunoErro(null); }} className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm">✕</button>
                   </div>
                 ) : (
                   <button onClick={() => setAddingAluno(turma.id)} className="text-sm text-blue-600 hover:text-blue-800 font-medium">+ Adicionar aluno</button>
+                )}
+                {addAlunoErro && addAlunoErro.turmaId === turma.id && (
+                  <p className="text-xs text-red-500 mt-1">{addAlunoErro.msg}</p>
                 )}
               </div>
             )}
@@ -2256,25 +2274,24 @@ function SectionTurmas({ state, dispatch }) {
                       className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
                       placeholder="Nome do aluno"
                       value={newNome[TURMA_EXTRA_ID] || ''}
-                      onChange={e => setNewNome(prev => ({...prev, [TURMA_EXTRA_ID]: e.target.value}))}
+                      onChange={e => { setNewNome(prev => ({...prev, [TURMA_EXTRA_ID]: e.target.value})); if (addAlunoErro) setAddAlunoErro(null); }}
                       onKeyDown={e => {
                         if (e.key === 'Enter') {
-                          const n = (newNome[TURMA_EXTRA_ID]||'').trim();
-                          if (n) { dispatch({type:'ADD_ALUNO', turmaId: TURMA_EXTRA_ID, nome: n}); setNewNome(prev => ({...prev, [TURMA_EXTRA_ID]: ''})); setAddingAluno(null); }
+                          if (tryAddAluno(TURMA_EXTRA_ID, newNome[TURMA_EXTRA_ID])) setAddingAluno(null);
                         }
-                        if (e.key === 'Escape') setAddingAluno(null);
+                        if (e.key === 'Escape') { setAddingAluno(null); setAddAlunoErro(null); }
                       }}
                       autoFocus
                     />
-                    <button onClick={() => {
-                      const n = (newNome[TURMA_EXTRA_ID]||'').trim();
-                      if (n) { dispatch({type:'ADD_ALUNO', turmaId: TURMA_EXTRA_ID, nome: n}); setNewNome(prev => ({...prev, [TURMA_EXTRA_ID]: ''})); }
-                      setAddingAluno(null);
-                    }} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">OK</button>
-                    <button onClick={() => setAddingAluno(null)} className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm">✕</button>
+                    <button onClick={() => { if (tryAddAluno(TURMA_EXTRA_ID, newNome[TURMA_EXTRA_ID])) setAddingAluno(null); }}
+                      className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">OK</button>
+                    <button onClick={() => { setAddingAluno(null); setAddAlunoErro(null); }} className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm">✕</button>
                   </div>
                 ) : (
                   <button onClick={() => setAddingAluno(TURMA_EXTRA_ID)} className="text-sm text-blue-600 hover:text-blue-800 font-medium">+ Adicionar aluno</button>
+                )}
+                {addAlunoErro && addAlunoErro.turmaId === TURMA_EXTRA_ID && (
+                  <p className="text-xs text-red-500 mt-1">{addAlunoErro.msg}</p>
                 )}
               </div>
             )}
@@ -3192,6 +3209,10 @@ function GerenciarAlunoModal({ turma, state, dispatch, onClose }) {
   const otherTurmas = useMemo(() => sortTurmas(state.turmas).filter(t => t.id !== turma.id), [state.turmas, turma.id]);
 
   const canChangeTurma = (nome, destinoId) => {
+    const destino = state.turmas.find(t => t.id === destinoId);
+    if (destino && destino.alunos.includes(nome)) {
+      return { can: false, reason: `já há um aluno chamado "${nome}" nessa turma — renomeie um deles antes de mover` };
+    }
     if (destinoId === TURMA_EXTRA_ID) return { can: true };
     const hasFutureFalta = state.faltas.some(f =>
       f.turmaId === turma.id && f.alunoNome === nome && f.datas.some(d => d >= td)
