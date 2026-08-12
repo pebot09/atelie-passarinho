@@ -5468,6 +5468,7 @@ function AlunoView({ state, dispatch, acesso }) {
   // Confirmar aula extra
   const [confirmAulaExtra, setConfirmAulaExtra] = useState(null); // vaga selecionada
   const [confirmEscolhaFalta, setConfirmEscolhaFalta] = useState(null); // {vaga, opcoes:[falta]}
+  const [confirmReposProxima, setConfirmReposProxima] = useState(null); // { vaga, picked } — aula em <2h
   const minhasRepos = useMemo(() =>
     state.reposicoes.filter(r => r.alunoNome === alunoNome && r.turmaOrigemId === turmaId && !r.realizada)
       .sort((a,b) => a.dataReposicao.localeCompare(b.dataReposicao)),
@@ -5899,6 +5900,12 @@ function AlunoView({ state, dispatch, acesso }) {
                         const isMyFeriasVaga = v.ausenciaId && ausenciasAtivas.some(a => a.id === v.ausenciaId);
                         const handleClick = () => {
                           if (jaOcupada) return;
+                          // Aula a menos de 2h: se marcar e depois cancelar, perde o crédito/direito.
+                          // Aviso extra antes de marcar (só quando há um direito a ser gasto).
+                          if (within2h && picked) {
+                            setConfirmReposProxima({ vaga: v, picked });
+                            return;
+                          }
                           if (canRepor) {
                             alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: v.data, turmaReposicaoId: v.turmaId, tipo: 'reposicao', semVagaOficial: false, vagaSelId: v.id, faltaId: picked.id });
                             setSuccessRepo('Reposição marcada com sucesso!');
@@ -6004,6 +6011,30 @@ function AlunoView({ state, dispatch, acesso }) {
                 setTimeout(() => setSuccessRepo(''), 4000);
               }}
               onCancel={() => setConfirmAulaExtra(null)}
+            />
+          );
+        })()}
+
+        {/* Aviso: aula a menos de 2h — cancelar depois perde o crédito */}
+        {confirmReposProxima && (() => {
+          const { vaga: v, picked } = confirmReposProxima;
+          const tV = state.turmas.find(t => t.id === v.turmaId);
+          const oQue = picked.kind === 'ferias' ? 'o crédito de férias'
+            : picked.kind === 'credito' ? 'o crédito extra'
+            : 'a reposição desta falta';
+          return (
+            <ConfirmModal
+              title="⚠️ Aula quase começando"
+              message={`Essa aula (${fmtBRFull(v.data)}${tV ? `, ${ABREV[tV.diaSemana]} ${tV.horario}` : ''}) começa em menos de 2 horas. Se você marcar agora e depois precisar cancelar, NÃO vai recuperar ${oQue}. Tem certeza que quer marcar?`}
+              confirmLabel="Marcar mesmo assim"
+              onConfirm={() => {
+                alunoDispatch({ type: 'ADD_REPOSICAO', alunoNome, turmaOrigemId: turmaId, dataReposicao: v.data, turmaReposicaoId: v.turmaId, semVagaOficial: false, vagaSelId: v.id, ...rightToActionFields(picked) });
+                setSuccessRepo('Reposição marcada com sucesso!');
+                setOpen(o => ({ ...o, reposicao: false }));
+                setConfirmReposProxima(null);
+                setTimeout(() => setSuccessRepo(''), 4000);
+              }}
+              onCancel={() => setConfirmReposProxima(null)}
             />
           );
         })()}
