@@ -5519,7 +5519,11 @@ function AlunoView({ state, dispatch, acesso }) {
   const alertas = [];
   state.faltas.filter(f => f.alunoNome === alunoNome && f.turmaId === turmaId && f.status === 'pendente').forEach(f => {
     const exp = getFaltaExpiry(f);
-    if (exp >= td && exp <= in7) alertas.push({ level:'red', text:`Falta de ${fmtBR(f.datas[0])} expira em ${fmtBRFull(exp)} — marque uma reposição!` });
+    if (exp >= td && exp <= in7) {
+      const dias = Math.round((parseDate(exp) - parseDate(td)) / 86400000);
+      const quando = dias <= 0 ? 'hoje' : dias === 1 ? 'em 1 dia' : `em ${dias} dias`;
+      alertas.push({ level:'red', text:`Falta de ${fmtBR(f.datas[0])} expira ${quando} — marque uma reposição!` });
+    }
     if (exp < td && exp >= ago20) alertas.push({ level:'expired', text:`Falta de ${fmtBR(f.datas[0])} expirou em ${fmtBRFull(exp)}.` });
   });
   minhasRepos.filter(r => { const d = new Date(r.dataReposicao + 'T00:00:00'); return (d - Date.now()) <= 7*24*3600*1000; }).forEach(r => {
@@ -5675,7 +5679,7 @@ function AlunoView({ state, dispatch, acesso }) {
                           ? <span className="text-xs font-medium text-green-600 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">Reposta</span>
                           : f.status === 'marcada'
                           ? <span className="text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5">Marcada</span>
-                          : <span className="text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">Pendente</span>
+                          : <span className="text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">A marcar</span>
                         }
                         <button
                           onClick={() => {
