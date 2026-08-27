@@ -2515,14 +2515,18 @@ function TabRegistrarFalta({ state, dispatch }) {
 
   const handleSubmit = () => {
     if (!turmaId || !alunoNome || !selectedDates.length) return;
-    const menosde24h = selectedDates.filter(d => {
+    const td = todayStr();
+    // Oferece a escolha (comum/sem antecedência) para aulas de hoje (mesmo já passadas)
+    // e para aulas nas próximas 24h.
+    const precisaEscolher = selectedDates.filter(d => {
+      if (d === td) return true;
       const dt = getClassDatetime(turmaId, d, state.turmas);
       if (!dt) return false;
       const horas = (dt - Date.now()) / 3600000;
       return horas >= 0 && horas < 24;
     });
-    if (menosde24h.length > 0) {
-      setTiposModal(menosde24h.map(d => ({ data: d, semAntecedencia: true })));
+    if (precisaEscolher.length > 0) {
+      setTiposModal(precisaEscolher.map(d => ({ data: d, semAntecedencia: true })));
       return;
     }
     doSubmit(selectedDates.map(d => ({ data: d, semAntecedencia: false })));
