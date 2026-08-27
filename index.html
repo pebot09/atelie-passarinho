@@ -2060,6 +2060,8 @@ function SectionTurmas({ state, dispatch }) {
   const [renamingAluno, setRenamingAluno] = useState(null); // { turmaId, nome } — usado na turma extra
   const [renameValue, setRenameValue] = useState('');
   const [addAlunoErro, setAddAlunoErro] = useState(null); // { turmaId, msg }
+  const [legendaTabela, setLegendaTabela] = useState(false); // ⓘ da tabela de contagens
+  const td = todayStr();
 
   // Adiciona aluno bloqueando nome repetido na mesma turma (retorna true se adicionou)
   const tryAddAluno = (turmaId, rawNome) => {
@@ -2154,13 +2156,47 @@ function SectionTurmas({ state, dispatch }) {
 
                 <div className="space-y-1 mb-3">
                   {turma.alunos.length === 0 && <p className="text-gray-400 text-sm italic">Nenhum aluno cadastrado</p>}
+                  {turma.alunos.length > 0 && (
+                    <>
+                      <div className="flex items-center gap-1 px-2 pb-1 text-gray-400">
+                        <span className="flex-1"></span>
+                        <button onClick={() => setLegendaTabela(v => !v)} className="text-gray-400 hover:text-gray-600 mr-0.5" title="Legenda">ⓘ</button>
+                        <div className="flex gap-0.5 shrink-0 text-xs">
+                          <span className="w-6 text-center" title="Faltas ativas">✋</span>
+                          <span className="w-6 text-center" title="Reposições agendadas">🔄</span>
+                          <span className="w-6 text-center" title="Créditos de férias">🏖️</span>
+                          <span className="w-6 text-center" title="Créditos extras">🎟️</span>
+                        </div>
+                        <span className="w-7 shrink-0"></span>
+                      </div>
+                      {legendaTabela && (
+                        <div className="mx-2 mb-2 bg-gray-50 border border-gray-200 rounded-lg p-2 text-xs text-gray-600 space-y-0.5 fade-in">
+                          <div>✋ Faltas ativas (a marcar + já com reposição)</div>
+                          <div>🔄 Reposições agendadas (ainda não realizadas)</div>
+                          <div>🏖️ Créditos de férias disponíveis</div>
+                          <div>🎟️ Créditos extras disponíveis</div>
+                        </div>
+                      )}
+                    </>
+                  )}
                   {[...turma.alunos].sort((a,b) => a.localeCompare(b,'pt')).map(nome => {
                     const hKey = turma.id + '|' + nome;
                     const hOpen = !!historicoAberto[hKey];
+                    const nFaltas = state.faltas.filter(f => f.turmaId === turma.id && f.alunoNome === nome && (f.status === 'pendente' || f.status === 'marcada')).length;
+                    const nRepos = state.reposicoes.filter(r => r.turmaOrigemId === turma.id && r.alunoNome === nome && !r.realizada).length;
+                    const nFerias = arr(state.ausencias).filter(a => a.turmaId === turma.id && a.alunoNome === nome && !a.creditoUsado && a.creditoReposicao > 0).length;
+                    const nExtra = arr(state.creditos).filter(c => c.turmaId === turma.id && c.alunoNome === nome && !c.usado && c.dataExpiracao >= td).length;
+                    const cell = (n, cor) => <span className={`w-6 text-center text-xs ${n ? cor : 'text-gray-300'}`}>{n || '·'}</span>;
                     return (
                       <div key={nome} className="rounded-lg hover:bg-gray-50">
-                        <div className="flex justify-between items-center py-1.5 px-2">
-                          <span className="text-sm text-gray-700">{nome}</span>
+                        <div className="flex items-center gap-1 py-1.5 px-2">
+                          <span className="flex-1 text-sm text-gray-700 truncate">{nome}</span>
+                          <div className="flex gap-0.5 shrink-0">
+                            {cell(nFaltas, 'text-amber-600 font-medium')}
+                            {cell(nRepos, 'text-blue-600 font-medium')}
+                            {cell(nFerias, 'text-teal-600 font-medium')}
+                            {cell(nExtra, 'text-purple-600 font-medium')}
+                          </div>
                           <button
                             onClick={() => setHistoricoAberto(h => ({ ...h, [hKey]: !h[hKey] }))}
                             className={`text-xs px-2 py-0.5 rounded-full border transition-colors shrink-0 ${hOpen ? 'bg-gray-200 border-gray-300 text-gray-700' : 'border-gray-200 text-gray-400 hover:text-gray-600 hover:border-gray-300'}`}
