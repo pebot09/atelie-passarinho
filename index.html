@@ -2062,6 +2062,7 @@ function SectionTurmas({ state, dispatch }) {
   const [addAlunoErro, setAddAlunoErro] = useState(null); // { turmaId, msg }
   const [legendaTabela, setLegendaTabela] = useState(false); // ⓘ da tabela de contagens
   const td = todayStr();
+  const in7 = (() => { const d = new Date(); d.setDate(d.getDate()+7); return dateToStr(d); })();
 
   // Adiciona aluno bloqueando nome repetido na mesma turma (retorna true se adicionou)
   const tryAddAluno = (turmaId, rawNome) => {
@@ -2180,11 +2181,12 @@ function SectionTurmas({ state, dispatch }) {
                         const nRepos = state.reposicoes.filter(r => r.turmaOrigemId === turma.id && r.alunoNome === nome && !r.realizada).length;
                         const nFerias = arr(state.ausencias).filter(a => a.turmaId === turma.id && a.alunoNome === nome && !a.creditoUsado && a.creditoReposicao > 0).length;
                         const nExtra = arr(state.creditos).filter(c => c.turmaId === turma.id && c.alunoNome === nome && !c.usado && c.dataExpiracao >= td).length;
+                        const faltaExpirando = state.faltas.some(f => f.turmaId === turma.id && f.alunoNome === nome && f.status === 'pendente' && getFaltaExpiry(f) >= td && getFaltaExpiry(f) <= in7);
                         const cell = (n, cor) => <span className={`text-center text-xs py-1.5 ${n ? cor : 'text-gray-300'}`}>{n || '·'}</span>;
                         return (
                           <React.Fragment key={nome}>
                             <span className="text-sm text-gray-700 py-1.5 pr-2 whitespace-nowrap">{nome}</span>
-                            {cell(nFaltas, 'text-amber-600 font-medium')}
+                            {cell(nFaltas, faltaExpirando ? 'text-red-600 font-bold' : 'text-amber-600 font-medium')}
                             {cell(nRepos, 'text-blue-600 font-medium')}
                             {cell(nFerias, 'text-teal-600 font-medium')}
                             {cell(nExtra, 'text-purple-600 font-medium')}
@@ -2266,35 +2268,64 @@ function SectionTurmas({ state, dispatch }) {
               <div className="border-t border-dashed border-gray-200 p-4 fade-in">
                 <div className="space-y-1 mb-3">
                   {turmaExtra.alunos.length === 0 && <p className="text-gray-400 text-sm italic">Nenhum aluno cadastrado</p>}
-                  {[...turmaExtra.alunos].sort((a,b) => a.localeCompare(b,'pt')).map(nome => {
-                    const isRenaming = renamingAluno?.turmaId === TURMA_EXTRA_ID && renamingAluno?.nome === nome;
-                    const commitRename = () => {
-                      const n = renameValue.trim();
-                      if (n && n !== nome) dispatch({ type: 'RENAME_ALUNO', turmaId: TURMA_EXTRA_ID, oldNome: nome, newNome: n });
-                      setRenamingAluno(null);
-                    };
-                    return (
-                      <div key={nome} className="flex justify-between items-center py-1.5 px-2 rounded-lg hover:bg-gray-50">
-                        {isRenaming ? (
-                          <input
-                            className="flex-1 border border-blue-400 rounded-lg px-2 py-0.5 text-sm mr-2 focus:outline-none focus:ring-2 focus:ring-blue-300"
-                            value={renameValue}
-                            onChange={e => setRenameValue(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenamingAluno(null); }}
-                            onBlur={commitRename}
-                            autoFocus
-                          />
-                        ) : (
-                          <span
-                            className="text-sm text-gray-700 cursor-pointer hover:text-blue-600 hover:underline"
-                            onClick={() => { setRenamingAluno({ turmaId: TURMA_EXTRA_ID, nome }); setRenameValue(nome); }}
-                          >{nome}</span>
-                        )}
-                        <button onClick={() => setConfirm({type:'removeAluno', nome, turma: turmaExtra})}
-                          className="text-red-400 hover:text-red-600 text-xs px-2 shrink-0">Remover</button>
-                      </div>
-                    );
-                  })}
+                  {turmaExtra.alunos.length > 0 && (
+                    <div className="grid items-center gap-x-2 px-2" style={{ gridTemplateColumns: 'max-content repeat(4, minmax(0,1fr)) max-content' }}>
+                      <span></span>
+                      <span className="text-center text-sm py-1" title="Faltas ativas">✋</span>
+                      <span className="text-center text-sm py-1" title="Reposições agendadas">🔄</span>
+                      <span className="text-center text-sm py-1" title="Créditos de férias">🏖️</span>
+                      <span className="text-center text-sm py-1" title="Créditos extras">🎟️</span>
+                      <button onClick={() => setLegendaTabela(v => !v)} className="justify-self-end text-gray-400 hover:text-gray-600 text-sm px-1 py-1" title="Legenda">ⓘ</button>
+                      {legendaTabela && (
+                        <div style={{ gridColumn: '1 / -1' }} className="mb-2 bg-gray-50 border border-gray-200 rounded-lg p-2 text-xs text-gray-600 space-y-0.5 fade-in">
+                          <div>✋ Faltas ativas (a marcar + já com reposição)</div>
+                          <div>🔄 Reposições agendadas (ainda não realizadas)</div>
+                          <div>🏖️ Créditos de férias disponíveis</div>
+                          <div>🎟️ Créditos extras disponíveis</div>
+                        </div>
+                      )}
+                      {[...turmaExtra.alunos].sort((a,b) => a.localeCompare(b,'pt')).map(nome => {
+                        const isRenaming = renamingAluno?.turmaId === TURMA_EXTRA_ID && renamingAluno?.nome === nome;
+                        const commitRename = () => {
+                          const n = renameValue.trim();
+                          if (n && n !== nome) dispatch({ type: 'RENAME_ALUNO', turmaId: TURMA_EXTRA_ID, oldNome: nome, newNome: n });
+                          setRenamingAluno(null);
+                        };
+                        const nFaltas = state.faltas.filter(f => f.turmaId === TURMA_EXTRA_ID && f.alunoNome === nome && (f.status === 'pendente' || f.status === 'marcada')).length;
+                        const nRepos = state.reposicoes.filter(r => r.turmaOrigemId === TURMA_EXTRA_ID && r.alunoNome === nome && !r.realizada).length;
+                        const nFerias = arr(state.ausencias).filter(a => a.turmaId === TURMA_EXTRA_ID && a.alunoNome === nome && !a.creditoUsado && a.creditoReposicao > 0).length;
+                        const nExtra = arr(state.creditos).filter(c => c.turmaId === TURMA_EXTRA_ID && c.alunoNome === nome && !c.usado && c.dataExpiracao >= td).length;
+                        const faltaExpirando = state.faltas.some(f => f.turmaId === TURMA_EXTRA_ID && f.alunoNome === nome && f.status === 'pendente' && getFaltaExpiry(f) >= td && getFaltaExpiry(f) <= in7);
+                        const cell = (n, cor) => <span className={`text-center text-xs py-1.5 ${n ? cor : 'text-gray-300'}`}>{n || '·'}</span>;
+                        return (
+                          <React.Fragment key={nome}>
+                            {isRenaming ? (
+                              <input style={{ gridColumn: '1 / 6' }}
+                                className="border border-blue-400 rounded-lg px-2 py-0.5 text-sm my-0.5 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                                value={renameValue}
+                                onChange={e => setRenameValue(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenamingAluno(null); }}
+                                onBlur={commitRename}
+                                autoFocus
+                              />
+                            ) : (
+                              <React.Fragment>
+                                <span className="text-sm text-gray-700 py-1.5 pr-2 whitespace-nowrap cursor-pointer hover:text-blue-600 hover:underline"
+                                  onClick={() => { setRenamingAluno({ turmaId: TURMA_EXTRA_ID, nome }); setRenameValue(nome); }}
+                                >{nome}</span>
+                                {cell(nFaltas, faltaExpirando ? 'text-red-600 font-bold' : 'text-amber-600 font-medium')}
+                                {cell(nRepos, 'text-blue-600 font-medium')}
+                                {cell(nFerias, 'text-teal-600 font-medium')}
+                                {cell(nExtra, 'text-purple-600 font-medium')}
+                              </React.Fragment>
+                            )}
+                            <button onClick={() => setConfirm({type:'removeAluno', nome, turma: turmaExtra})}
+                              className="justify-self-end text-red-400 hover:text-red-600 text-xs px-2">Remover</button>
+                          </React.Fragment>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
                 {addingAluno === TURMA_EXTRA_ID ? (
                   <div className="flex gap-2">
