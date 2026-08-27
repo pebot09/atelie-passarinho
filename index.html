@@ -2163,15 +2163,15 @@ function SectionTurmas({ state, dispatch }) {
                       <span></span>
                       <span className="text-center text-sm py-1" title="Faltas ativas">✋</span>
                       <span className="text-center text-sm py-1" title="Reposições agendadas">🔄</span>
-                      <span className="text-center text-sm py-1" title="Créditos de férias">🏖️</span>
                       <span className="text-center text-sm py-1" title="Créditos extras">🎟️</span>
+                      <span className="text-center text-sm py-1" title="Créditos de férias">🏖️</span>
                       <button onClick={() => setLegendaTabela(v => !v)} className="justify-self-end text-gray-400 hover:text-gray-600 text-sm px-1 py-1" title="Legenda">ⓘ</button>
                       {legendaTabela && (
                         <div style={{ gridColumn: '1 / -1' }} className="mb-2 bg-gray-50 border border-gray-200 rounded-lg p-2 text-xs text-gray-600 space-y-0.5 fade-in">
                           <div>✋ Faltas ativas (a marcar + já com reposição)</div>
                           <div>🔄 Reposições agendadas (ainda não realizadas)</div>
-                          <div>🏖️ Créditos de férias disponíveis</div>
                           <div>🎟️ Créditos extras disponíveis</div>
+                          <div>🏖️ Créditos de férias disponíveis</div>
                         </div>
                       )}
                       {[...turma.alunos].sort((a,b) => a.localeCompare(b,'pt')).map(nome => {
@@ -2188,8 +2188,8 @@ function SectionTurmas({ state, dispatch }) {
                             <span className="text-sm text-gray-700 py-1.5 pr-2 whitespace-nowrap">{nome}</span>
                             {cell(nFaltas, faltaExpirando ? 'text-red-600 font-bold' : 'text-amber-600 font-medium')}
                             {cell(nRepos, 'text-blue-600 font-medium')}
-                            {cell(nFerias, 'text-teal-600 font-medium')}
                             {cell(nExtra, 'text-purple-600 font-medium')}
+                            {cell(nFerias, 'text-teal-600 font-medium')}
                             <button
                               onClick={() => setHistoricoAberto(h => ({ ...h, [hKey]: !h[hKey] }))}
                               className={`justify-self-end text-xs px-2 py-0.5 rounded-full border transition-colors ${hOpen ? 'bg-gray-200 border-gray-300 text-gray-700' : 'border-gray-200 text-gray-400 hover:text-gray-600 hover:border-gray-300'}`}
@@ -2273,15 +2273,15 @@ function SectionTurmas({ state, dispatch }) {
                       <span></span>
                       <span className="text-center text-sm py-1" title="Faltas ativas">✋</span>
                       <span className="text-center text-sm py-1" title="Reposições agendadas">🔄</span>
-                      <span className="text-center text-sm py-1" title="Créditos de férias">🏖️</span>
                       <span className="text-center text-sm py-1" title="Créditos extras">🎟️</span>
+                      <span className="text-center text-sm py-1" title="Créditos de férias">🏖️</span>
                       <button onClick={() => setLegendaTabela(v => !v)} className="justify-self-end text-gray-400 hover:text-gray-600 text-sm px-1 py-1" title="Legenda">ⓘ</button>
                       {legendaTabela && (
                         <div style={{ gridColumn: '1 / -1' }} className="mb-2 bg-gray-50 border border-gray-200 rounded-lg p-2 text-xs text-gray-600 space-y-0.5 fade-in">
                           <div>✋ Faltas ativas (a marcar + já com reposição)</div>
                           <div>🔄 Reposições agendadas (ainda não realizadas)</div>
-                          <div>🏖️ Créditos de férias disponíveis</div>
                           <div>🎟️ Créditos extras disponíveis</div>
+                          <div>🏖️ Créditos de férias disponíveis</div>
                         </div>
                       )}
                       {[...turmaExtra.alunos].sort((a,b) => a.localeCompare(b,'pt')).map(nome => {
@@ -2315,8 +2315,8 @@ function SectionTurmas({ state, dispatch }) {
                                 >{nome}</span>
                                 {cell(nFaltas, faltaExpirando ? 'text-red-600 font-bold' : 'text-amber-600 font-medium')}
                                 {cell(nRepos, 'text-blue-600 font-medium')}
-                                {cell(nFerias, 'text-teal-600 font-medium')}
                                 {cell(nExtra, 'text-purple-600 font-medium')}
+                                {cell(nFerias, 'text-teal-600 font-medium')}
                               </React.Fragment>
                             )}
                             <button onClick={() => setConfirm({type:'removeAluno', nome, turma: turmaExtra})}
