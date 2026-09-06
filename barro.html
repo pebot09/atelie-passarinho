@@ -830,7 +830,7 @@ function LancarBarro({ prof, turmasVisiveis, mesData, state, patchAluno, doSave,
     const al = (mesData.alunos[p.turmaId] || []).find(a => a.alunoNome === p.nome);
     if (!al) return undefined;
     if (p.isRepo) return (al.reposDias || {})[date];
-    if (modo === 'completo') return { kg: barroKgTotal(al), faltou: false }; // total inclui o rápido
+    if (modo === 'completo') return barroKgTotal(al) > 0 ? { kg: barroKgTotal(al), faltou: false } : undefined; // total inclui o rápido
     return (date in (al.barroDias || {})) ? { kg: n2(al.barroDias[date]), faltou: false } : undefined;
   };
   const kgDe = (p) => { const e = entryDe(p); return e && !e.faltou ? n2(e.kg) : 0; };
