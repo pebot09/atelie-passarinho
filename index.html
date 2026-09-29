@@ -163,7 +163,8 @@ const SEED = {
   creditos: [],
   aulasCanceladas: [],
   resumosDiarios: {},
-  manutencao: null
+  manutencao: null,
+  vagasOcultas: []
 };
 
 // ==================== HELPERS ====================
@@ -266,6 +267,13 @@ function stripVagasCanceladas(vagas, aulasCanceladas) {
   var canc = {};
   aulasCanceladas.forEach(function(a) { canc[a.turmaId + '|' + a.data] = true; });
   return vagas.filter(function(v) { return !canc[v.turmaId + '|' + v.data]; });
+}
+
+// Regra de ocultação antecipada de vagas: data null = turma inteira (até segunda ordem),
+// data preenchida = só aquela aula. Usada só para esconder dos ALUNOS (o professor vê tudo).
+function isVagaOculta(v, vagasOcultas) {
+  if (!vagasOcultas || !vagasOcultas.length) return false;
+  return vagasOcultas.some(function(r) { return r.turmaId === v.turmaId && (r.data == null || r.data === v.data); });
 }
 
 function computeVagasExtras(turmas, faltas, reposicoes, vagasBase, td, ausencias) {
@@ -672,6 +680,30 @@ function reducer(state, action) {
           : v
       )};
       break;
+
+    case 'HIDE_VAGAS': {
+      // Oculta vagas dos alunos de forma antecipada: data null = turma inteira, data = uma aula.
+      const { turmaId: hvTurma, data: hvData } = action;
+      if (!hvTurma) { next = state; break; }
+      const alvo = hvData || null;
+      const existe = arr(state.vagasOcultas).some(r => r.turmaId === hvTurma && (r.data || null) === alvo);
+      if (existe) { next = state; break; }
+      const regra = { id: genId('vo'), turmaId: hvTurma, data: alvo, ts: new Date().toISOString(), professor: action.professor || null };
+      next = { ...state, vagasOcultas: [...arr(state.vagasOcultas), regra] };
+      const hvLbl = getTurmaLabel(state.turmas, hvTurma);
+      next.log = addLog(state.log, action.professor, alvo ? `Ocultou vagas de ${hvLbl} em ${fmtBRFull(alvo)}` : `Ocultou todas as vagas de ${hvLbl} (até segunda ordem)`, action.origem);
+      break;
+    }
+
+    case 'UNHIDE_VAGAS': {
+      const regraUh = arr(state.vagasOcultas).find(r => r.id === action.id);
+      next = { ...state, vagasOcultas: arr(state.vagasOcultas).filter(r => r.id !== action.id) };
+      if (regraUh) {
+        const uhLbl = getTurmaLabel(state.turmas, regraUh.turmaId);
+        next.log = addLog(state.log, action.professor, regraUh.data ? `Reexibiu vagas de ${uhLbl} em ${fmtBRFull(regraUh.data)}` : `Reexibiu vagas de ${uhLbl}`, action.origem);
+      }
+      break;
+    }
 
     case 'ADD_TURMA': {
       const { diaSemana, horario, observacao } = action;
@@ -1433,6 +1465,7 @@ function normalizeState(s) {
     aulasCanceladas: arr(s.aulasCanceladas),
     resumosDiarios: (s.resumosDiarios && typeof s.resumosDiarios === 'object' && !Array.isArray(s.resumosDiarios)) ? s.resumosDiarios : {},
     manutencao: (s.manutencao && typeof s.manutencao === 'object') ? s.manutencao : null,
+    vagasOcultas: arr(s.vagasOcultas),
     estatisticas: { faltasExpiradas: arr((s.estatisticas || {}).faltasExpiradas), reposCanceladas: arr((s.estatisticas || {}).reposCanceladas), feriasExpiradas: arr((s.estatisticas || {}).feriasExpiradas), creditosExpirados: arr((s.estatisticas || {}).creditosExpirados) },
   };
   var afterFaltaMig = migrateFaltas(base);
@@ -3610,6 +3643,109 @@ function TabCancelarAula({ state, dispatch }) {
   );
 }
 
+// ==================== TAB: OCULTAR VAGAS ====================
+function TabOcultarVagas({ state, dispatch }) {
+  const [turmaId, setTurmaId] = useState('');
+  const [escopo, setEscopo] = useState('aula'); // 'aula' | 'turma'
+  const [data, setData] = useState('');
+  const td = todayStr();
+
+  const sorted = useMemo(() => sortTurmas(state.turmas), [state.turmas]);
+  const turma = state.turmas.find(t => t.id === turmaId);
+
+  const proximasDatas = useMemo(() => {
+    if (!turma || turma.id === TURMA_EXTRA_ID) return [];
+    const end = new Date(); end.setDate(end.getDate() + 60);
+    const jaOcultas = new Set(arr(state.vagasOcultas).filter(r => r.turmaId === turmaId && r.data).map(r => r.data));
+    return getClassDatesInRange(turma, td, dateToStr(end))
+      .filter(d => !FERIADOS_SET.has(d) && !isRecesso(d) && !jaOcultas.has(d));
+  }, [turma, turmaId, state.vagasOcultas, td]);
+
+  const podeOcultar = turmaId && (escopo === 'turma' || (escopo === 'aula' && data));
+
+  const handleOcultar = () => {
+    if (!podeOcultar) return;
+    dispatch({ type: 'HIDE_VAGAS', turmaId, data: escopo === 'turma' ? null : data, professor: localStorage.getItem(PROFESSOR_KEY) || '' });
+    setData(''); setTurmaId(''); setEscopo('aula');
+  };
+
+  const regras = useMemo(() =>
+    [...arr(state.vagasOcultas)].sort((a, b) => (a.turmaId).localeCompare(b.turmaId) || (a.data || '').localeCompare(b.data || '')),
+    [state.vagasOcultas]);
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm text-slate-700">
+        Oculta vagas dos alunos de forma antecipada — para aulas em que você não quer que ninguém marque reposição. Você continua vendo e podendo usar essas vagas normalmente; só os alunos não veem.
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Turma</label>
+        <select value={turmaId} onChange={e => { setTurmaId(e.target.value); setData(''); }} className="w-full border border-gray-300 rounded-lg px-3 py-2">
+          <option value="">— Selecione a turma —</option>
+          {sorted.filter(t => t.id !== TURMA_EXTRA_ID).map(t => <option key={t.id} value={t.id}>{`${EXTENSO[t.diaSemana]} ${t.horario}`}</option>)}
+        </select>
+      </div>
+
+      {turma && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">O que ocultar?</label>
+          <div className="flex gap-3">
+            <label className={`flex-1 flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors ${escopo === 'aula' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}>
+              <input type="radio" name="escopoOcultar" checked={escopo === 'aula'} onChange={() => setEscopo('aula')} />
+              <span className="text-sm font-medium">Uma aula específica</span>
+            </label>
+            <label className={`flex-1 flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors ${escopo === 'turma' ? 'border-slate-500 bg-slate-100' : 'border-gray-200'}`}>
+              <input type="radio" name="escopoOcultar" checked={escopo === 'turma'} onChange={() => setEscopo('turma')} />
+              <span className="text-sm font-medium">Toda a turma</span>
+            </label>
+          </div>
+        </div>
+      )}
+
+      {turma && escopo === 'aula' && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Data da aula</label>
+          <select value={data} onChange={e => setData(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2">
+            <option value="">— Selecione a data —</option>
+            {proximasDatas.map(d => <option key={d} value={d}>{fmtBRFull(d)}</option>)}
+          </select>
+          {proximasDatas.length === 0 && <p className="text-xs text-gray-400 mt-1">Nenhuma aula futura disponível.</p>}
+        </div>
+      )}
+
+      {turma && escopo === 'turma' && (
+        <p className="text-xs text-slate-600">As vagas de <strong>{`${EXTENSO[turma.diaSemana]} ${turma.horario}`}</strong> ficarão ocultas dos alunos em todas as aulas, até você reexibir.</p>
+      )}
+
+      <button onClick={handleOcultar} disabled={!podeOcultar}
+        className="w-full py-2.5 bg-slate-700 text-white rounded-lg text-sm font-medium hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed">
+        Ocultar vagas
+      </button>
+
+      {regras.length > 0 && (
+        <div className="mt-4 border-t border-gray-200 pt-4">
+          <h4 className="text-sm font-semibold text-gray-600 mb-2">Vagas ocultas</h4>
+          <div className="space-y-2">
+            {regras.map(r => (
+              <div key={r.id} className="bg-gray-50 rounded-lg p-3 text-sm flex justify-between items-center gap-2">
+                <div>
+                  <span className="font-medium">{getTurmaLabel(state.turmas, r.turmaId)}</span>
+                  <div className="text-gray-500 mt-0.5">{r.data ? fmtBRFull(r.data) : 'Toda a turma (até segunda ordem)'}</div>
+                </div>
+                <button onClick={() => dispatch({ type: 'UNHIDE_VAGAS', id: r.id, professor: localStorage.getItem(PROFESSOR_KEY) || '' })}
+                  className="text-xs px-2.5 py-1.5 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 shrink-0">
+                  Reexibir
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ==================== SECTION 2: FALTAS & REPOSIÇÕES ====================
 function SectionFaltasReposicoes({ state, dispatch }) {
   const [openGroup, setOpenGroup] = useState(null);
@@ -3667,6 +3803,15 @@ function SectionFaltasReposicoes({ state, dispatch }) {
         <TabCancelarAula state={state} dispatch={dispatch} />,
       ]
     },
+    {
+      key: 'ocultarVagas',
+      label: 'Ocultar Vagas',
+      color: 'slate',
+      tabs: ['Ocultar Vagas'],
+      content: [
+        <TabOcultarVagas state={state} dispatch={dispatch} />,
+      ]
+    },
   ];
 
   const colorMap = {
@@ -3675,6 +3820,7 @@ function SectionFaltasReposicoes({ state, dispatch }) {
     green:  { header: 'bg-green-50 border-green-200 text-green-800',   tab: 'border-green-600 text-green-700 bg-green-50',   btn: 'bg-green-500'  },
     purple: { header: 'bg-purple-50 border-purple-200 text-purple-800',tab: 'border-purple-600 text-purple-700 bg-purple-50',btn: 'bg-purple-500' },
     red:    { header: 'bg-red-50 border-red-200 text-red-800',         tab: 'border-red-600 text-red-700 bg-red-50',         btn: 'bg-red-500'    },
+    slate:  { header: 'bg-slate-50 border-slate-200 text-slate-800',   tab: 'border-slate-600 text-slate-700 bg-slate-50',   btn: 'bg-slate-600'  },
   };
 
   return (
@@ -4453,7 +4599,7 @@ function PainelVisual({ state, dispatch }) {
               {vagasGrupos.map((v, i) => {
                 const t   = state.turmas.find(x => x.id === v.turmaId);
                 const dia = getDiaSemanaFromDateStr(v.data);
-                const todaCancelada = v.vagas.every(vg => vg.cancelada);
+                const todaCancelada = v.vagas.every(vg => vg.cancelada) || isVagaOculta(v, state.vagasOcultas);
                 return (
                   <div key={i} onClick={() => setDet({ tipo:'vaga', obj: v })}
                     className={`px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors flex justify-between items-center ${todaCancelada ? 'bg-gray-50 opacity-60' : 'bg-white'}`}>
@@ -5475,6 +5621,7 @@ function AlunoView({ state, dispatch, acesso }) {
       .filter(v => {
         if (v.data < td) return false;
         if (v.cancelada) return false;
+        if (isVagaOculta(v, state.vagasOcultas)) return false;
         const dt = getClassDatetime(v.turmaId, v.data, state.turmas);
         if (dt && dt.getTime() <= now) return false; // remove quando a aula começa
         return true;
@@ -5492,7 +5639,7 @@ function AlunoView({ state, dispatch, acesso }) {
         seen.add(key);
         return true;
       });
-  }, [state.vagas, td]);
+  }, [state.vagas, state.vagasOcultas, td]);
   const [vagaSel, setVagaSel] = useState('');
   const [successRepo, setSuccessRepo] = useState('');
   const vagaObj = vagasFuturas.find(v => v.id === vagaSel);
