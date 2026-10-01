@@ -970,6 +970,8 @@ function LancarBarro({ prof, turmasVisiveis, mesData, state, patchAluno, doSave,
   const p = alunos[curIdx];
   const ehUltimo = pos >= n - 1;
   const avancar = () => { if (ehUltimo) sairStepper(); else setPos(pos + 1); };
+  // "Próximo/Concluir" grava o valor exibido (inclui 0 = "usou, não pegou barro"); "Pular" deixa como "—"
+  const confirmar = () => { if (!(p.isRepo && faltouDe(p))) setKg(p, kgDe(p), true); avancar(); };
   return (
     <div className="max-w-lg mx-auto p-4 pb-4">
       {header(turmaLabel(turmaSel), sairStepper)}
@@ -995,11 +997,16 @@ function LancarBarro({ prof, turmasVisiveis, mesData, state, patchAluno, doSave,
         )}
         {!p.isRepo && <ExtrasEditor extras={extrasDe(p)} onChange={ex => setExtras(p, ex)} />}
       </div>
-      <div className="flex items-center gap-2 mt-3">
+      {modo === 'rapido' && !(p.isRepo && faltouDe(p)) && (
+        <div className="text-center text-[11px] text-gray-400 mt-3">
+          <b>Próximo</b> grava o valor (inclusive 0 = não usou barro) · <b>Pular</b> deixa em branco
+        </div>
+      )}
+      <div className="flex items-center gap-2 mt-2">
         <button onClick={() => setPos(Math.max(0, pos - 1))} disabled={pos === 0}
           className="px-4 py-3 rounded-xl bg-gray-100 text-gray-600 font-semibold disabled:opacity-40">‹</button>
         <button onClick={avancar} className="px-4 py-3 rounded-xl bg-gray-100 text-gray-600 font-medium">Pular</button>
-        <button onClick={avancar}
+        <button onClick={confirmar}
           className={`flex-1 py-3 rounded-xl text-white font-semibold ${ehUltimo ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-amber-500 hover:bg-amber-600'}`}>
           {ehUltimo ? '✓ Concluir' : 'Próximo ›'}
         </button>
