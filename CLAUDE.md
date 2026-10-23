@@ -2,79 +2,75 @@
 
 ## Visão geral
 
-App web single-page para gestão de faltas e reposições de uma escola de artes. Construído em React 18 + Babel standalone + Tailwind CDN, tudo em um único arquivo HTML. Dados persistidos no Firebase Realtime Database via REST API + SSE.
+App web single-page para gestão de faltas e reposições de uma escola de artes (cerâmica).
+React 18 + Babel standalone + Tailwind CDN, **tudo em um único `index.html`**. Dados no
+Firebase Realtime Database (REST + SSE). Sem build, sem CI: todo commit na `main` vai pro ar.
+
+> ⚠️ **Regra permanente:** a cada mudança, atualizar o `DIARIO.md` (ver seção no fim).
 
 ---
 
-## Arquivos
+## Arquivos e deploy
 
 | Arquivo | Descrição |
 |---|---|
-| `/Volumes/PBOT HD/DOWNLOADS 2/atelie-passarinho-dev.html` | Arquivo de desenvolvimento — **sempre editar aqui** |
-| `/Volumes/PBOT HD/DOWNLOADS 2/atelie-passarinho-repo/index.html` | Cópia para GitHub Pages — **nunca editar diretamente** |
+| `index.html` | **App 1** (faltas/reposições) — o app principal. Editar aqui. |
+| `barro.html` | **App 2** (financeiro/barro) — standalone, lê `/state.json` só p/ leitura, grava em `/barro.json`. Outra frente de trabalho; **não mexer sem necessidade**. |
+| `diagnostic.html` | Página de diagnóstico (checa leitura/escrita Firebase e carga do app). |
+| `CLAUDE.md` | Este arquivo. |
+| `DIARIO.md` | Diário de mudanças — **sempre atualizar**. |
 
-**Regra obrigatória:** toda alteração no dev deve ser imediatamente sincronizada com o repo e publicada:
-```bash
-cp "/Volumes/PBOT HD/DOWNLOADS 2/atelie-passarinho-dev.html" "/Volumes/PBOT HD/DOWNLOADS 2/atelie-passarinho-repo/index.html"
-cd "/Volumes/PBOT HD/DOWNLOADS 2/atelie-passarinho-repo"
-git add index.html
-git commit -m "mensagem"
-git push
-```
+- **Fluxo:** editar `index.html` → `git commit` → `git push` para `main`. GitHub Pages publica sozinho em ~1-2 min.
+- **Deploy:** https://pebot09.github.io/atelie-passarinho/ · Repo: https://github.com/pebot09/atelie-passarinho · Branch: `main`.
+- **Atenção no push:** o remoto às vezes recebe commits do `barro.html` de outra sessão. Se o push falhar como non-fast-forward, `git fetch origin main && git rebase origin/main` (conflito é improvável, pois os dois apps são arquivos separados) e empurrar de novo. Pushes "non-fast-forward" transitórios do proxy também acontecem — reenviar costuma resolver.
+- **Verificação antes de commitar:** `python3 -c "s=open('index.html').read(); print(s.count('{')-s.count('}'), s.count('(')-s.count(')'), s.count('[')-s.count(']'))"`. As chaves e colchetes devem fechar (diff 0); parênteses têm baseline **-2** (vem de strings/emojis, não é erro).
+- **Sem acesso ao Firebase do sandbox:** a sessão cloud não consegue ler/gravar no Firebase (proxy bloqueia 403). Para inspecionar dados, pedir ao usuário um export de `/state.json`.
 
 ---
 
 ## Firebase
 
 - **URL:** `https://atelie-passarinho-default-rtdb.firebaseio.com`
-- **Endpoint de estado:** `/state.json`
-- **Segredo de escrita:** `109` (campo `_auth` em todo PUT)
-- **Leitura:** pública (sem auth)
-- **Escrita:** requer `_auth: '109'` no payload, validado pela regra no path `state`
+- **Estado:** `/state.json` · **Snapshots automáticos:** `/snapshots/...` · **App 2:** `/barro.json`
+- **Leitura:** pública. **Escrita:** requer `_auth: '109'` no payload.
+- `DB_WRITE_SECRET = '109'`, `PROFESSOR_PIN = '109'` — **nunca mudar** (quebraria o acesso de todos).
 
-### Regras de segurança (corretas):
+### Regras de segurança (as corretas, já publicadas):
 ```json
 {
   "rules": {
     ".read": true,
-    "state": {
-      ".write": "newData.child('_auth').val() == '109'"
-    }
+    "state":     { ".write": "newData.child('_auth').val() == '109'" },
+    "barro":     { ".write": "newData.child('_auth').val() == '109'" },
+    "snapshots": { "$s": { ".write": "newData.child('_auth').val() == '109'" } }
   }
 }
 ```
-> ⚠️ Firebase Rules usa `==` não `===`. Regra deve ser no path `state`, não na raiz.
-
-### Função de escrita no app:
-```js
-const DB_URL = 'https://atelie-passarinho-default-rtdb.firebaseio.com';
-const DB_WRITE_SECRET = '109';
-function saveToFirebase(payload) {
-  return fetch(DB_URL + '/state.json', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...payload, _auth: DB_WRITE_SECRET })
-  });
-}
-```
+> ⚠️ Firebase Rules usa `==` (não `===`). `snapshots` precisa do curinga `$s` porque a escrita é num **filho** (`/snapshots/<key>`), não no nó. O DELETE de snapshots antigos é bloqueado pela regra (newData nulo) — snapshots **não** são podados no servidor; é aceito de propósito.
 
 ---
 
-## Estrutura do estado (Firebase /state.json)
+## Estrutura do estado (`/state.json`)
 
 ```js
 {
-  turmas: [{ id, diaSemana, horario, capacidade, alunos[], observacao }],
-  faltas: [{ id, alunoNome, turmaId, datas[], status, reposicaoId, semAntecedencia? }],
-  reposicoes: [{ id, alunoNome, faltaId, turmaOrigemId, turmaReposicaoId, dataReposicao,
-                 realizada, vagaConsumedFaltaId?, vagaConsumedAusenciaId?,
-                 vagaExtra, semVagaOficial, tipo, criadoPor?, criadoEm? }],
-  vagas: [{ id, turmaId, data, faltaId?, ausenciaId?, vagaExtra? }],
-  ausencias: [{ id, alunoNome, turmaId, mesAno, tipo, creditoReposicao, creditoUsado }],
-  acessos: [{ codigo, alunoNome, turmaId }],
-  log: [{ id, ts, professor, descricao }],
-  estatisticas: { faltasExpiradas[] },
-  _updatedAt: timestamp
+  turmas:       [{ id, diaSemana, horario, capacidade, alunos[], observacao }],
+  faltas:       [{ id, alunoNome, turmaId, datas[], status, reposicaoId?, semAntecedencia?, cancelamentoId?, criadoPor?, criadoEm? }],
+  reposicoes:   [{ id, alunoNome, faltaId?, ausenciaId?, creditoId?, turmaOrigemId, turmaReposicaoId, dataReposicao,
+                   realizada, tipo, vagaConsumedFaltaId?, vagaConsumedAusenciaId?, vagaExtra?, semVagaOficial?, semFaltaVinculada?, pago?, criadoPor?, criadoEm? }],
+  vagas:        [{ id, turmaId, data, faltaId?, ausenciaId?, vagaExtra?, cancelada? }],
+  ausencias:    [{ id, alunoNome, turmaId, mesAno, tipo, creditoReposicao, creditoUsado, criadoPor? }],
+  creditos:     [{ id, alunoNome, turmaId, dataExpiracao, usado, criadoPor?, criadoEm? }],   // crédito extra avulso
+  acessos:      [{ id, codigo, alunoNome, turmaId, watchlist? }],                              // link do aluno (?c=codigo)
+  notas:        [{ id, turmaId, texto, professor, ts }],                                       // bloco de notas por turma
+  aulasCanceladas:  [{ id, turmaId, data, ts, professor }],                                    // aula cancelada (dia inteiro)
+  vagasOcultas:     [{ id, turmaId, data|null, ts, professor }],                               // data null = turma inteira "até segunda ordem"
+  resumosDiarios:   { "YYYY-MM-DD": { data, geradoEm, turmas:[{turmaId, presentes[], faltaram[], repondo[{nome,origemTurmaId}], esperados, cancelada}] } }, // snapshots imutáveis, ~3 meses
+  manutencao:   null | { ativo, ligadoEm, ligadoPor },                                         // modo manutenção (expira só em 6h)
+  log:          [{ id, ts, professor, descricao, origem? }],                                   // 'origem':'aluno'|'sistema' distingue autor
+  snapshots:    [],                                                                            // snapshots manuais
+  estatisticas: { faltasExpiradas[], reposCanceladas[], feriasExpiradas[], creditosExpirados[] },
+  _updatedAt:   timestamp
 }
 ```
 
@@ -84,9 +80,13 @@ function saveToFirebase(payload) {
 
 ```js
 STORAGE_KEY = 'atelie_passarinho_v3'   // cache localStorage
-PROFESSOR_PIN = '109'                   // PIN de acesso ao painel
-PROFESSOR_KEY = 'atelie_professor'      // localStorage: professor logado
+PROFESSOR_PIN = '109' / DB_WRITE_SECRET = '109'   // NUNCA mudar
+PROFESSOR_KEY = 'atelie_professor'     // localStorage: professor logado
 PROFESSORES = ['Carol', 'Gláucio', 'Laura', 'Pedro']
+MAX_LOG = 6000 / LOG_RETENTION_DAYS = 365          // log retém ~1 ano
+MANUTENCAO_ADMIN = 'Pedro' / MANUTENCAO_MAX_HORAS = 6
+CREDITO_EXPIRA_GRACE_DIAS = 7
+TURMA_EXTRA_ID = 'turma-extra'         // "Alunos Extras & Ex-alunos" (diaSemana/horario null)
 ```
 
 ---
@@ -94,96 +94,65 @@ PROFESSORES = ['Carol', 'Gláucio', 'Laura', 'Pedro']
 ## Lógica central
 
 ### `normalizeState(data)`
-Roda em todo load/sync. Contém todas as migrations de dados. Sempre termina chamando `computeVagasExtras`. Ordem das migrations importantes:
-1. Corrige ausências em meses de recesso (crédito = 0)
-2. Recria vagas para faltas pendentes sem vaga
-3. Liga reposições `semVagaOficial`/`vagaExtra` a vagas reais disponíveis
-4. Liga reposições antigas a ausencias
-5. **Deduplica `vagaConsumedFaltaId`** (race condition: dois alunos reservando mesmo slot)
-6. **Recria faltas órfãs** (vagas com faltaId que não existe mais no array de faltas)
-7. Remove vagas em datas de recesso
-8. Prune log (90 dias)
-9. Recomputa vagasExtras
+Roda em todo load/sync. Contém todas as migrations (corrige recesso, recria vagas/faltas órfãs,
+deduplica `vagaConsumedFaltaId`, liga reposições a vagas/ausências, reassocia créditos órfãos de
+trocas de turma antigas, etc.). Sempre termina em `computeVagasExtras` + `stripVagasCanceladas`.
+Mescla `resumosDiarios` (locais + servidor) para não apagar snapshots recém-congelados.
 
-### `computeVagasExtras(turmas, faltas, reposicoes, vagasBase, td, ausencias)`
-Calcula quantas vagas extras gerar por turma/data:
-```
-target = max(0, 8 - alunosEfetivos + faltasCount - totalRepos - existingFaltaVagas)
-```
+### `computeVagasExtras(...)`  →  `target = max(0, 8 - alunosEfetivos + faltasCount - totalRepos - existingFaltaVagas)`
+Se todos os alunos faltam na data, não gera vaga extra.
 
-### `isRecesso(dateStr)`
-Verifica datas de recesso do ateliê (ano-agnóstico): julho, dezembro/janeiro.
+### Prioridade de reposição — **por expiração** (helpers `reposicaoRights` / `pickReposicaoRight`)
+Ao marcar reposição, consome o direito que **vence antes** (falta pendente, crédito de férias ou
+crédito extra), independente do tipo. Faltas "sem antecedência" só valem dentro de 2h da aula.
+**Vale igual no fluxo do aluno e do professor** (o professor consome automaticamente; `rightToActionFields`).
 
-### `CLEANUP` e `SYNC_FROM_FIREBASE`
-Limpam faltas marcadas cuja reposição já foi realizada **E cujas datas de falta já passaram**:
-```js
-!(f.status === 'marcada' && f.reposicaoId && realizadasIds.has(f.reposicaoId) && f.datas.every(d => d < td))
-```
-> ⚠️ O `&& f.datas.every(d => d < td)` foi adicionado para evitar que vagas sumam antes da aula acontecer.
+### Cancelamento de reposição (aluno) — 3 faixas por horas até a aula
+`<2h`: perde o crédito/direito (`CANCEL_REPOSICAO_SEM_CREDITO` → falta expira p/ estatística).
+`<24h`: converte para "sem antecedência". `≥24h`: normal.
+Ao **marcar** reposição numa aula `<2h`, o aluno recebe um aviso extra (pode perder o crédito se cancelar).
 
----
+### Expiração automática (`CLEANUP` + `SYNC_FROM_FIREBASE`, via `expireStaleItems`)
+- **Faltas pendentes:** expiram 30 dias após a data; vão p/ `faltasExpiradas` + log "Sistema".
+- **Férias (ausências):** removidas quando o crédito vence (`getAusenciaExpiry` = fim do mês +30d) → `feriasExpiradas` + log.
+- **Créditos extras não usados:** removidos 7 dias após `dataExpiracao` → `creditosExpirados` + log.
+- Nunca expira item vinculado a uma reposição **pendente** (evita órfão).
 
-## Painel do professor
+### `CLEANUP` / `SYNC_FROM_FIREBASE`
+Limpam faltas marcadas cuja reposição foi realizada **E** cujas datas já passaram:
+`!(f.status==='marcada' && f.reposicaoId && realizadasIds.has(f.reposicaoId) && f.datas.every(d => d < td))`.
 
-- Acessível pelo PIN `109`
-- 3 abas: **Turmas**, **Faltas & Reposições**, **Painel**
-- Apenas `Pedro` logado em desktop (`pointer: fine`) vê o botão de editar o log
-- **RESUMO DE HOJE** — card expansível no final da aba Painel, mostra todas as turmas do dia com presentes, faltas e reposições
-- Renomear aluno: clicar no nome na seção Turmas → input inline → Enter salva, Esc cancela. A action `RENAME_ALUNO` propaga para faltas, reposições, ausências e acessos.
+### `isRecesso(dateStr)` — ano-agnóstico
+Recesso: **12 a 19 de julho**, **dez (≥20)** e **jan (≤10)**. Vagas em recesso são removidas; ausências em recesso têm `creditoReposicao: 0`.
 
 ---
 
-## Painel do aluno
+## Funcionalidades (resumo)
 
-- Acessado via `?c=CODIGO` na URL
-- Mostra faltas ativas com tag colorido:
-  - **Reposta** (verde): reposição já realizada
-  - **Marcada** (azul): reposição agendada mas não realizada
-  - **Pendente** (âmbar): sem reposição ainda
-- Vagas disponíveis para booking de reposição
+**Painel do professor** (PIN `109`, 3 abas):
+- **Turmas:** cards por turma; ao abrir, tabela por aluno (grid) com contagens ✋ faltas ativas · 🔄 reposições agendadas · 🎟️ crédito extra · 🏖️ crédito férias (ⓘ abre legenda). Nº de faltas em **vermelho** se alguma expira em ≤7 dias. Gerenciar (renomear, mover de turma — bloqueia homônimo no destino, histórico, remover). Notas da turma. Link do aluno (copiar/abrir/QR). Bloqueia nome repetido na mesma turma. Botão **🔧 modo manutenção** (fim da aba).
+- **Faltas & Reposições:** grupos Faltas (registrar — oferece escolha comum/sem antecedência para aulas de hoje e <24h; retroativas até 3 meses — / cancelar), Reposições (registrar — consome direito automático / cancelar), Férias, Crédito Extra, **Cancelar Aula** (dia inteiro), **Ocultar Vagas** (antecipado: uma aula ou turma inteira; só esconde dos alunos).
+- **Painel:** Lista atual, Histórico (log; editável só por Pedro no desktop), Registro. **Resumo do Dia** (card no fim): navegável por setas/calendário; hoje/futuro ao vivo, passado lê snapshot imutável; mostra Recesso/Feriado/aula cancelada.
+- **Toast "Desfazer"** (5s) em toda ação de dados — restaura o estado anterior (snapshot), sem passar pelas políticas de cancelamento.
 
----
+**Painel do aluno** (`?c=CODIGO`):
+- Faltas com tag: **Reposta** (verde) / **Marcada** (azul) / **A marcar** (âmbar). Alerta de expiração "em X dias".
+- Marca reposição escolhendo vaga; consome o direito que vence antes. Avisos para aula <2h.
+- Modo manutenção bloqueia marcações (só Pedro/admin grava).
 
-## Ícone / PWA
-
-- Favicon embutido em base64 no `<link id="favicon">`
-- iOS: `<link rel="apple-touch-icon">` criado dinamicamente referenciando o mesmo href do favicon
-- Header do app usa `<img src={document.getElementById('favicon').href}>` — não duplica o base64
-- Android funciona automaticamente com o favicon
+**PWA:** favicon base64 em `<link id="favicon">`, apple-touch-icon dinâmico, tela cheia no iOS.
 
 ---
 
-## Recesso do ateliê
+## Riscos / pontos em aberto (prioridade)
 
-Períodos (ano-agnósticos):
-- **Julho** completo
-- **Dezembro** (a partir de ~20/12) e **Janeiro** (até ~20/01)
-
-Ausências em meses de recesso têm `creditoReposicao: 0` automaticamente.
-Vagas em datas de recesso são removidas por migration.
-No painel de ausências: datas de recesso mostram 🏠 em vez de tachado.
+1. 🔴 **Backup fora do Firebase** é a rede de segurança contra perda/ransomware. Hoje manual (botão ⬇ Backup, só Pedro). **Recomendado automatizar.**
+2. 🟡 **Segurança do `109`** (segredo público no source + leitura pública do banco): risco baixo, estrago reversível com backup. Correção definitiva = Firebase Auth real. Não urgente.
+3. 🟡 **Concorrência de escrita** (lost update): sincroniza o estado inteiro; se outro dispositivo grava no mesmo instante, pode descartar a marcação local. Raro; não confirmado em produção (o episódio de "falta sumida" foi atribuído a falha de internet). Só atacar se reaparecer.
 
 ---
 
-## Bugs corrigidos nesta sessão (jun/2026)
+## Diário
 
-### Race condition de vagaConsumedFaltaId duplicado
-Dois alunos reservando o mesmo slot simultaneamente resultavam em dois registros com o mesmo `vagaConsumedFaltaId`. Migration em normalizeState detecta duplicatas e reatribui a segunda reposição à próxima vaga real disponível.
-
-### Falta sumindo antes da aula (Bia, Qui 09h 28/05)
-Falta de aluno que repôs ANTES da data da aula era limpa prematuramente. Fix: só limpar quando `f.datas.every(d => d < td)`.
-
-### Vagas órfãs (Laura e Mariana, Qua 19h 03/06)
-Vagas com `faltaId` que não existe mais no array de faltas. Migration recria a falta a partir dos dados da reposição vinculada, para que o professor veja quem está ausente.
-
-### Regras Firebase apagando dados
-Regras com `===` (inválido no Firebase Rules) e no path errado causaram bloqueio de writes. Correto: `==` no path `state`.
-
----
-
-## Deploy
-
-- **GitHub Pages:** https://pebot09.github.io/atelie-passarinho/
-- **Repo:** https://github.com/pebot09/atelie-passarinho
-- Branch: `main`
-- Todo commit vai direto pro ar — não há staging/CI
+Há um `DIARIO.md` com o registro cronológico das mudanças. **Toda alteração feita no app deve
+adicionar uma entrada nova no topo do `DIARIO.md`** (data, o que mudou, por quê), no mesmo commit.
