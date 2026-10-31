@@ -5,6 +5,16 @@
 
 ---
 
+## 2026-10-31
+- **Aluno = nome + turma (correção de homônimos)**. Vários pontos ainda identificavam o aluno só pelo nome:
+  - *Registrar Reposição*: o aviso "Falta mais antiga a consumir" pegava a falta de qualquer aluno com o mesmo nome (ex.: Bia de Seg 19h mostrava a falta da Bia de Qui 09h). Agora filtra pela turma escolhida. A checagem "já tem reposição nesse horário" (professor e aluno) também passou a considerar a turma — antes a reposição de um homônimo bloqueava a marcação.
+  - *Histórico do aluno* (Turmas e Registro): o filtro do log aceitava qualquer registro que citasse o nome e o rótulo da turma em qualquer lugar — misturava a Bia de outra turma que veio repor nesta e nomes compostos ("Ana Bia"). Novo helper `logRefereAluno(descricao, nome, turmaLabel)` exige o nome amarrado à turma ("Nome (Turma)", "à/da turma", "Moveu…", "Renomeou…").
+  - *Registro (log)*: o badge de um **professor** com o mesmo nome de um aluno (Carol, Laura) abria o histórico do aluno homônimo. Agora só abre quando quem agiu foi aluno (`origem: 'aluno'`), e a turma é resolvida pelo "Nome (Turma)" do registro (não pela turma de destino).
+  - No histórico, a autoria agora respeita `origem`: ação do próprio aluno = badge cinza; professor = cor do professor (antes a aluna Laura aparecia com a cor da professora Laura). Para faltas/reposições criadas com `criadoPor` = nome do aluno que também é professor, decide pelo registro do log do mesmo instante.
+  - *Renomear aluno*: bloqueia renomear para um nome que já existe na turma (UI + reducer) e passa a levar os **créditos extras** junto (antes ficavam órfãos no nome antigo).
+  - Textos que mostravam só o nome agora mostram a turma: lista de Cancelar Reposição, créditos expirados, observações do Painel/texto (aula extra/reposição sem falta, férias), ranking da Análise (desativada).
+- **Rolagem dos modais** (ex.: histórico do aluno aberto pelo Registro): o modal não tinha altura máxima — histórico comprido ficava cortado e o toque rolava a página de trás. Agora o modal cabe na tela (`.modal-panel` com `100dvh`), o conteúdo rola por dentro (`.modal-body`) e o cabeçalho com × fica fixo. Vale para todos os modais.
+
 ## 2026-09-29
 - **Card "Ocultar Vagas"** (seção Faltas & Reposições, abaixo de Cancelar Aula). Permite esconder dos alunos, de forma antecipada, as vagas de uma aula futura específica (turma+data) ou de uma turma inteira "até segunda ordem". Novo array `vagasOcultas`; `isVagaOculta` filtra só a visão do aluno (professor continua vendo/usando). Actions `HIDE_VAGAS`/`UNHIDE_VAGAS` com log; lista com "Reexibir"; badge "oculta dos alunos" no painel do professor reflete as regras.
 

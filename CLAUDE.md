@@ -93,6 +93,12 @@ TURMA_EXTRA_ID = 'turma-extra'         // "Alunos Extras & Ex-alunos" (diaSemana
 
 ## Lógica central
 
+### Identidade do aluno = **nome + turma**
+Nunca filtrar/agrupar aluno só por `alunoNome` — sempre junto com `turmaId` (faltas, ausências, créditos,
+acessos) ou `turmaOrigemId` (reposições). Há homônimos em turmas diferentes e alunos com nome de
+professor (Carol, Laura). No log, use `logRefereAluno(descricao, nome, turmaLabel)` (exige "Nome (Turma)")
+e `origem === 'aluno'` para saber se quem agiu foi aluno (o campo `professor` guarda só o nome).
+
 ### `normalizeState(data)`
 Roda em todo load/sync. Contém todas as migrations (corrige recesso, recria vagas/faltas órfãs,
 deduplica `vagaConsumedFaltaId`, liga reposições a vagas/ausências, reassocia créditos órfãos de

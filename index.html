@@ -27,6 +27,9 @@
     @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
     pre { white-space: pre-wrap; word-break: break-word; }
     input[type="date"]::-webkit-calendar-picker-indicator { cursor: pointer; }
+    /* Modal: nunca passa da altura da tela; o conteúdo rola por dentro (cabeçalho com × fica fixo) */
+    .modal-panel { max-height: calc(100vh - 2rem); max-height: calc(100dvh - 2rem); }
+    .modal-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
   </style>
 </head>
 <body class="bg-gray-100 min-h-screen">
@@ -768,6 +771,10 @@ function reducer(state, action) {
     case 'RENAME_ALUNO': {
       const { turmaId: renTurmaId, oldNome, newNome: renNome } = action;
       if (!renNome || renNome === oldNome) { next = state; break; }
+      // Nome + turma identifica o aluno: nunca renomear para um nome que já existe na turma
+      // (fundiria dois alunos num só).
+      const renTurma = state.turmas.find(t => t.id === renTurmaId);
+      if (!renTurma || renTurma.alunos.includes(renNome)) { next = state; break; }
       const newTurmasRen = state.turmas.map(t => {
         if (t.id !== renTurmaId) return t;
         return { ...t, alunos: t.alunos.map(a => a === oldNome ? renNome : a) };
@@ -784,6 +791,10 @@ function reducer(state, action) {
       const newAcessosRen = (state.acessos || []).map(a =>
         a.turmaId === renTurmaId && a.alunoNome === oldNome ? { ...a, alunoNome: renNome } : a
       );
+      // Créditos extras acompanham o novo nome (antes ficavam órfãos no nome antigo)
+      const newCreditosRen = arr(state.creditos).map(c =>
+        c.turmaId === renTurmaId && c.alunoNome === oldNome ? { ...c, alunoNome: renNome } : c
+      );
       const tLblRen = getTurmaLabel(state.turmas, renTurmaId);
       next = {
         ...state,
@@ -792,6 +803,7 @@ function reducer(state, action) {
         reposicoes: newReposRen,
         ausencias: newAusenciasRen,
         acessos: newAcessosRen,
+        creditos: newCreditosRen,
         log: addLog(state.log, action.professor, `Renomeou ${oldNome} → ${renNome} (${tLblRen})`, action.origem),
       };
       break;
@@ -1767,12 +1779,12 @@ function Modal({ title, children, onClose, danger }) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 p-4" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full fade-in">
-        <div className={`p-4 border-b flex justify-between items-center ${danger ? 'bg-red-50' : 'bg-gray-50'} rounded-t-xl`}>
+      <div className="modal-panel bg-white rounded-xl shadow-2xl max-w-md w-full fade-in flex flex-col">
+        <div className={`shrink-0 p-4 border-b flex justify-between items-center ${danger ? 'bg-red-50' : 'bg-gray-50'} rounded-t-xl`}>
           <h3 className={`font-semibold text-lg ${danger ? 'text-red-700' : 'text-gray-800'}`}>{title}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
         </div>
-        <div className="p-4">{children}</div>
+        <div className="modal-body p-4">{children}</div>
       </div>
     </div>
   );
@@ -1899,23 +1911,51 @@ function GerarLinkModal({ state, dispatch, onClose }) {
 }
 
 // ==================== HISTÓRICO DO ALUNO (inline na seção Turmas) ====================
-function nomeExatoMatch(texto, nome) {
-  const escaped = nome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp('(^|[\\s(,/—])' + escaped + '($|[\\s),/—])', 'i').test(texto);
+// Aluno = NOME + TURMA. Um registro do log só pertence ao aluno se o nome aparecer amarrado
+// ao rótulo da turma dele, nos formatos que o app grava:
+//   "… de/para/— Nome (Turma) …", "Adicionou Nome à turma Turma", "Removeu Nome da turma Turma",
+//   "Moveu Nome de A → B", "Renomeou Antigo → Novo (Turma)".
+// Assim não mistura homônimos de outra turma (ex.: a Bia de Qui 09h que veio repor na Seg 19h)
+// nem um professor com o mesmo nome de um aluno. Sem turma (caso ambíguo), casa só pelo nome.
+function escRegExp(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function logRefereAluno(descricao, nome, turmaLabel) {
+  if (!descricao || !nome) return false;
+  const n = escRegExp(nome);
+  const t = turmaLabel ? escRegExp(turmaLabel) : '[^()]+';
+  const tFim = turmaLabel ? escRegExp(turmaLabel) + '(?=$|\\s)' : '.+';
+  return [
+    '(?:^|\\s)(?:de|para|—) ' + n + ' \\(' + t + '\\)',
+    '^Adicionou ' + n + ' à turma ' + tFim,
+    '^Removeu ' + n + ' da turma ' + tFim,
+    '^Moveu ' + n + ' de ' + tFim,
+    '^Moveu ' + n + ' de .+ → ' + tFim,
+    '^Renomeou ' + n + ' → .+ \\(' + t + '\\)',
+    '^Renomeou .+ → ' + n + ' \\(' + t + '\\)',
+  ].some(p => new RegExp(p).test(descricao));
 }
 
 function HistoricoAlunoContent({ alunoNome, turmaId, state }) {
   const td = todayStr();
   const turmaLabel = turmaId ? getTurmaLabel(state.turmas, turmaId) : null;
+  const log = arr(state.log);
 
-  const logEntries = arr(state.log)
-    .filter(e => {
-      const atuouComoAluno = !PROFESSORES.includes(alunoNome) && e.professor === alunoNome;
-      if (!atuouComoAluno && !nomeExatoMatch(e.descricao, alunoNome)) return false;
-      if (turmaLabel) return e.descricao.includes(turmaLabel);
-      return true;
-    })
-    .map(e => ({ ts: e.ts, texto: e.descricao, tipo: 'log', autor: e.professor }));
+  const logEntries = log
+    .filter(e => logRefereAluno(e.descricao, alunoNome, turmaLabel))
+    .map(e => ({ ts: e.ts, texto: e.descricao, tipo: 'log', autor: e.professor, origem: e.origem || null }));
+
+  // Quem criou a falta/reposição: o próprio aluno (pelo link) ou um professor. O registro só
+  // guarda o nome (criadoPor). Se esse nome é o do próprio aluno e também é nome de professor
+  // (ex.: aluna Laura × professora Laura), decide pelo registro do log gravado no mesmo instante.
+  const origemCriador = (rec) => {
+    if (!rec.criadoPor || rec.criadoPor !== rec.alunoNome) return null;
+    if (!PROFESSORES.includes(rec.criadoPor)) return 'aluno';
+    const t0 = rec.criadoEm ? Date.parse(rec.criadoEm) : NaN;
+    if (!isNaN(t0)) {
+      const e = log.find(x => x.professor === rec.criadoPor && x.ts && Math.abs(Date.parse(x.ts) - t0) < 5000);
+      if (e) return e.origem === 'aluno' ? 'aluno' : null;
+    }
+    return 'aluno';
+  };
 
   const faltaEvents = state.faltas
     .filter(f => f.alunoNome === alunoNome && (!turmaId || f.turmaId === turmaId))
@@ -1923,7 +1963,8 @@ function HistoricoAlunoContent({ alunoNome, turmaId, state }) {
       ts: d + 'T23:59:00',
       texto: `Faltou — ${getTurmaLabel(state.turmas, f.turmaId)} em ${fmtBRFull(d)}`,
       tipo: 'falta',
-      autor: f.criadoPor || null
+      autor: f.criadoPor || null,
+      origem: origemCriador(f)
     })));
 
   const repoEvents = state.reposicoes
@@ -1932,7 +1973,8 @@ function HistoricoAlunoContent({ alunoNome, turmaId, state }) {
       ts: r.dataReposicao + 'T23:58:00',
       texto: `Repôs — ${getTurmaLabel(state.turmas, r.turmaReposicaoId)} em ${fmtBRFull(r.dataReposicao)}`,
       tipo: 'repo',
-      autor: r.criadoPor || null
+      autor: r.criadoPor || null,
+      origem: origemCriador(r)
     }));
 
   const all = [...logEntries, ...faltaEvents, ...repoEvents]
@@ -1955,7 +1997,8 @@ function HistoricoAlunoContent({ alunoNome, turmaId, state }) {
             </span>
             <span className="text-gray-700 flex-1">{e.texto}</span>
             {e.autor && (
-              <span className={`inline-flex items-center gap-1 font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap shrink-0 ${autorColors.bg} ${autorColors.text}`}>
+              <span title={autorIsAluno ? 'feito pelo(a) aluno(a)' : (PROFESSORES.includes(e.autor) ? 'feito pelo(a) professor(a)' : '')}
+                className={`inline-flex items-center gap-1 font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap shrink-0 ${autorColors.bg} ${autorColors.text}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${autorColors.dot}`}></span>
                 {e.autor}
               </span>
@@ -2321,7 +2364,14 @@ function SectionTurmas({ state, dispatch }) {
                         const isRenaming = renamingAluno?.turmaId === TURMA_EXTRA_ID && renamingAluno?.nome === nome;
                         const commitRename = () => {
                           const n = renameValue.trim();
-                          if (n && n !== nome) dispatch({ type: 'RENAME_ALUNO', turmaId: TURMA_EXTRA_ID, oldNome: nome, newNome: n });
+                          if (n && n !== nome) {
+                            if (turmaExtra.alunos.includes(n)) {
+                              setAddAlunoErro({ turmaId: TURMA_EXTRA_ID, msg: `Já existe um aluno chamado "${n}" nesta turma. Use um nome diferente (ex: sobrenome ou inicial).` });
+                            } else {
+                              dispatch({ type: 'RENAME_ALUNO', turmaId: TURMA_EXTRA_ID, oldNome: nome, newNome: n });
+                              setAddAlunoErro(null);
+                            }
+                          }
                           setRenamingAluno(null);
                         };
                         const nFaltas = state.faltas.filter(f => f.turmaId === TURMA_EXTRA_ID && f.alunoNome === nome && (f.status === 'pendente' || f.status === 'marcada')).length;
@@ -2775,15 +2825,16 @@ function TabRegistrarReposicao({ state, dispatch }) {
   // Falta normal pendente força reposição (sem opção de aula extra).
   const hasPending = rights.some(r => r.kind === 'falta' && !r.semAntecedencia);
 
+  // Aluno = nome + turma: só as faltas DESTE aluno nesta turma (homônimos de outras turmas não contam).
   const faltaInfo = useMemo(() => {
-    if (!alunoNome) return null;
+    if (!alunoNome || !turmaOrigemId) return null;
     const pending = state.faltas
-      .filter(f => f.alunoNome === alunoNome && f.status === 'pendente')
+      .filter(f => f.alunoNome === alunoNome && f.turmaId === turmaOrigemId && f.status === 'pendente')
       .sort((a, b) => getFaltaEarliest(a).localeCompare(getFaltaEarliest(b)));
     if (!pending.length) return null;
     const oldest = pending[0];
     return { turmaId: oldest.turmaId, datas: oldest.datas, expiry: getFaltaExpiry(oldest) };
-  }, [alunoNome, state.faltas]);
+  }, [alunoNome, turmaOrigemId, state.faltas]);
 
   const occupancy = useMemo(() => {
     if (!turmaRepoId || !dataRepo) return null;
@@ -2792,7 +2843,7 @@ function TabRegistrarReposicao({ state, dispatch }) {
 
   const jaTemReposicao = !!(alunoNome && dataRepo && turmaRepoId &&
     state.reposicoes.some(r =>
-      r.alunoNome === alunoNome && r.dataReposicao === dataRepo &&
+      r.alunoNome === alunoNome && r.turmaOrigemId === turmaOrigemId && r.dataReposicao === dataRepo &&
       r.turmaReposicaoId === turmaRepoId && !r.realizada
     ));
 
@@ -2991,7 +3042,7 @@ function TabCancelarReposicao({ state, dispatch }) {
 
   const handleCancel = () => {
     dispatch({ type: 'CANCEL_REPOSICAO', id: selectedId });
-    setSuccess(`Reposição de ${repo.alunoNome} em ${fmtBRFull(repo.dataReposicao)} cancelada.`);
+    setSuccess(`Reposição de ${repo.alunoNome} (${getTurmaLabel(state.turmas, repo.turmaOrigemId)}) em ${fmtBRFull(repo.dataReposicao)} cancelada.`);
     setSelectedId(''); setConfirm(false);
     setTimeout(() => setSuccess(''), 4000);
   };
@@ -3006,7 +3057,7 @@ function TabCancelarReposicao({ state, dispatch }) {
           <option value="">— Selecione —</option>
           {futuras.map(r => (
             <option key={r.id} value={r.id}>
-              {r.alunoNome} — {fmtBRFull(r.dataReposicao)} ({getTurmaLabel(state.turmas, r.turmaReposicaoId)}) {r.tipo==='aula_extra' ? '· Aula extra' : ''}
+              {r.alunoNome} ({getTurmaLabel(state.turmas, r.turmaOrigemId)}) — {fmtBRFull(r.dataReposicao)} → {getTurmaLabel(state.turmas, r.turmaReposicaoId)} {r.tipo==='aula_extra' ? '· Aula extra' : ''}
             </option>
           ))}
         </select>
@@ -3015,7 +3066,7 @@ function TabCancelarReposicao({ state, dispatch }) {
 
       {repo && (
         <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1">
-          <div><span className="font-medium">Aluno:</span> {repo.alunoNome}</div>
+          <div><span className="font-medium">Aluno:</span> {repo.alunoNome} ({getTurmaLabel(state.turmas, repo.turmaOrigemId)})</div>
           <div><span className="font-medium">Data:</span> {fmtBRFull(repo.dataReposicao)}</div>
           <div><span className="font-medium">Turma:</span> {getTurmaLabel(state.turmas, repo.turmaReposicaoId)}</div>
           <div><span className="font-medium">Tipo:</span> {repo.tipo === 'reposicao' ? 'Reposição de falta' : 'Aula extra'}</div>
@@ -3036,7 +3087,7 @@ function TabCancelarReposicao({ state, dispatch }) {
       {confirm && repo && (
         <ConfirmModal
           title="Cancelar reposição?" danger
-          message={`Cancelar a reposição de ${repo.alunoNome} em ${fmtBRFull(repo.dataReposicao)}?`}
+          message={`Cancelar a reposição de ${repo.alunoNome} (${getTurmaLabel(state.turmas, repo.turmaOrigemId)}) em ${fmtBRFull(repo.dataReposicao)}?`}
           onConfirm={handleCancel}
           onCancel={() => setConfirm(false)}
           confirmLabel="Cancelar reposição"
@@ -3325,9 +3376,19 @@ function GerenciarAlunoModal({ turma, state, dispatch, onClose }) {
     state.faltas.some(f => f.turmaId === turma.id && f.alunoNome === nome && f.status === 'pendente') ||
     state.reposicoes.some(r => r.turmaOrigemId === turma.id && r.alunoNome === nome && !r.realizada);
 
+  // Bloqueia renomear para um nome que já existe na turma (nome + turma identifica o aluno)
+  const renameErro = (oldNome) => {
+    const n = (renames[oldNome] ?? oldNome).trim();
+    const alunosAtuais = (state.turmas.find(t => t.id === turma.id) || turma).alunos;
+    return n && n !== oldNome && alunosAtuais.includes(n)
+      ? `Já existe um aluno chamado "${n}" nesta turma. Use um nome diferente (ex: sobrenome ou inicial).`
+      : null;
+  };
   const handleRename = (oldNome) => {
     const n = (renames[oldNome] ?? oldNome).trim();
-    if (n && n !== oldNome) dispatch({ type: 'RENAME_ALUNO', turmaId: turma.id, oldNome, newNome: n });
+    if (!n || n === oldNome || renameErro(oldNome)) return false;
+    dispatch({ type: 'RENAME_ALUNO', turmaId: turma.id, oldNome, newNome: n });
+    return true;
   };
 
   const sorted = useMemo(() => [...turma.alunos].sort((a,b) => a.localeCompare(b,'pt')), [turma.alunos]);
@@ -3350,6 +3411,7 @@ function GerenciarAlunoModal({ turma, state, dispatch, onClose }) {
           const isOpen = expanded === nome;
           const changeableDefault = canChangeTurma(nome, null);
           const renameVal = renames[nome] !== undefined ? renames[nome] : nome;
+          const erroRename = renameErro(nome);
           return (
             <div key={nome} className="border border-gray-200 rounded-xl overflow-hidden">
               <button
@@ -3366,16 +3428,17 @@ function GerenciarAlunoModal({ turma, state, dispatch, onClose }) {
                       className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
                       value={renameVal}
                       onChange={e => setRenames(r => ({ ...r, [nome]: e.target.value }))}
-                      onKeyDown={e => { if (e.key === 'Enter') { handleRename(nome); onClose(); } }}
+                      onKeyDown={e => { if (e.key === 'Enter' && handleRename(nome)) onClose(); }}
                       placeholder="Renomear…"
                     />
-                    {renameVal.trim() !== nome && renameVal.trim() !== '' && (
-                      <button onClick={() => { handleRename(nome); onClose(); }}
+                    {renameVal.trim() !== nome && renameVal.trim() !== '' && !erroRename && (
+                      <button onClick={() => { if (handleRename(nome)) onClose(); }}
                         className="text-xs px-2.5 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shrink-0">
                         Salvar
                       </button>
                     )}
                   </div>
+                  {erroRename && <p className="text-xs text-red-500">{erroRename}</p>}
                   <div>
                     <select
                       value=""
@@ -3521,6 +3584,7 @@ function TabCreditoExtra({ state, dispatch }) {
               <div key={c.id} className="bg-gray-50 rounded-lg px-3 py-2 text-sm flex justify-between items-center opacity-60">
                 <div>
                   <span className="font-medium">{c.alunoNome}</span>
+                  <span className="text-gray-400 ml-1 text-xs">({getTurmaLabel(state.turmas, c.turmaId)})</span>
                   <span className="text-gray-400 ml-2 text-xs">expirou {fmtBRFull(c.dataExpiracao)}</span>
                 </div>
                 <button onClick={() => dispatch({type:'DELETE_CREDITO', id: c.id, professor: localStorage.getItem(PROFESSOR_KEY) || ''})} className="text-red-400 hover:text-red-600 text-xs ml-2">Remover</button>
@@ -4032,17 +4096,17 @@ function generatePainelText(state) {
   // Aulas extra sem falta
   const extrasOrfas = state.reposicoes.filter(r => r.tipo === 'aula_extra' && !r.realizada);
   extrasOrfas.forEach(r => {
-    obs.push(`ℹ️ Aula extra sem falta vinculada: ${r.alunoNome} — ${fmtBRFull(r.dataReposicao)}`);
+    obs.push(`ℹ️ Aula extra sem falta vinculada: ${r.alunoNome} (${getTurmaLabel(state.turmas, r.turmaOrigemId)}) — ${fmtBRFull(r.dataReposicao)}`);
   });
 
   // Ausencias expirando
   state.ausencias.filter(a => !a.creditoUsado).forEach(a => {
     const exp = getAusenciaExpiry(a);
     if (exp >= today && exp <= in7Days) {
-      obs.push(`⚠️ Férias de ${a.alunoNome} expirando em ${fmtBRFull(exp)}`);
+      obs.push(`⚠️ Férias de ${a.alunoNome} (${getTurmaLabel(state.turmas, a.turmaId)}) expirando em ${fmtBRFull(exp)}`);
     }
     if (exp < today) {
-      obs.push(`🔴 Crédito de férias expirado: ${a.alunoNome} (${getMesNome(a.mesAno)})`);
+      obs.push(`🔴 Crédito de férias expirado: ${a.alunoNome} (${getTurmaLabel(state.turmas, a.turmaId)}) — ${getMesNome(a.mesAno)}`);
     }
   });
 
@@ -4204,8 +4268,9 @@ function PainelVisual({ state, dispatch }) {
     });
   state.ausencias.filter(a => !a.creditoUsado).forEach(a => {
     const exp = getAusenciaExpiry(a);
-    if (exp < td) obs.push({ level:'red', text:`Crédito de férias expirado: ${a.alunoNome} (${getMesNome(a.mesAno)})` });
-    else if (exp <= in7) obs.push({ level:'amber', text:`Férias de ${a.alunoNome} expirando em ${fmtBRFull(exp)}` });
+    const aLbl = getTurmaLabel(state.turmas, a.turmaId);
+    if (exp < td) obs.push({ level:'red', text:`Crédito de férias expirado: ${a.alunoNome} (${aLbl}) — ${getMesNome(a.mesAno)}` });
+    else if (exp <= in7) obs.push({ level:'amber', text:`Férias de ${a.alunoNome} (${aLbl}) expirando em ${fmtBRFull(exp)}` });
   });
   const vagasExtrasAbertas = state.vagas.filter(v => v.vagaExtra && v.data >= td);
   if (vagasExtrasAbertas.length > 0) {
@@ -4227,10 +4292,10 @@ function PainelVisual({ state, dispatch }) {
     obs.push({ level:'orange', text:`Falta sem antecedência: ${f.alunoNome} (${lbl}) — ${fmtBR(f.datas[0])}` });
   });
   state.reposicoes.filter(r => !r.realizada && r.tipo==='aula_extra').forEach(r => {
-    obs.push({ level:'blue', text:`Aula extra sem falta vinculada: ${r.alunoNome} — ${fmtBRFull(r.dataReposicao)}` });
+    obs.push({ level:'blue', text:`Aula extra sem falta vinculada: ${r.alunoNome} (${getTurmaLabel(state.turmas, r.turmaOrigemId)}) — ${fmtBRFull(r.dataReposicao)}` });
   });
   state.reposicoes.filter(r => !r.realizada && r.semFaltaVinculada).forEach(r => {
-    obs.push({ level:'blue', text:`Reposição sem falta vinculada: ${r.alunoNome} — ${fmtBRFull(r.dataReposicao)}` });
+    obs.push({ level:'blue', text:`Reposição sem falta vinculada: ${r.alunoNome} (${getTurmaLabel(state.turmas, r.turmaOrigemId)}) — ${fmtBRFull(r.dataReposicao)}` });
   });
 
   const obsColors = { red:'bg-red-50 text-red-700 border-red-200', amber:'bg-amber-50 text-amber-700 border-amber-200', blue:'bg-blue-50 text-blue-700 border-blue-200', teal:'bg-teal-50 text-teal-700 border-teal-200', orange:'bg-orange-50 text-orange-700 border-orange-200' };
@@ -4247,14 +4312,15 @@ function PainelVisual({ state, dispatch }) {
     const dateStr = fmtBR(f.datas[0]);
     return [...state.log]
       .sort((a, b) => a.ts.localeCompare(b.ts))
-      .find(e => e.descricao && e.descricao.includes(f.alunoNome) && e.descricao.toLowerCase().includes('falta') && e.descricao.includes(tLbl) && e.descricao.includes(dateStr)) || null;
+      .find(e => logRefereAluno(e.descricao, f.alunoNome, tLbl) && e.descricao.toLowerCase().includes('falta') && e.descricao.includes(dateStr)) || null;
   };
   const findLogForRepo = (r) => {
     if (!state.log?.length) return null;
+    const tLbl = getTurmaLabel(state.turmas, r.turmaOrigemId);
     const dateStr = fmtBRFull(r.dataReposicao);
     return [...state.log]
       .sort((a, b) => a.ts.localeCompare(b.ts))
-      .find(e => e.descricao && e.descricao.includes(r.alunoNome) && e.descricao.includes(dateStr)) || null;
+      .find(e => logRefereAluno(e.descricao, r.alunoNome, tLbl) && e.descricao.includes(dateStr)) || null;
   };
   const CriadoPorNote = ({ criadoPor, criadoEm }) => {
     if (!criadoPor && !criadoEm) return null;
@@ -5536,7 +5602,7 @@ function AlunoView({ state, dispatch, acesso }) {
   const ausenciaCredito = ausenciasAtivas.find(a => !a.creditoUsado && a.creditoReposicao > 0) || null;
   const creditosExtras = useMemo(() =>
     arr(state.creditos).filter(c => c.alunoNome === alunoNome && c.turmaId === turmaId && !c.usado && c.dataExpiracao >= td),
-    [state.creditos, alunoNome, td]);
+    [state.creditos, alunoNome, turmaId, td]);
   const [confirmCreditoRepo, setConfirmCreditoRepo] = useState(null);
   const [mesFerias, setMesFerias] = useState('');
   const [successFerias, setSuccessFerias] = useState('');
@@ -5646,7 +5712,7 @@ function AlunoView({ state, dispatch, acesso }) {
   const dataRepo = vagaObj?.data || '';
   const turmaRepoId = vagaObj?.turmaId || '';
   const jaTemReposicao = !!(vagaSel && state.reposicoes.some(r =>
-    r.alunoNome === alunoNome && r.dataReposicao === dataRepo &&
+    r.alunoNome === alunoNome && r.turmaOrigemId === turmaId && r.dataReposicao === dataRepo &&
     r.turmaReposicaoId === turmaRepoId && !r.realizada));
   const pendingNormal = useMemo(() =>
     state.faltas.filter(f => f.alunoNome === alunoNome && f.turmaId === turmaId && f.status === 'pendente' && !f.semAntecedencia)
@@ -5682,7 +5748,7 @@ function AlunoView({ state, dispatch, acesso }) {
   const minhasRepos = useMemo(() =>
     state.reposicoes.filter(r => r.alunoNome === alunoNome && r.turmaOrigemId === turmaId && !r.realizada)
       .sort((a,b) => a.dataReposicao.localeCompare(b.dataReposicao)),
-    [state.reposicoes, alunoNome]);
+    [state.reposicoes, alunoNome, turmaId]);
 
   const isLessThan24h = (repo) => {
     const tRepo = state.turmas.find(t => t.id === repo.turmaReposicaoId);
@@ -6562,16 +6628,20 @@ function PainelAnalise({ state }) {
   });
   const rankFaltasTurma = Object.entries(faltasPorTurma).sort((a,b) => b[1]-a[1]);
 
+  // Aluno = nome + turma (homônimos de turmas diferentes são pessoas diferentes)
+  const alunoKey = (nome, turmaId) => `${nome} (${getTurmaLabel(state.turmas, turmaId)})`;
+
   // — alunos com mais faltas totais —
   const faltasPorAluno = {};
   state.faltas.forEach(f => {
-    faltasPorAluno[f.alunoNome] = (faltasPorAluno[f.alunoNome] || 0) + 1;
+    const k = alunoKey(f.alunoNome, f.turmaId);
+    faltasPorAluno[k] = (faltasPorAluno[k] || 0) + 1;
   });
   const rankFaltasAluno = Object.entries(faltasPorAluno).sort((a,b) => b[1]-a[1]);
 
   // — faltas expiradas por aluno —
   const expPorAluno = {};
-  expiradas.forEach(e => { expPorAluno[e.alunoNome] = (expPorAluno[e.alunoNome] || 0) + 1; });
+  expiradas.forEach(e => { const k = alunoKey(e.alunoNome, e.turmaId); expPorAluno[k] = (expPorAluno[k] || 0) + 1; });
   const rankExpAluno = Object.entries(expPorAluno).sort((a,b) => b[1]-a[1]);
 
   // — faltas expiradas por mês —
@@ -6613,7 +6683,7 @@ function PainelAnalise({ state }) {
 
   const Bar = ({label, value, max, color}) => (
     <div className="flex items-center gap-2 text-xs">
-      <span className="w-28 text-gray-600 truncate shrink-0">{label}</span>
+      <span className="w-28 text-gray-600 truncate shrink-0" title={label}>{label}</span>
       <div className="flex-1 bg-gray-100 rounded-full h-2">
         <div className={`h-2 rounded-full ${color || 'bg-blue-400'}`} style={{width: max ? `${Math.round((value/max)*100)}%` : '0%'}} />
       </div>
@@ -6707,7 +6777,11 @@ function PainelRegistro({ state, dispatch }) {
     state.faltas.forEach(f => { if (f.alunoNome === nome) turmaIds.add(f.turmaId); });
     state.reposicoes.forEach(r => { if (r.alunoNome === nome && r.turmaOrigemId) turmaIds.add(r.turmaOrigemId); });
     const turmasDoAluno = [...turmaIds];
-    const turmaEncontrada = turmasDoAluno.find(id => descricao.includes(getTurmaLabel(state.turmas, id)));
+    // A turma é a que aparece AMARRADA ao nome no registro ("Nome (Turma)"), nunca só um rótulo
+    // solto (ex.: a turma de destino de uma reposição). Prefere as turmas do aluno; senão,
+    // qualquer turma cujo rótulo case (ex-aluno); senão, a única turma conhecida.
+    const casa = id => logRefereAluno(descricao, nome, getTurmaLabel(state.turmas, id));
+    const turmaEncontrada = turmasDoAluno.find(casa) || (state.turmas.find(t => casa(t.id)) || {}).id;
     const turmaId = turmaEncontrada || (turmasDoAluno.length === 1 ? turmasDoAluno[0] : null);
     setHistoricoModal({ nome, turmaId });
   };
@@ -6742,6 +6816,9 @@ function PainelRegistro({ state, dispatch }) {
         {log.map(entry => {
           const isAluno = entry.origem === 'aluno';
           const c = (!isAluno && PROFESSOR_COLORS[entry.professor]) || { bg:'bg-gray-100', text:'text-gray-600', dot:'bg-gray-400' };
+          // Só abre histórico quando quem agiu foi um ALUNO. Professor com o mesmo nome de um
+          // aluno (ex.: Carol, Laura) não abre o histórico do aluno homônimo.
+          const autorEhAluno = isAluno || (!entry.origem && !PROFESSORES.includes(entry.professor));
           const dt = new Date(entry.ts);
           const dataHora = dt.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' }) +
                            ' ' + dt.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
@@ -6754,7 +6831,7 @@ function PainelRegistro({ state, dispatch }) {
                   title="Apagar este registro"
                 >✕</button>
               )}
-              {allAlunoNames.includes(entry.professor)
+              {autorEhAluno && allAlunoNames.includes(entry.professor)
                 ? <button onClick={() => abrirHistorico(entry.professor, entry.descricao)}
                     className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap mt-0.5 ${c.bg} ${c.text} hover:opacity-75`}>
                     <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`}></span>
