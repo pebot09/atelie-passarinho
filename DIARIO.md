@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-11-01
+- **App re-sincroniza ao voltar ao primeiro plano e na virada do dia.** Caso real: no domingo, o Resumo do Dia de sábado 31/10 aparecia "Sem registro deste dia" e as reposições de sábado ainda constavam como pendentes. O app do iPhone (salvo na tela inicial) estava congelado em segundo plano desde antes da meia-noite: a conexão em tempo real tinha morrido em silêncio (o selo seguia "sincronizado") e a limpeza diária + congelamento do resumo só rodavam ao **carregar** o app. Agora:
+  - ao voltar ao app depois de ≥60s em segundo plano, quando o dia virou, ao voltar a internet (`online`) ou ao restaurar a página (`pageshow`), reabre a conexão em tempo real — que traz o estado atual do servidor;
+  - com dados frescos, roda 1x por dia `CLEANUP` + `FREEZE_RESUMOS` (`rotinasDoDia`, controle em `diaRotinas`);
+  - timer de 60s cobre o app aberto e visível na virada do dia (ex.: computador);
+  - se há gravação pendente, grava primeiro e só depois reconecta (não perde alteração feita logo antes de sair do app);
+  - novo status "🔄 atualizando" durante a reconexão (não usa "conectando", que na tela do aluno troca tudo por "Carregando...");
+  - se a carga inicial tinha falhado (abriu sem internet), tenta de novo ao voltar.
+
 ## 2026-10-31
 - **Aluno = nome + turma (correção de homônimos)**. Vários pontos ainda identificavam o aluno só pelo nome:
   - *Registrar Reposição*: o aviso "Falta mais antiga a consumir" pegava a falta de qualquer aluno com o mesmo nome (ex.: Bia de Seg 19h mostrava a falta da Bia de Qui 09h). Agora filtra pela turma escolhida. A checagem "já tem reposição nesse horário" (professor e aluno) também passou a considerar a turma — antes a reposição de um homônimo bloqueava a marcação.

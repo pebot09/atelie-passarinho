@@ -5265,6 +5265,10 @@ function App() {
   const saveTimer   = useRef(null);
   const initialised = useRef(false);
   const syncedUpdatedAt = useRef(0); // _updatedAt do último estado recebido do Firebase (controle de concorrência)
+  const diaRotinas = useRef('');      // dia em que a limpeza diária + congelamento do resumo já rodaram
+  const salvando = useRef(false);     // há gravação agendada ou em andamento
+  const reconectarAposSalvar = useRef(false);
+  const reabrirStream = useRef(null);
   const prevVagasRef = useRef(null);
 
   // --- Toast de desfazer ---
@@ -5318,40 +5322,105 @@ function App() {
     setProfessor('');
   };
 
-  // 1. Carrega Firebase + abre SSE + roda CLEANUP após sync
+  // 1. Carrega Firebase + abre SSE + roda CLEANUP após sync.
+  //    Também re-sincroniza quando o app VOLTA ao primeiro plano e quando o DIA VIRA com o app
+  //    aberto. No iPhone, o app salvo na tela inicial fica congelado em segundo plano e a conexão
+  //    em tempo real morre em silêncio: sem isto, ele mostra o estado antigo e a limpeza diária e
+  //    o congelamento do Resumo do Dia não rodam (ex.: 31/10 "Sem registro deste dia").
   useEffect(function() {
-    fetchFromFirebase()
-      .then(function(data) {
-        if (data && typeof data === 'object' && Object.keys(data).length > 0) {
-          syncedUpdatedAt.current = data._updatedAt || 0;
-          baseDispatch({ type: 'SYNC_FROM_FIREBASE', data: normalizeState(data) });
-        } else {
-          saveToFirebase(Object.assign({}, SEED, { _updatedAt: Date.now() })).catch(function(){});
-        }
-        initialised.current = true;
-        baseDispatch({ type: 'CLEANUP' }); // roda após sync e após initialised=true, para que vagasExtras sejam salvas
-        baseDispatch({ type: 'FREEZE_RESUMOS' }); // congela o resumo dos dias passados (imutável, 3 meses)
-        setSyncStatus('ok');
-      })
-      .catch(function() { setSyncStatus('erro'); });
+    var es = null;
+    var carregando = false;
+    var escondidoEm = null;
 
-    var es = new EventSource(DB_URL + '/state.json');
-    es.addEventListener('put', function(e) {
-      try {
-        var parsed = JSON.parse(e.data);
-        var data = parsed.data;
-        if (!data || typeof data !== 'object') return;
-        if (data._updatedAt && data._updatedAt <= lastOwnSave.current + 3000) return;
-        var { _auth: _a, ...cleanData } = data;
-        syncedUpdatedAt.current = data._updatedAt || syncedUpdatedAt.current;
-        dismissToast(); // mudança externa chegou: snapshot ficaria desatualizado
-        baseDispatch({ type: 'SYNC_FROM_FIREBASE', data: normalizeState(cleanData) });
-      } catch(err) { console.error('[atelie] erro ao processar evento SSE:', err); }
-    });
-    es.onerror = function() { setSyncStatus('erro'); };
-    es.onopen  = function() { setSyncStatus('ok'); };
+    // Limpeza diária + congelamento do resumo: 1x por dia, sempre sobre dados recém-chegados.
+    function rotinasDoDia() {
+      if (!initialised.current) return;
+      var hoje = todayStr();
+      if (diaRotinas.current === hoje) return;
+      diaRotinas.current = hoje;
+      baseDispatch({ type: 'CLEANUP' });
+      baseDispatch({ type: 'FREEZE_RESUMOS' });
+    }
 
-    return function() { es.close(); };
+    function carregarInicial() {
+      if (carregando) return;
+      carregando = true;
+      fetchFromFirebase()
+        .then(function(data) {
+          if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+            syncedUpdatedAt.current = data._updatedAt || 0;
+            baseDispatch({ type: 'SYNC_FROM_FIREBASE', data: normalizeState(data) });
+          } else {
+            saveToFirebase(Object.assign({}, SEED, { _updatedAt: Date.now() })).catch(function(){});
+          }
+          initialised.current = true;
+          diaRotinas.current = todayStr();
+          baseDispatch({ type: 'CLEANUP' }); // roda após sync e após initialised=true, para que vagasExtras sejam salvas
+          baseDispatch({ type: 'FREEZE_RESUMOS' }); // congela o resumo dos dias passados (imutável, 3 meses)
+          setSyncStatus('ok');
+        })
+        .catch(function() { setSyncStatus('erro'); })
+        .then(function() { carregando = false; });
+    }
+
+    function abrirStream() {
+      if (es) es.close();
+      es = new EventSource(DB_URL + '/state.json');
+      es.addEventListener('put', function(e) {
+        try {
+          var parsed = JSON.parse(e.data);
+          var data = parsed.data;
+          if (!data || typeof data !== 'object') return;
+          // Eco da nossa própria gravação: o estado local já é o atual
+          if (!(data._updatedAt && data._updatedAt <= lastOwnSave.current + 3000)) {
+            var { _auth: _a, ...cleanData } = data;
+            syncedUpdatedAt.current = data._updatedAt || syncedUpdatedAt.current;
+            dismissToast(); // mudança externa chegou: snapshot ficaria desatualizado
+            baseDispatch({ type: 'SYNC_FROM_FIREBASE', data: normalizeState(cleanData) });
+          }
+          rotinasDoDia(); // se o dia virou, roda agora que os dados estão atualizados
+        } catch(err) { console.error('[atelie] erro ao processar evento SSE:', err); }
+      });
+      es.onerror = function() { setSyncStatus('erro'); };
+      es.onopen  = function() { setSyncStatus('ok'); };
+    }
+    reabrirStream.current = abrirStream;
+
+    // Reconecta: a reconexão traz o estado atual do servidor (que dispara as rotinas do dia).
+    function reconectar() {
+      if (!initialised.current) { carregarInicial(); abrirStream(); return; }
+      // Alteração local ainda não gravada: grava primeiro e só depois reconecta — senão o
+      // estado do servidor que chega na reconexão poderia passar por cima dela.
+      if (salvando.current) { reconectarAposSalvar.current = true; return; }
+      setSyncStatus('atualizando'); // não usa 'conectando': na tela do aluno isso troca tudo por "Carregando..."
+      abrirStream();
+    }
+
+    function aoMudarVisibilidade() {
+      if (document.visibilityState === 'hidden') { escondidoEm = Date.now(); return; }
+      var ficouFora = escondidoEm !== null && (Date.now() - escondidoEm) >= 60000;
+      escondidoEm = null;
+      if (ficouFora || diaRotinas.current !== todayStr()) reconectar();
+    }
+    function aoMostrarPagina(e) { if (e.persisted) reconectar(); }
+    // App aberto e visível na virada do dia (ex.: computador ligado à noite)
+    var timerDia = setInterval(function() {
+      if (document.visibilityState === 'visible' && diaRotinas.current && diaRotinas.current !== todayStr()) reconectar();
+    }, 60000);
+
+    carregarInicial();
+    abrirStream();
+    document.addEventListener('visibilitychange', aoMudarVisibilidade);
+    window.addEventListener('pageshow', aoMostrarPagina);
+    window.addEventListener('online', reconectar);
+
+    return function() {
+      clearInterval(timerDia);
+      document.removeEventListener('visibilitychange', aoMudarVisibilidade);
+      window.removeEventListener('pageshow', aoMostrarPagina);
+      window.removeEventListener('online', reconectar);
+      if (es) es.close();
+    };
   }, []);
 
   // 2b. Detecta vagas novas e notifica alunos com watchlist
@@ -5391,7 +5460,8 @@ function App() {
     // já aberto registre qualquer coisa durante as mudanças.
     if (isManutencaoAtiva(state) && professor !== MANUTENCAO_ADMIN) return;
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(function() {
+    salvando.current = true;
+    var meuTimer = saveTimer.current = setTimeout(function() {
       // 1) Confere o _updatedAt atual do servidor antes de gravar
       fetch(DB_URL + '/state/_updatedAt.json')
         .then(function(r) { return r.json(); })
@@ -5420,7 +5490,16 @@ function App() {
               maybeSaveSnapshot(Object.assign({}, state, { _updatedAt: ts }));
             });
         })
-        .catch(function() { setSyncStatus('erro'); });
+        .catch(function() { setSyncStatus('erro'); })
+        .then(function() {
+          if (saveTimer.current !== meuTimer) return; // outra gravação já foi agendada
+          salvando.current = false;
+          if (reconectarAposSalvar.current) {
+            reconectarAposSalvar.current = false;
+            setSyncStatus('atualizando');
+            if (reabrirStream.current) reabrirStream.current();
+          }
+        });
     }, 600);
   }, [state, professor]);
 
@@ -5431,7 +5510,7 @@ function App() {
   ];
 
   const showSeedWarning = state._seedWarning && !seedDismissed;
-  const syncLabel = { conectando: '🔄 conectando', ok: '🟢 sincronizado', erro: '🔴 sem conexão' };
+  const syncLabel = { conectando: '🔄 conectando', atualizando: '🔄 atualizando', ok: '🟢 sincronizado', erro: '🔴 sem conexão' };
   const profColors = PROFESSOR_COLORS[professor] || { bg:'bg-gray-100', text:'text-gray-700', dot:'bg-gray-400' };
 
   // Tela do aluno — detecta ?c=CODIGO na URL

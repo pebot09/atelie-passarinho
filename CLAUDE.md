@@ -105,6 +105,12 @@ deduplica `vagaConsumedFaltaId`, liga reposições a vagas/ausências, reassocia
 trocas de turma antigas, etc.). Sempre termina em `computeVagasExtras` + `stripVagasCanceladas`.
 Mescla `resumosDiarios` (locais + servidor) para não apagar snapshots recém-congelados.
 
+### Carga, re-sincronização e rotinas do dia (`App`, efeito 1)
+Carga inicial: fetch → `SYNC_FROM_FIREBASE` → `CLEANUP` → `FREEZE_RESUMOS`. Ao voltar ao app (≥60s oculto),
+virada do dia, `online` ou `pageshow`: reabre o SSE (o 1º `put` traz o estado do servidor) e `rotinasDoDia()`
+roda `CLEANUP` + `FREEZE_RESUMOS` 1x por dia. Gravação pendente → grava antes de reconectar. Status
+`'atualizando'` na reconexão — nunca `'conectando'` (bloqueia a tela do aluno com "Carregando...").
+
 ### `computeVagasExtras(...)`  →  `target = max(0, 8 - alunosEfetivos + faltasCount - totalRepos - existingFaltaVagas)`
 Se todos os alunos faltam na data, não gera vaga extra.
 
