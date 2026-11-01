@@ -615,29 +615,10 @@ function reducer(state, action) {
     }
 
     case 'FREEZE_RESUMOS': {
-      // Congela o resumo de dias passados (imutável). Mantém só os últimos 3 meses.
-      const fzTd = todayStr();
-      const existentes = (state.resumosDiarios && typeof state.resumosDiarios === 'object') ? state.resumosDiarios : {};
-      const novos = { ...existentes };
-      let mudou = false;
-      // Congela dias faltantes na janela [hoje-15, ontem]
-      const ini = parseDate(fzTd); ini.setDate(ini.getDate() - 15);
-      const fim = parseDate(fzTd);
-      for (const d = new Date(ini); d < fim; d.setDate(d.getDate() + 1)) {
-        const ds = dateToStr(d);
-        if (novos[ds]) continue;
-        const turmasDia = computeResumoDia(state, ds);
-        if (turmasDia.length) {
-          novos[ds] = { data: ds, geradoEm: new Date().toISOString(), turmas: turmasDia };
-          mudou = true;
-        }
-      }
-      // Poda: remove snapshots com mais de 3 meses
-      const corte = parseDate(fzTd); corte.setDate(corte.getDate() - 92);
-      const corteStr = dateToStr(corte);
-      Object.keys(novos).forEach(k => { if (k < corteStr) { delete novos[k]; mudou = true; } });
-      if (!mudou) { next = state; break; }
-      next = { ...state, resumosDiarios: novos };
+      // Congela o resumo de dias passados (imutável, salvo ajuste retroativo). Mantém só os últimos 3 meses.
+      const fz = congelarResumos(state, todayStr());
+      if (!fz.mudou) { next = state; break; }
+      next = { ...state, resumosDiarios: fz.resumos };
       break;
     }
 
@@ -655,7 +636,20 @@ function reducer(state, action) {
     case 'RESTORE_STATE': {
       // Desfazer: restaura o estado anterior a uma ação (snapshot completo).
       if (!action.snapshot || typeof action.snapshot !== 'object') return state;
-      next = action.snapshot;
+      {
+        // Resumos: o dia que a ação tinha ajustado volta à versão anterior com carimbo novo
+        // (atualizadoEm), para vencer na mesclagem entre aparelhos. Dias congelados depois
+        // do snapshot (não são ação do usuário) são mantidos.
+        const atuais = (state.resumosDiarios && typeof state.resumosDiarios === 'object') ? state.resumosDiarios : {};
+        const antigos = (action.snapshot.resumosDiarios && typeof action.snapshot.resumosDiarios === 'object') ? action.snapshot.resumosDiarios : {};
+        const agora = new Date().toISOString();
+        const resumosRest = { ...atuais };
+        Object.keys(antigos).forEach(k => {
+          if (JSON.stringify(atuais[k]) === JSON.stringify(antigos[k])) return;
+          resumosRest[k] = { ...antigos[k], atualizadoEm: agora };
+        });
+        next = { ...action.snapshot, resumosDiarios: resumosRest };
+      }
       break;
     }
 
@@ -892,6 +886,12 @@ function reducer(state, action) {
         }
       });
       next = { ...state, faltas: [...state.faltas, ...newFaltas], vagas: [...state.vagas, ...newVagas], reposicoes };
+      // Falta retroativa em dia já congelado: ajusta o resumo daquele dia
+      {
+        let resumosAF = state.resumosDiarios;
+        newFaltas.forEach(f => { resumosAF = ajustarResumoCongelado(resumosAF, f.datas[0], turmaId, t => resumoComFalta(t, alunoNome)); });
+        if (resumosAF !== state.resumosDiarios) next.resumosDiarios = resumosAF;
+      }
       if (newFaltas.length) {
         const tLbl = getTurmaLabel(state.turmas, turmaId);
         const datasLbl = fmtDatesText(newFaltas.map(f => f.datas[0]));
@@ -1020,6 +1020,15 @@ function reducer(state, action) {
       if (next) {
         const td_ar = todayStr();
         next = { ...next, vagas: computeVagasExtras(next.turmas, next.faltas, next.reposicoes, next.vagas, td_ar, next.ausencias) };
+        // Reposição RETROATIVA (data já passou): nasce realizada e entra no resumo congelado do dia
+        if (dataReposicao && dataReposicao < td_ar) {
+          next = { ...next, reposicoes: next.reposicoes.map(r => r.id === repoId ? { ...r, realizada: true } : r) };
+          const novaRepo = next.reposicoes.find(r => r.id === repoId);
+          if (novaRepo) {
+            const resumosAR = ajustarResumoCongelado(next.resumosDiarios, dataReposicao, turmaReposicaoId, t => resumoComReposicao(t, alunoNome, novaRepo.turmaOrigemId));
+            if (resumosAR !== next.resumosDiarios) next = { ...next, resumosDiarios: resumosAR };
+          }
+        }
       }
       break;
     }
@@ -1332,6 +1341,8 @@ function reducer(state, action) {
 
     case 'CLEANUP': {
       const td = todayStr();
+      // Congela os dias passados ANTES de apagar as faltas já repostas (senão viram "presentes")
+      const fzCU = congelarResumos(state, td);
       const vagas = state.vagas.filter(v => v.data >= td);
       const reposicoes = state.reposicoes.map(r => r.dataReposicao < td ? {...r, realizada: true} : r);
       // IDs de reposições já realizadas
@@ -1355,7 +1366,7 @@ function reducer(state, action) {
         creditosExpirados: [...arr((state.estatisticas || {}).creditosExpirados), ...expCU.credExpStats],
       };
       const vagasComExtras = stripVagasCanceladas(computeVagasExtras(state.turmas, state.faltas, reposicoes, vagas, td, expCU.ausenciasAtivas), state.aulasCanceladas);
-      next = { ...state, vagas: vagasComExtras, reposicoes, faltas: activeFaltas, ausencias: expCU.ausenciasAtivas, creditos: expCU.creditosAtivos, estatisticas };
+      next = { ...state, vagas: vagasComExtras, reposicoes, faltas: activeFaltas, ausencias: expCU.ausenciasAtivas, creditos: expCU.creditosAtivos, estatisticas, resumosDiarios: fzCU.resumos };
       {
         const faltasLogsCU = expiredFaltas.map(f => `⏰ Expirou: falta pendente de ${f.alunoNome} (${getTurmaLabel(state.turmas, f.turmaId)}) — ${fmtBR(f.datas[0])}`);
         let logCU = state.log;
@@ -1393,13 +1404,10 @@ function reducer(state, action) {
       );
       const vagasFiltradas = inc.vagas.filter(v => v.data >= td);
       const vagasComExtras = stripVagasCanceladas(computeVagasExtras(inc.turmas, cleanFaltas, reposSynced, vagasFiltradas, td, expSync.ausenciasAtivas), inc.aulasCanceladas);
-      // Mescla resumosDiarios: mantém os snapshots locais (recém-congelados, ainda não
-      // salvos no Firebase) + os que vierem do servidor. Sem isso, o sync apagaria os
-      // snapshots criados localmente antes de persistirem. Poda os de mais de 3 meses.
-      const mergedResumos = { ...(inc.resumosDiarios || {}), ...(state.resumosDiarios || {}) };
-      const corteR = parseDate(td); corteR.setDate(corteR.getDate() - 92);
-      const corteRStr = dateToStr(corteR);
-      Object.keys(mergedResumos).forEach(k => { if (k < corteRStr) delete mergedResumos[k]; });
+      // Mescla resumosDiarios (servidor + aparelho, dia a dia — ver mesclarResumos) e congela
+      // os dias passados que faltam a partir dos dados RECEBIDOS, antes da limpeza das faltas
+      // já repostas (cleanFaltas acima só vale para o estado final). Poda os de mais de 3 meses.
+      const mergedResumos = congelarResumos({ ...inc, resumosDiarios: mesclarResumos(inc.resumosDiarios, state.resumosDiarios) }, td).resumos;
       next = {
         ...inc,
         faltas:     cleanFaltas,
@@ -2806,6 +2814,17 @@ function TabRegistrarReposicao({ state, dispatch }) {
   }, [state.vagas, state.turmas, td]);
 
   const isManual    = vagaSel === 'livre';
+  // Reposição retroativa: permitida até 3 meses atrás (mesmo limite da falta retroativa)
+  const limiteRetro = useMemo(() => { const d = new Date(); d.setMonth(d.getMonth() - 3); return dateToStr(d); }, [td]);
+  const dataManualInvalida = isManual && !!extraData && extraData < limiteRetro;
+  // Só as turmas que TÊM aula na data escolhida (dia da semana; sem feriado, recesso ou aula cancelada)
+  const turmasNaData = (data) => {
+    if (!data || FERIADOS_SET.has(data) || isRecesso(data)) return [];
+    const dia = getDiaSemanaFromDateStr(data);
+    const canceladas = new Set(arr(state.aulasCanceladas).filter(a => a.data === data).map(a => a.turmaId));
+    return sorted.filter(t => t.id !== TURMA_EXTRA_ID && t.diaSemana === dia && !canceladas.has(t.id));
+  };
+  const turmasDaData = turmasNaData(extraData);
   const vagaObj     = !isManual && vagaSel ? state.vagas.find(v => v.id === vagaSel) : null;
   const dataRepo    = isManual ? extraData   : (vagaObj?.data || '');
   const turmaRepoId = isManual ? extraTurma  : (vagaObj?.turmaId || '');
@@ -2847,7 +2866,8 @@ function TabRegistrarReposicao({ state, dispatch }) {
       r.turmaReposicaoId === turmaRepoId && !r.realizada
     ));
 
-  const canSubmit = turmaOrigemId && alunoNome && vagaSel && dataRepo && turmaRepoId && !jaTemReposicao;
+  const canSubmit = turmaOrigemId && alunoNome && vagaSel && dataRepo && turmaRepoId && !jaTemReposicao &&
+    !dataManualInvalida && (!isManual || turmasDaData.some(t => t.id === extraTurma));
 
   // Descreve o direito que será consumido (para o professor ver antes de confirmar).
   const pickedLabel = (r) => {
@@ -2872,7 +2892,7 @@ function TabRegistrarReposicao({ state, dispatch }) {
       semVagaOficial: isManual, vagaSelId: vagaObj?.id || null,
       ...actionFields
     });
-    setSuccess(`${forcarAulaExtra ? 'Aula extra' : 'Reposição'} de ${alunoNome} agendada para ${fmtBRFull(dataRepo)}.`);
+    setSuccess(`${forcarAulaExtra ? 'Aula extra' : 'Reposição'} de ${alunoNome} ${dataRepo < td ? 'registrada (retroativa, já realizada) em' : 'agendada para'} ${fmtBRFull(dataRepo)}.`);
     setAlunoNome(''); setVagaSel(''); setExtraData(''); setExtraTurma(''); setTipoManual('reposicao');
     setTimeout(() => setSuccess(''), 4000);
   };
@@ -2949,18 +2969,36 @@ function TabRegistrarReposicao({ state, dispatch }) {
         <div className="space-y-3 pl-3 border-l-2 border-blue-300">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Data</label>
-            <input type="date" value={extraData} min={td} onChange={e => setExtraData(e.target.value)}
+            <input type="date" value={extraData} min={limiteRetro} onChange={e => {
+                const d = e.target.value;
+                setExtraData(d);
+                // Troca de data: a turma escolhida só fica se também tiver aula na nova data
+                if (extraTurma && !turmasNaData(d).some(t => t.id === extraTurma)) setExtraTurma('');
+              }}
               className="w-full border border-gray-300 rounded-lg px-3 py-2" />
+            {dataManualInvalida && (
+              <p className="text-red-600 text-sm mt-1">Reposição retroativa só até 3 meses atrás ({fmtBRFull(limiteRetro)}).</p>
+            )}
+            {!dataManualInvalida && extraData && extraData < td && (
+              <p className="text-amber-700 text-sm mt-1">Data passada: a reposição será registrada como já realizada.</p>
+            )}
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Turma</label>
-            <select value={extraTurma} onChange={e => setExtraTurma(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2">
-              <option value="">— Selecione a turma —</option>
-              {sorted.map(t => (
-                <option key={t.id} value={t.id}>{t.id === TURMA_EXTRA_ID ? 'Alunos Extras & Ex-alunos' : `${EXTENSO[t.diaSemana]} ${t.horario}`}</option>
+            <select value={extraTurma} onChange={e => setExtraTurma(e.target.value)} disabled={!extraData || !turmasDaData.length}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 disabled:bg-gray-100 disabled:text-gray-400">
+              <option value="">{!extraData ? '— Escolha a data primeiro —' : turmasDaData.length ? '— Selecione a turma —' : '— Nenhuma turma nessa data —'}</option>
+              {turmasDaData.map(t => (
+                <option key={t.id} value={t.id}>{`${EXTENSO[t.diaSemana]} ${t.horario}`}</option>
               ))}
             </select>
+            {extraData && !turmasDaData.length && (
+              <p className="text-gray-500 text-sm mt-1">
+                {getFeriadoNome(extraData) ? `Feriado (${getFeriadoNome(extraData)}) — não há aula nesse dia.`
+                  : isRecesso(extraData) ? 'Recesso do ateliê — não há aula nesse dia.'
+                  : `Nenhuma turma tem aula nesse dia (${getDiaSemanaFromDateStr(extraData)}).`}
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -5088,6 +5126,82 @@ function computeResumoDia(state, date) {
     });
 }
 
+// ---- Resumos congelados (resumosDiarios) ----
+// Congela o resumo dos dias passados que ainda não têm registro (janela [hoje-15, ontem]) e poda
+// os de mais de 3 meses. Precisa rodar ANTES da limpeza que apaga faltas já repostas — senão quem
+// faltou e já tinha reposto (antes ou no mesmo dia) aparece como presente.
+function congelarResumos(st, td) {
+  const existentes = (st.resumosDiarios && typeof st.resumosDiarios === 'object' && !Array.isArray(st.resumosDiarios)) ? st.resumosDiarios : {};
+  const novos = { ...existentes };
+  let mudou = false;
+  const ini = parseDate(td); ini.setDate(ini.getDate() - 15);
+  const fim = parseDate(td);
+  for (const d = new Date(ini); d < fim; d.setDate(d.getDate() + 1)) {
+    const ds = dateToStr(d);
+    if (novos[ds]) continue;
+    const turmasDia = computeResumoDia(st, ds);
+    if (turmasDia.length) {
+      novos[ds] = { data: ds, geradoEm: new Date().toISOString(), turmas: turmasDia };
+      mudou = true;
+    }
+  }
+  const corte = parseDate(td); corte.setDate(corte.getDate() - 92);
+  const corteStr = dateToStr(corte);
+  Object.keys(novos).forEach(k => { if (k < corteStr) { delete novos[k]; mudou = true; } });
+  return { resumos: mudou ? novos : existentes, mudou };
+}
+
+// Mescla os resumos do servidor com os do aparelho, dia a dia:
+//  - dia que só existe de um lado é mantido (ex.: recém-congelado, ainda não gravado);
+//  - versão ajustada depois (atualizadoEm: marcação retroativa ou "Desfazer") → vale a mais recente,
+//    para um aparelho com versão antiga não apagar o ajuste;
+//  - sem ajuste dos dois lados → vale o 1º congelamento (o mais próximo do dia).
+function mesclarResumos(servidor, local) {
+  const out = { ...((servidor && typeof servidor === 'object' && !Array.isArray(servidor)) ? servidor : {}) };
+  const loc = (local && typeof local === 'object' && !Array.isArray(local)) ? local : {};
+  Object.keys(loc).forEach(k => {
+    const a = out[k], b = loc[k];
+    if (!b) return;
+    if (!a) { out[k] = b; return; }
+    const ua = a.atualizadoEm || '', ub = b.atualizadoEm || '';
+    if (ua || ub) { if (ub > ua) out[k] = b; return; }
+    if ((b.geradoEm || '') && (b.geradoEm || '') < (a.geradoEm || '')) out[k] = b;
+  });
+  return out;
+}
+
+// Marcação RETROATIVA num dia cujo resumo já foi congelado: ajusta só aquela turma naquele dia.
+// Dia ainda não congelado (ou hoje/futuro): nada a fazer — entra quando o dia for congelado.
+function ajustarResumoCongelado(resumos, data, turmaId, ajuste) {
+  if (!resumos || typeof resumos !== 'object' || !data || data >= todayStr()) return resumos;
+  const dia = resumos[data];
+  if (!dia || !Array.isArray(dia.turmas)) return resumos;
+  let mudou = false;
+  const turmas = dia.turmas.map(t => {
+    if (!t || t.turmaId !== turmaId) return t;
+    const novo = ajuste(t);
+    if (novo !== t) mudou = true;
+    return novo;
+  });
+  if (!mudou) return resumos;
+  return { ...resumos, [data]: { ...dia, turmas, atualizadoEm: new Date().toISOString() } };
+}
+// Falta retroativa: sai de "Presentes", entra em "Faltam"
+function resumoComFalta(t, nome) {
+  const presentes = arr(t.presentes), faltaram = arr(t.faltaram);
+  if (faltaram.includes(nome)) return t;
+  const estava = presentes.includes(nome);
+  return { ...t, presentes: presentes.filter(n => n !== nome), faltaram: [...faltaram, nome],
+    esperados: Math.max(0, (t.esperados || 0) - (estava ? 1 : 0)) };
+}
+// Reposição retroativa: entra em "Repondo" da turma de destino (+1 esperado se veio de outra turma)
+function resumoComReposicao(t, nome, origemTurmaId) {
+  const repondo = arr(t.repondo);
+  if (repondo.some(r => r && r.nome === nome && r.origemTurmaId === origemTurmaId)) return t;
+  return { ...t, repondo: [...repondo, { nome, origemTurmaId }],
+    esperados: (t.esperados || 0) + (origemTurmaId !== t.turmaId ? 1 : 0) };
+}
+
 // ==================== RESUMO DO DIA ====================
 function ResumoDia({ state }) {
   const td = todayStr();
@@ -5144,6 +5258,11 @@ function ResumoDia({ state }) {
         <div className="divide-y divide-gray-100">
           {isFuturo && (
             <div className="px-4 py-2 text-xs text-amber-600 bg-amber-50">Dia futuro — mostra o que já está marcado até agora.</div>
+          )}
+          {isPassado && snap && snap.atualizadoEm && (
+            <div className="px-4 py-2 text-xs text-gray-500 bg-gray-50">
+              Ajustado depois do fechamento do dia (marcação retroativa ou desfazer) em {new Date(snap.atualizadoEm).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })}.
+            </div>
           )}
           {resumo.map((item, idx) => {
             const turma = state.turmas.find(t => t.id === item.turmaId);

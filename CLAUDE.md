@@ -65,7 +65,7 @@ Firebase Realtime Database (REST + SSE). Sem build, sem CI: todo commit na `main
   notas:        [{ id, turmaId, texto, professor, ts }],                                       // bloco de notas por turma
   aulasCanceladas:  [{ id, turmaId, data, ts, professor }],                                    // aula cancelada (dia inteiro)
   vagasOcultas:     [{ id, turmaId, data|null, ts, professor }],                               // data null = turma inteira "até segunda ordem"
-  resumosDiarios:   { "YYYY-MM-DD": { data, geradoEm, turmas:[{turmaId, presentes[], faltaram[], repondo[{nome,origemTurmaId}], esperados, cancelada}] } }, // snapshots imutáveis, ~3 meses
+  resumosDiarios:   { "YYYY-MM-DD": { data, geradoEm, atualizadoEm?, turmas:[{turmaId, presentes[], faltaram[], repondo[{nome,origemTurmaId}], esperados, cancelada}] } }, // congelados, ~3 meses; atualizadoEm = ajuste retroativo/desfazer
   manutencao:   null | { ativo, ligadoEm, ligadoPor },                                         // modo manutenção (expira só em 6h)
   log:          [{ id, ts, professor, descricao, origem? }],                                   // 'origem':'aluno'|'sistema' distingue autor
   snapshots:    [],                                                                            // snapshots manuais
@@ -111,6 +111,15 @@ virada do dia, `online` ou `pageshow`: reabre o SSE (o 1º `put` traz o estado d
 roda `CLEANUP` + `FREEZE_RESUMOS` 1x por dia. Gravação pendente → grava antes de reconectar. Status
 `'atualizando'` na reconexão — nunca `'conectando'` (bloqueia a tela do aluno com "Carregando...").
 
+### Resumo do Dia congelado (`resumosDiarios`)
+- Dia passado é congelado por `congelarResumos` (janela hoje−15..ontem, poda >92 dias) **antes** da limpeza que
+  apaga faltas já repostas — chamado no `SYNC_FROM_FIREBASE` (sobre os dados recebidos), no `CLEANUP` e no `FREEZE_RESUMOS`.
+  Congelar depois da limpeza fazia quem faltou e já tinha reposto aparecer como presente.
+- Marcação retroativa (falta ou reposição com data passada) ajusta o dia já congelado: `ajustarResumoCongelado`
+  + `resumoComFalta` / `resumoComReposicao` (marca `atualizadoEm`). Reposição retroativa nasce `realizada`.
+- Entre aparelhos: `mesclarResumos` (ajuste mais recente vence; sem ajuste, 1º congelamento). `RESTORE_STATE`
+  (Desfazer) devolve o resumo com `atualizadoEm` novo para vencer na mesclagem.
+
 ### `computeVagasExtras(...)`  →  `target = max(0, 8 - alunosEfetivos + faltasCount - totalRepos - existingFaltaVagas)`
 Se todos os alunos faltam na data, não gera vaga extra.
 
@@ -143,8 +152,8 @@ Recesso: **12 a 19 de julho**, **dez (≥20)** e **jan (≤10)**. Vagas em reces
 
 **Painel do professor** (PIN `109`, 3 abas):
 - **Turmas:** cards por turma; ao abrir, tabela por aluno (grid) com contagens ✋ faltas ativas · 🔄 reposições agendadas · 🎟️ crédito extra · 🏖️ crédito férias (ⓘ abre legenda). Nº de faltas em **vermelho** se alguma expira em ≤7 dias. Gerenciar (renomear, mover de turma — bloqueia homônimo no destino, histórico, remover). Notas da turma. Link do aluno (copiar/abrir/QR). Bloqueia nome repetido na mesma turma. Botão **🔧 modo manutenção** (fim da aba).
-- **Faltas & Reposições:** grupos Faltas (registrar — oferece escolha comum/sem antecedência para aulas de hoje e <24h; retroativas até 3 meses — / cancelar), Reposições (registrar — consome direito automático / cancelar), Férias, Crédito Extra, **Cancelar Aula** (dia inteiro), **Ocultar Vagas** (antecipado: uma aula ou turma inteira; só esconde dos alunos).
-- **Painel:** Lista atual, Histórico (log; editável só por Pedro no desktop), Registro. **Resumo do Dia** (card no fim): navegável por setas/calendário; hoje/futuro ao vivo, passado lê snapshot imutável; mostra Recesso/Feriado/aula cancelada.
+- **Faltas & Reposições:** grupos Faltas (registrar — oferece escolha comum/sem antecedência para aulas de hoje e <24h; retroativas até 3 meses — / cancelar), Reposições (registrar — consome direito automático; "Escolher data / turma" mostra só as turmas com aula na data; retroativa até 3 meses / cancelar), Férias, Crédito Extra, **Cancelar Aula** (dia inteiro), **Ocultar Vagas** (antecipado: uma aula ou turma inteira; só esconde dos alunos).
+- **Painel:** Lista atual, Histórico (log; editável só por Pedro no desktop), Registro. **Resumo do Dia** (card no fim): navegável por setas/calendário; hoje/futuro ao vivo, passado lê o resumo congelado (ajustado por marcações retroativas); mostra Recesso/Feriado/aula cancelada.
 - **Toast "Desfazer"** (5s) em toda ação de dados — restaura o estado anterior (snapshot), sem passar pelas políticas de cancelamento.
 
 **Painel do aluno** (`?c=CODIGO`):

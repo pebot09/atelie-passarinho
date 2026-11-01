@@ -5,6 +5,13 @@
 
 ---
 
+## 2026-11-01 (2)
+- **Resumo do Dia congelado ANTES da limpeza.** Investigando o export: 52 resumos congelados (desde ago) marcavam como *presente* um aluno que faltou — 49 confirmados: a falta já tinha sido reposta (antes ou no mesmo dia), e na carga do dia seguinte a limpeza apagava a falta antes de o resumo ser montado. Novo `congelarResumos(st, td)` roda dentro do `SYNC_FROM_FIREBASE` (sobre os dados recebidos) e do `CLEANUP`, antes de apagar as faltas; `FREEZE_RESUMOS` usa o mesmo helper. Os resumos antigos não foram corrigidos (decisão do Pedro).
+- **Marcações retroativas ajustam o resumo já congelado** (`ajustarResumoCongelado` + `resumoComFalta` / `resumoComReposicao`, marca `atualizadoEm`): falta retroativa tira o aluno de "Presentes" e põe em "Faltam" (esperados −1); reposição retroativa põe em "Repondo" da turma de destino (+1 esperado se veio de outra turma). Dia ainda não congelado: nada a fazer (entra ao congelar). O Resumo do Dia mostra "Ajustado depois do fechamento do dia…".
+- **Mesclagem de resumos entre aparelhos** (`mesclarResumos`): por dia, versão ajustada mais recente vence (um aparelho com versão antiga não apaga o ajuste); sem ajuste, vale o 1º congelamento; dia de um lado só é mantido. **Desfazer** devolve o resumo anterior com carimbo novo (para vencer na mesclagem). Limitação conhecida: se a gravação da marcação retroativa for descartada pelo controle de concorrência (outro aparelho gravou no mesmo instante), o ajuste do resumo pode permanecer.
+- **Reposição retroativa oficial, até 3 meses** (antes o campo tinha mínimo = hoje, que o iPhone ignorava). Nasce `realizada: true` (não fica pendente na lista); aviso "Data passada…" e erro se passar de 3 meses.
+- **"Escolher data / turma"**: o seletor de turma só mostra as turmas que têm aula na data escolhida (dia da semana; sem feriado, recesso ou aula cancelada) e fica desabilitado até escolher a data; trocar a data limpa a turma se ela não tiver aula no novo dia.
+
 ## 2026-11-01
 - **App re-sincroniza ao voltar ao primeiro plano e na virada do dia.** Caso real: no domingo, o Resumo do Dia de sábado 31/10 aparecia "Sem registro deste dia" e as reposições de sábado ainda constavam como pendentes. O app do iPhone (salvo na tela inicial) estava congelado em segundo plano desde antes da meia-noite: a conexão em tempo real tinha morrido em silêncio (o selo seguia "sincronizado") e a limpeza diária + congelamento do resumo só rodavam ao **carregar** o app. Agora:
   - ao voltar ao app depois de ≥60s em segundo plano, quando o dia virou, ao voltar a internet (`online`) ou ao restaurar a página (`pageshow`), reabre a conexão em tempo real — que traz o estado atual do servidor;
